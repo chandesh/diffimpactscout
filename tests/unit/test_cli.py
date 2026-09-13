@@ -155,6 +155,12 @@ def _hermetic_cache(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _non_tty(monkeypatch):
+    # install-hooks only prompts when stdin is a terminal (see _is_tty in
+    # cli.py), so pin isatty() to False here. This keeps every test on the
+    # non-interactive path by default: no prompt code runs, so no readline
+    # monkeypatching is needed. Only tests that exercise the prompts override
+    # the gate (see _install_answers) instead of monkeypatching the prompt
+    # logic itself.
     import sys
 
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
@@ -535,6 +541,11 @@ def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
 
 
 def _install_answers(repo, answers, args=None):
+    # Test-time counterpart of the _non_tty fixture: the report code only
+    # prompts when stdin is a terminal, so to test the interactive path we
+    # flip isatty() to True and feed a scripted queue through readline. The
+    # prompts themselves are real code exercised end to end (order, defaults,
+    # decline behavior), and the queue restores both attributes in a finally.
     queue = list(answers)
     orig_tty = sys.stdin.isatty
     sys.stdin.isatty = lambda: True

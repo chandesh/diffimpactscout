@@ -600,6 +600,17 @@ def test_yes_flag_skips_confirm_even_when_tty(tmp_path, monkeypatch):
     assert _read_cfg(repo)["impact"]["profile"] == "generic"
 
 
+def test_install_hooks_other_stack_notes_future_layout(tmp_path, capsys, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "go.mod", "module x\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--yes") == 0
+    captured = capsys.readouterr()
+    assert "planned for future releases" in captured.err
+    assert "Go" in captured.err
+    assert _read_cfg(repo)["impact"]["profile"] == "generic"
+
+
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "x\n", "base")

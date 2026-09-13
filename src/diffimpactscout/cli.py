@@ -277,6 +277,17 @@ def _render_preview(detected, profile, cfg):
     return "\n".join(lines)
 
 
+def _other_stack_note(root):
+    other = detect.describe_other_stack(root)
+    if not other:
+        return None
+    return (
+        "detected %s. Language-specific lint and impact for %s is planned "
+        "for future releases; the generic profile installs the universal "
+        "guard checks instead." % (other, other)
+    )
+
+
 def _build_config_data(profile, args):
     data = config._defaults()
     data = config._deep_merge(data, config.load_profile(profile))
@@ -366,6 +377,9 @@ def _cmd_install_hooks(args):
         profile = _resolve_profile(args, detected)
         data = _build_config_data(profile, args)
         sys.stdout.write(_render_preview(detected, profile, data))
+        note = _other_stack_note(root)
+        if note:
+            sys.stderr.write("diffimpactscout: %s\n" % note)
         interactive = not args.yes and _is_tty()
         proceed = True
         if interactive:

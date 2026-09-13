@@ -138,9 +138,9 @@ def test_load_profile_python():
     assert prof_ids == ["ruff", "ruff-format"]
 
 
-def test_load_profile_web():
-    prof = config.load_profile("web")
-    assert prof["impact"]["profile"] == "web"
+def test_load_profile_frontend():
+    prof = config.load_profile("frontend")
+    assert prof["impact"]["profile"] == "frontend"
     assert "**/*.html" in prof["impact"]["template_globs"]
     assert "**/src/**/*.ts" in prof["impact"]["frontend_globs"]
     prof_ids = [c["id"] for c in prof["guard"]["checks"]]
@@ -153,7 +153,7 @@ def test_profile_choices():
         "django",
         "fastapi",
         "python",
-        "web",
+        "frontend",
     )
 
 

@@ -55,7 +55,7 @@ def _has_fastapi(root):
     return False
 
 
-def _has_web(root):
+def _has_frontend(root):
     if not _has(root, "package.json"):
         return False
     for path in _walk(root):
@@ -77,8 +77,8 @@ def detect_stack(root):
         return "django"
     if _has_fastapi(root):
         return "fastapi"
-    if _has_web(root):
-        return "web"
+    if _has_frontend(root):
+        return "frontend"
     if _has_python(root):
         return "python"
     return "generic"

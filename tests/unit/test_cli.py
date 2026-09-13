@@ -575,10 +575,10 @@ def test_interactive_override_profile(tmp_path, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "web", "", "y", "y", "y"]
+    answers = ["n", "frontend", "", "y", "y", "y"]
     assert _install_answers(repo, answers) == 0
     cfg = _read_cfg(repo)
-    assert cfg["impact"]["profile"] == "web"
+    assert cfg["impact"]["profile"] == "frontend"
     assert {"id": "eslint"} in cfg["guard"]["checks"]
 
 

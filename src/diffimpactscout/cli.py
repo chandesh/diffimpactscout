@@ -311,7 +311,7 @@ _LINT_HINT = {
     "django": "ruff + ruff-format",
     "fastapi": "ruff + ruff-format",
     "python": "ruff + ruff-format",
-    "web": "eslint + prettier",
+    "frontend": "eslint + prettier",
 }
 
 

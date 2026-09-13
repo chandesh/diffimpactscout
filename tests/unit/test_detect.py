@@ -45,7 +45,7 @@ def test_detect_web_package_and_frontend(tmp_path):
         tmp_path,
         _files("package.json", "src/orders.service.ts", "app/orders.js", "index.html"),
     )
-    assert detect.detect_stack(repo) == "web"
+    assert detect.detect_stack(repo) == "frontend"
 
 
 def test_detect_web_requires_frontend_sources(tmp_path):

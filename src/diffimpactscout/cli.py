@@ -28,7 +28,7 @@ def _parser():
     p_init = sub.add_parser("init", help="write a .diffimpactscout.json config")
     p_init.add_argument(
         "--profile",
-        choices=("plain", "django", "fastapi"),
+        choices=("generic", "django", "fastapi"),
         default=config.DEFAULT_PROFILE,
     )
     p_init.set_defaults(func=_cmd_init)

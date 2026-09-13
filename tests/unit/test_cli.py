@@ -184,7 +184,7 @@ def test_init_writes_config(tmp_path, monkeypatch):
     assert data["impact"]["urls_globs"] == ["**/urls.py"]
 
 
-def test_init_default_profile_is_plain(tmp_path, monkeypatch):
+def test_init_default_profile_is_generic(tmp_path, monkeypatch):
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
@@ -192,14 +192,14 @@ def test_init_default_profile_is_plain(tmp_path, monkeypatch):
     path = os.path.join(proj, ".diffimpactscout.json")
     with open(path) as fh:
         data = json.load(fh)
-    assert data["impact"]["profile"] == "plain"
+    assert data["impact"]["profile"] == "generic"
 
 
 def test_init_second_run_idempotent(tmp_path, monkeypatch):
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
-    assert cli.main(["init", "--profile", "plain"]) == 0
+    assert cli.main(["init", "--profile", "generic"]) == 0
     path = os.path.join(proj, ".diffimpactscout.json")
     assert os.path.exists(path)
     with open(path, "w") as fh:

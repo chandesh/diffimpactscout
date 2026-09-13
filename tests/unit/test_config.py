@@ -121,9 +121,9 @@ def test_load_profile_fastapi():
     assert ids == ["ruff", "ruff-format"]
 
 
-def test_load_profile_plain():
-    prof = config.load_profile("plain")
-    assert prof["impact"]["profile"] == "plain"
+def test_load_profile_generic():
+    prof = config.load_profile("generic")
+    assert prof["impact"]["profile"] == "generic"
     assert prof["impact"]["urls_globs"] == []
     assert prof["impact"]["template_globs"] == []
     assert prof["impact"]["frontend_globs"] == []

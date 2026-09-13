@@ -13,7 +13,7 @@ An incremental pre-push guard and AST blast-radius impact analyzer for git repos
 - Python AST symbol map: detects changed classes, functions, methods, module fields, and class fields, including deletions and renames.
 - Cross-layer impact linking: Python symbols to Django `{% url %}` template tags and frontend `http.get()/post()`-style calls.
 - Symbol cache (`.impact_analysis_cache.json`) so repeated runs skip unchanged files.
-- Profiles for `plain`, `django`, and `fastapi` projects.
+- Profiles for `generic`, `django`, and `fastapi` projects.
 - Configurable pre-push hook installation that never silently clobbers an existing hook.
 
 ## Core idea
@@ -53,7 +53,7 @@ diffimpactscout impact
 diffimpactscout install-hooks
 ```
 
-`init` accepts `--profile plain|django|fastapi` to seed profile-appropriate settings.
+`init` accepts `--profile generic|django|fastapi` to seed profile-appropriate settings.
 
 ## Commands
 
@@ -65,7 +65,7 @@ Writes a `.diffimpactscout.json` into the current directory. If the file already
 
 | Flag | Description |
 | --- | --- |
-| `--profile {plain,django,fastapi}` | Seed defaults from the named profile (default: `plain`). |
+| `--profile {generic,django,fastapi}` | Seed defaults from the named profile (default: `generic`). |
 
 ### `diffimpactscout guard`
 
@@ -139,7 +139,7 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
     "blocking": "warn"
   },
   "impact": {
-    "profile": "plain",
+    "profile": "generic",
     "urls_globs": [],
     "template_globs": [],
     "frontend_globs": [],
@@ -156,7 +156,7 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
 | top-level | `use_gitignore` | When `true`, also excludes paths ignored by `git check-ignore`. |
 | `guard` | `checks` | Ordered list of check entries; each `{"id": ...}` may add `args`, `blocking`, and `always_block` overrides. |
 | `guard` | `blocking` | `"warn"` (default) or `"strict"`. In strict mode every check marked blocking can fail the run. |
-| `impact` | `profile` | `plain`, `django`, or `fastapi`; selects route extraction plus default globs. |
+| `impact` | `profile` | `generic`, `django`, or `fastapi`; selects route extraction plus default globs. |
 | `impact` | `urls_globs` / `template_globs` / `frontend_globs` | Glob patterns for route files, Django templates, and frontend sources. |
 | `impact` | `cache_file` | Path of the symbol cache (relative to the repo root). |
 | `impact` | `fast_mode`, `threads` | Reserved defaults from `init`; fast mode is currently selected with the `impact --fast` flag. |
@@ -171,7 +171,7 @@ External checks run `command` (each `{file}` placeholder is replaced with the fi
 
 ### Profiles
 
-- `plain`: no route or cross-layer globs; impact analysis reports only Python references.
+- `generic`: no route or cross-layer globs; impact analysis reports only Python references.
 - `django`: route files `**/urls.py`, templates `**/templates/**/*.html`, frontend `**/src/**/*.ts` and `**/app/**/*.js`; guard checks append `ruff` and `ruff-format`.
 - `fastapi`: routes extracted from `**/*.py`, same frontend globs; guard checks append `ruff` and `ruff-format`.
 

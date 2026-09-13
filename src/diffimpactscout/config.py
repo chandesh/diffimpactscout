@@ -8,7 +8,7 @@ import sys
 import diffimpactscout.gitrun as gitrun
 
 CFG_NAME = ".diffimpactscout.json"
-DEFAULT_PROFILE = "plain"
+DEFAULT_PROFILE = "generic"
 MODE_PRE_PUSH = "pre-push"
 
 DEFAULT_IGNORE_PATHS = [

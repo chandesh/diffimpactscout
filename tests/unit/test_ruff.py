@@ -411,6 +411,34 @@ def test_ruff_format_diff_rc2_warns_no_block(tmp_path, monkeypatch):
     assert "2" in result.warned[0]
 
 
+def test_filter_diff_by_lines_body_starts_with_hunk_header():
+    diff = (
+        "@@ -2,4 +2,4 @@\n"
+        "-  x = 1\n"
+        "+ x = 1\n"
+        "  y = 2\n"
+        "@@ -8,3 +8,3 @@\n"
+        "-  a = 4\n"
+        "+ a = 4\n"
+    )
+    kept = ruff._filter_diff_by_lines(diff, {2})
+    assert "-  x = 1" in kept
+    assert "+ x = 1" in kept
+    assert "-  a = 4" not in kept
+    assert "@@ -2,4 +2,4 @@" in kept
+
+
+def test_filter_diff_by_lines_all_hunks_no_header():
+    diff = (
+        "@@ -1,2 +1,2 @@\n"
+        "- a\n"
+        "+ b\n"
+    )
+    kept = ruff._filter_diff_by_lines(diff, {1})
+    assert "- a" in kept
+    assert "+ b" in kept
+
+
 def test_filter_diff_by_lines_handles_dashed_content():
     diff = (
         "--- a/f.py\n"

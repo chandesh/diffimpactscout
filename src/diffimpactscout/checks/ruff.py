@@ -18,6 +18,21 @@ from diffimpactscout.checks.base import (
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
+def _split_hunks(text):
+    hunks = []
+    current = []
+    for line in text.split("\n"):
+        if line.startswith("@@"):
+            if current:
+                hunks.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        hunks.append("\n".join(current))
+    return hunks
+
+
 def _truncate(text, limit=30):
     lines = text.split("\n")
     if len(lines) <= limit:
@@ -55,7 +70,7 @@ def _filter_diff_by_lines(diff, changed):
         i += 1
     out = list(header)
     body = "\n".join(lines[i:])
-    for hunk in re.split(r"(?=^@@)", body, flags=re.MULTILINE):
+    for hunk in _split_hunks(body):
         if not hunk.startswith("@@"):
             continue
         m = _HUNK_RE.match(hunk)

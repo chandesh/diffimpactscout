@@ -13,7 +13,7 @@ setup(
     long_description_content_type="text/markdown",
     license="MIT",
     author="DiffImpactScout contributors",
-    python_requires=">=3.6",
+    python_requires=">=3.8",
     packages=find_packages("src"),
     package_dir={"": "src"},
     package_data={"diffimpactscout": ["profiles/*.json"]},

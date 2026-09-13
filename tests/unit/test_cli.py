@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -154,6 +155,12 @@ def _hermetic_cache(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _non_tty(monkeypatch):
+    # install-hooks only prompts when stdin is a terminal (see _is_tty in
+    # cli.py), so pin isatty() to False here. This keeps every test on the
+    # non-interactive path by default: no prompt code runs, so no readline
+    # monkeypatching is needed. Only tests that exercise the prompts override
+    # the gate (see _install_answers) instead of monkeypatching the prompt
+    # logic itself.
     import sys
 
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
@@ -184,7 +191,7 @@ def test_init_writes_config(tmp_path, monkeypatch):
     assert data["impact"]["urls_globs"] == ["**/urls.py"]
 
 
-def test_init_default_profile_is_plain(tmp_path, monkeypatch):
+def test_init_default_profile_is_generic(tmp_path, monkeypatch):
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
@@ -192,14 +199,14 @@ def test_init_default_profile_is_plain(tmp_path, monkeypatch):
     path = os.path.join(proj, ".diffimpactscout.json")
     with open(path) as fh:
         data = json.load(fh)
-    assert data["impact"]["profile"] == "plain"
+    assert data["impact"]["profile"] == "generic"
 
 
 def test_init_second_run_idempotent(tmp_path, monkeypatch):
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
-    assert cli.main(["init", "--profile", "plain"]) == 0
+    assert cli.main(["init", "--profile", "generic"]) == 0
     path = os.path.join(proj, ".diffimpactscout.json")
     assert os.path.exists(path)
     with open(path, "w") as fh:
@@ -460,6 +467,198 @@ def test_install_hooks_uninstall_with_force(tmp_path, capsys, monkeypatch):
     assert cli.main(["install-hooks", "--uninstall", "--force"]) == 0
     assert "pre-push hook removed" in capsys.readouterr().out
     assert not os.path.exists(hook)
+
+
+def _install(repo, *args):
+    return cli.main(["install-hooks"] + list(args))
+
+
+def _read_cfg(repo):
+    path = os.path.join(repo, ".diffimpactscout.json")
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def test_install_hooks_writes_generic_config_on_first_run(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo) == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "generic"
+    assert cfg["guard"]["blocking"] == "warn"
+
+
+def test_install_hooks_keeps_existing_config(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo) == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "django"
+
+
+def test_install_hooks_reconfigure_overwrites(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--reconfigure") == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "generic"
+
+
+def test_install_hooks_profile_flag(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--profile", "python") == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "python"
+    assert {"id": "ruff"} in cfg["guard"]["checks"]
+
+
+def test_install_hooks_yes_flag_keeps_existing_config(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--yes") == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "django"
+
+
+def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--blocking", "strict") == 0
+    assert _read_cfg(repo)["guard"]["blocking"] == "strict"
+
+
+def _install_answers(repo, answers, args=None):
+    # Test-time counterpart of the _non_tty fixture: the report code only
+    # prompts when stdin is a terminal, so to test the interactive path we
+    # flip isatty() to True and feed a scripted queue through readline. The
+    # prompts themselves are real code exercised end to end (order, defaults,
+    # decline behavior), and the queue restores both attributes in a finally.
+    queue = list(answers)
+    orig_tty = sys.stdin.isatty
+    sys.stdin.isatty = lambda: True
+
+    def readline():
+        return (queue.pop(0) + "\n") if queue else "\n"
+
+    orig_readline = sys.stdin.readline
+    sys.stdin.readline = readline
+    try:
+        return cli.main(["install-hooks"] + (args or []))
+    finally:
+        sys.stdin.isatty = orig_tty
+        sys.stdin.readline = orig_readline
+
+
+def test_interactive_confirm_yes_writes(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, ["y"]) == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "generic"
+
+
+def test_interactive_confirm_no_keeps_config(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, ["n"]) == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "django"
+
+
+def test_interactive_override_profile(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "frontend", "", "y", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "frontend"
+    assert {"id": "eslint"} in cfg["guard"]["checks"]
+
+
+def test_interactive_override_keep_lint_no(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "python", "", "n", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    cfg = _read_cfg(repo)
+    assert {"id": "ruff"} not in cfg["guard"]["checks"]
+
+
+def test_yes_flag_skips_confirm_even_when_tty(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, [], args=["--yes"]) == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "generic"
+
+
+def test_install_hooks_other_stack_notes_future_layout(tmp_path, capsys, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "go.mod", "module x\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--yes") == 0
+    captured = capsys.readouterr()
+    assert "planned for future releases" in captured.err
+    assert "Go" in captured.err
+    assert _read_cfg(repo)["impact"]["profile"] == "generic"
+
+
+def test_install_hooks_no_other_stack_note_for_python(tmp_path, capsys, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "go.mod", "module x\n", "base")
+    _commit(repo, "py/x.py", "x = 1\n", "add_python")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--yes") == 0
+    captured = capsys.readouterr()
+    assert "Go" not in captured.err
+    assert "planned for future releases" not in captured.err
+    assert _read_cfg(repo)["impact"]["profile"] == "python"
+
+
+def test_interactive_decline_aborts_install(tmp_path, capsys, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "", "", "", "n"]
+    assert _install_answers(repo, answers) == 0
+    captured = capsys.readouterr()
+    assert "setup skipped" in captured.out
+    assert not os.path.exists(os.path.join(repo, ".diffimpactscout.json"))
+    hook_path = os.path.join(repo, ".git", "hooks", "pre-push")
+    assert not os.path.exists(hook_path)
+
+
+def test_interactive_override_shows_new_profile_in_preview(
+    tmp_path, capsys, monkeypatch
+):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "frontend", "", "y", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    captured = capsys.readouterr()
+    assert "profile   : frontend" in captured.out
+    assert "detected framework: frontend" not in captured.out
+    assert _read_cfg(repo)["impact"]["profile"] == "frontend"
 
 
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):

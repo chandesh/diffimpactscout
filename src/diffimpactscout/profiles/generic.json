@@ -1,6 +1,6 @@
 {
   "impact": {
-    "profile": "plain",
+    "profile": "generic",
     "urls_globs": [],
     "template_globs": [],
     "frontend_globs": []

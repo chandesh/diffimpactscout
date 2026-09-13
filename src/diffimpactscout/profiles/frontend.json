@@ -1,0 +1,14 @@
+{
+  "impact": {
+    "profile": "frontend",
+    "urls_globs": [],
+    "template_globs": ["**/*.html"],
+    "frontend_globs": ["**/src/**/*.ts", "**/app/**/*.js"]
+  },
+  "guard": {
+    "checks": [
+      {"id": "eslint"},
+      {"id": "prettier"}
+    ]
+  }
+}

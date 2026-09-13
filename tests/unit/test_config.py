@@ -121,13 +121,40 @@ def test_load_profile_fastapi():
     assert ids == ["ruff", "ruff-format"]
 
 
-def test_load_profile_plain():
-    prof = config.load_profile("plain")
-    assert prof["impact"]["profile"] == "plain"
+def test_load_profile_generic():
+    prof = config.load_profile("generic")
+    assert prof["impact"]["profile"] == "generic"
     assert prof["impact"]["urls_globs"] == []
     assert prof["impact"]["template_globs"] == []
     assert prof["impact"]["frontend_globs"] == []
     assert "guard" not in prof
+
+
+def test_load_profile_python():
+    prof = config.load_profile("python")
+    assert prof["impact"]["profile"] == "python"
+    assert prof["impact"]["urls_globs"] == []
+    prof_ids = [c["id"] for c in prof["guard"]["checks"]]
+    assert prof_ids == ["ruff", "ruff-format"]
+
+
+def test_load_profile_frontend():
+    prof = config.load_profile("frontend")
+    assert prof["impact"]["profile"] == "frontend"
+    assert "**/*.html" in prof["impact"]["template_globs"]
+    assert "**/src/**/*.ts" in prof["impact"]["frontend_globs"]
+    prof_ids = [c["id"] for c in prof["guard"]["checks"]]
+    assert prof_ids == ["eslint", "prettier"]
+
+
+def test_profile_choices():
+    assert config.PROFILE_CHOICES == (
+        "generic",
+        "django",
+        "fastapi",
+        "python",
+        "frontend",
+    )
 
 
 def test_is_excluded_via_ignore_paths(tmp_path):

@@ -34,7 +34,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
-    profile = impact_cfg.get("profile") or "plain"
+    profile = impact_cfg.get("profile") or "generic"
     from_ref, to_ref = env.pre_commit_refs()
     anchor = None
     if not staged:

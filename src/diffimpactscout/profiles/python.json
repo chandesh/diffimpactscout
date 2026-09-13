@@ -1,0 +1,14 @@
+{
+  "impact": {
+    "profile": "python",
+    "urls_globs": [],
+    "template_globs": [],
+    "frontend_globs": []
+  },
+  "guard": {
+    "checks": [
+      {"id": "ruff"},
+      {"id": "ruff-format"}
+    ]
+  }
+}

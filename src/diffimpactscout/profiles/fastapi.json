@@ -1,0 +1,14 @@
+{
+  "impact": {
+    "profile": "fastapi",
+    "urls_globs": ["**/*.py"],
+    "template_globs": [],
+    "frontend_globs": ["**/src/**/*.ts", "**/app/**/*.js"]
+  },
+  "guard": {
+    "checks": [
+      {"id": "ruff"},
+      {"id": "ruff-format"}
+    ]
+  }
+}

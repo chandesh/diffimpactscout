@@ -1,0 +1,8 @@
+{
+  "impact": {
+    "profile": "plain",
+    "urls_globs": [],
+    "template_globs": [],
+    "frontend_globs": []
+  }
+}

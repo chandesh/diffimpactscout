@@ -1,0 +1,14 @@
+{
+  "impact": {
+    "profile": "django",
+    "urls_globs": ["**/urls.py"],
+    "template_globs": ["**/templates/**/*.html"],
+    "frontend_globs": ["**/src/**/*.ts", "**/app/**/*.js"]
+  },
+  "guard": {
+    "checks": [
+      {"id": "ruff"},
+      {"id": "ruff-format"}
+    ]
+  }
+}

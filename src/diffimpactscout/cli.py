@@ -6,6 +6,7 @@ import os
 import sys
 
 import diffimpactscout.config as config
+import diffimpactscout.detect as detect
 import diffimpactscout.env as env
 import diffimpactscout.gitrun as gitrun
 import diffimpactscout.guard as guard
@@ -28,7 +29,7 @@ def _parser():
     p_init = sub.add_parser("init", help="write a .diffimpactscout.json config")
     p_init.add_argument(
         "--profile",
-        choices=("generic", "django", "fastapi"),
+        choices=config.PROFILE_CHOICES,
         default=config.DEFAULT_PROFILE,
     )
     p_init.set_defaults(func=_cmd_init)
@@ -66,6 +67,24 @@ def _parser():
         "--uninstall",
         action="store_true",
         help="remove the diffimpactscout pre-push hook",
+    )
+    p_hooks.add_argument(
+        "--profile",
+        choices=config.PROFILE_CHOICES,
+        help="pre-select the setup profile (skips the stack question)",
+    )
+    p_hooks.add_argument(
+        "--blocking",
+        choices=("warn", "strict"),
+        help="blocking mode for guard checks",
+    )
+    p_hooks.add_argument(
+        "--yes", "-y", action="store_true", help="accept defaults without prompts"
+    )
+    p_hooks.add_argument(
+        "--reconfigure",
+        action="store_true",
+        help="rewrite an existing .diffimpactscout.json",
     )
     p_hooks.set_defaults(func=_cmd_install_hooks)
 
@@ -190,6 +209,98 @@ def _cmd_check(args):
     return 1 if result.has_issues() else 0
 
 
+def _is_tty():
+    return sys.stdin.isatty()
+
+
+def _read_answer():
+    try:
+        return (sys.stdin.readline() or "").strip().lower()
+    except (OSError, ValueError):
+        return ""
+
+
+def _prompt_yes_default(text, default):
+    sys.stdout.write(text + " ")
+    sys.stdout.flush()
+    answer = _read_answer()
+    if answer in ("y", "yes"):
+        return True
+    if answer in ("n", "no"):
+        return False
+    return default
+
+
+def _prompt_choice(text, choices, default):
+    sys.stdout.write("%s [%s] (default: %s): " % (text, "/".join(choices), default))
+    sys.stdout.flush()
+    answer = _read_answer()
+    if answer in choices:
+        return answer
+    return default
+
+
+def _check_id(entry):
+    if isinstance(entry, dict):
+        return entry.get("id", "?")
+    return str(entry)
+
+
+def _resolve_profile(args, detected):
+    if args.profile:
+        return args.profile
+    if detected in config.PROFILE_CHOICES:
+        return detected
+    return config.DEFAULT_PROFILE
+
+
+def _render_preview(detected, profile, cfg):
+    checks = cfg["guard"]["checks"]
+    impact = cfg["impact"]
+    impact_on = bool(
+        impact.get("urls_globs")
+        or impact.get("template_globs")
+        or impact.get("frontend_globs")
+    )
+    blocking = cfg["guard"].get("blocking", "warn")
+    lines = []
+    if detected == profile:
+        lines.append("detected framework: %s" % detected)
+    lines.append("")
+    lines.append("diffimpactscout will write .diffimpactscout.json")
+    lines.append("  profile   : %s" % profile)
+    lines.append("  blocking  : %s" % blocking)
+    lines.append("  impact    : %s" % ("on" if impact_on else "off"))
+    lines.append("  checks    : %d" % len(checks))
+    for entry in checks:
+        lines.append("    - %s" % _check_id(entry))
+    lines.append("")
+    lines.append(
+        "  then installs the pre-push hook -> runs `diffimpactscout guard` on each push."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _build_config_data(profile, args):
+    data = config._defaults()
+    data = config._deep_merge(data, config.load_profile(profile))
+    if args.blocking:
+        data["guard"]["blocking"] = args.blocking
+    return data
+
+
+def _write_config(path, data):
+    try:
+        with open(path, "w") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        sys.stderr.write("diffimpactscout: cannot write %s: %s\n" % (path, exc))
+        return 1
+    return 0
+
+
 def _cmd_install_hooks(args):
     root = _require_repo()
     if root is None:
@@ -207,6 +318,26 @@ def _cmd_install_hooks(args):
         else:
             print("nothing to remove")
         return 0
+    cfg_path = os.path.join(root, config.CFG_NAME)
+    has_config = os.path.exists(cfg_path)
+    if has_config and not args.reconfigure:
+        print(
+            "diffimpactscout: %s already exists; leaving it unchanged "
+            "(pass --reconfigure to rewrite)" % config.CFG_NAME
+        )
+    else:
+        detected = detect.detect_stack(root)
+        profile = _resolve_profile(args, detected)
+        data = _build_config_data(profile, args)
+        sys.stdout.write(_render_preview(detected, profile, data))
+        interactive = not args.yes and _is_tty()
+        proceed = True
+        if interactive:
+            proceed = _prompt_yes_default("Proceed? [Y/n]", True)
+        if proceed:
+            rc = _write_config(cfg_path, data)
+            if rc != 0:
+                return rc
     try:
         installed = launcher.install_hook(root, force=args.force)
     except OSError as exc:

@@ -462,6 +462,77 @@ def test_install_hooks_uninstall_with_force(tmp_path, capsys, monkeypatch):
     assert not os.path.exists(hook)
 
 
+def _install(repo, *args):
+    return cli.main(["install-hooks"] + list(args))
+
+
+def _read_cfg(repo):
+    path = os.path.join(repo, ".diffimpactscout.json")
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def test_install_hooks_writes_generic_config_on_first_run(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo) == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "generic"
+    assert cfg["guard"]["blocking"] == "warn"
+
+
+def test_install_hooks_keeps_existing_config(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo) == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "django"
+
+
+def test_install_hooks_reconfigure_overwrites(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--reconfigure") == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "generic"
+
+
+def test_install_hooks_profile_flag(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--profile", "python") == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "python"
+    assert {"id": "ruff"} in cfg["guard"]["checks"]
+
+
+def test_install_hooks_yes_flag_keeps_existing_config(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--yes") == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "django"
+
+
+def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--blocking", "strict") == 0
+    assert _read_cfg(repo)["guard"]["blocking"] == "strict"
+
+
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "x\n", "base")

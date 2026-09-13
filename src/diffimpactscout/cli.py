@@ -256,12 +256,7 @@ def _resolve_profile(args, detected):
 
 def _render_preview(detected, profile, cfg):
     checks = cfg["guard"]["checks"]
-    impact = cfg["impact"]
-    impact_on = bool(
-        impact.get("urls_globs")
-        or impact.get("template_globs")
-        or impact.get("frontend_globs")
-    )
+    impact_on = cfg["impact"].get("profile") != config.DEFAULT_PROFILE
     blocking = cfg["guard"].get("blocking", "warn")
     lines = []
     if detected == profile:
@@ -333,11 +328,7 @@ def _ask_overrides(data, args):
             data["guard"]["checks"] = [dict(c) for c in config.DEFAULT_GUARD_CHECKS]
     impact_on = _prompt_yes_default(
         "Enable impact analysis? [Y/n]",
-        bool(
-            merged["impact"].get("urls_globs")
-            or merged["impact"].get("template_globs")
-            or merged["impact"].get("frontend_globs")
-        ),
+        merged["impact"].get("profile") != config.DEFAULT_PROFILE,
     )
     if not impact_on:
         generic = config._deep_merge(

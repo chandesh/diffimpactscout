@@ -13,7 +13,7 @@ An incremental pre-push guard and AST blast-radius impact analyzer for git repos
 - Python AST symbol map: detects changed classes, functions, methods, module fields, and class fields, including deletions and renames.
 - Cross-layer impact linking: Python symbols to Django `{% url %}` template tags and frontend `http.get()/post()`-style calls.
 - Symbol cache (`.impact_analysis_cache.json`) so repeated runs skip unchanged files.
-- Profiles for `generic`, `django`, and `fastapi` projects.
+- Profiles for `generic`, `django`, `fastapi`, `python`, and `web` projects.
 - Configurable pre-push hook installation that never silently clobbers an existing hook.
 
 ## Core idea
@@ -53,7 +53,21 @@ diffimpactscout impact
 diffimpactscout install-hooks
 ```
 
-`init` accepts `--profile generic|django|fastapi` to seed profile-appropriate settings.
+`init` accepts `--profile generic|django|fastapi|python|web` to seed profile-appropriate settings. `install-hooks` detects the stack automatically (see [Supported setups](#supported-setups)).
+
+## Supported setups
+
+`install-hooks` detects the project stack on first run and writes a `.diffimpactscout.json` that fits it:
+
+| Detection signal | Profile | Guard checks | Impact globs |
+| --- | --- | --- | --- |
+| `manage.py` + `settings.py`/`wsgi.py` | django | default + `ruff`, `ruff-format` | urls, templates, frontend |
+| `fastapi` in deps or `main.py` | fastapi | default + `ruff`, `ruff-format` | `**/*.py` routes + frontend globs |
+| `package.json` + `src`/`app` `*.ts`/`*.js` | web | default + `eslint`, `prettier` | templates + frontend globs |
+| `*.py` present | python | default + `ruff`, `ruff-format` | Python module references |
+| anything else (or no signal) | generic | default from `init` | none |
+
+Other ecosystems (Go, Rust, Java, Ruby, ...) are detected and reported as "planned for future releases" in the preview; the generic profile still installs the universal guard checks. Add a language linter with an [external check](#configuration).
 
 ## Commands
 
@@ -97,8 +111,14 @@ Runs a single check by id (see [Checks reference](#checks-reference)). With no f
 
 Installs a `pre-push` git hook that runs `diffimpactscout guard` on push.
 
+On first run the command detects the stack, prints a preview of the `.diffimpactscout.json` it would write, and (when stdin is a terminal) asks for confirmation. Answer `n` to override profile, blocking mode, extra checks, and impact. Use `--yes` in CI to skip prompts, `--profile` and `--blocking` to pre-select settings, and `--reconfigure` to rewrite an existing config. Without `--reconfigure` an existing config is left untouched.
+
 | Flag | Description |
 | --- | --- |
+| `--profile {generic,django,fastapi,python,web}` | Pre-select the setup profile; skips the stack question. |
+| `--blocking {warn,strict}` | Blocking mode for guard checks (default: `warn`). |
+| `--yes`, `-y` | Accept defaults and skip prompts (non-interactive). |
+| `--reconfigure` | Rewrite an existing `.diffimpactscout.json`. |
 | `--force` | Overwrite an existing `pre-push` hook that DiffImpactScout did not install. |
 | `--uninstall` | Remove the DiffImpactScout `pre-push` hook. |
 
@@ -172,8 +192,10 @@ External checks run `command` (each `{file}` placeholder is replaced with the fi
 ### Profiles
 
 - `generic`: no route or cross-layer globs; impact analysis reports only Python references.
+- `python`: same impact globs as `generic`; guard checks append `ruff` and `ruff-format`.
 - `django`: route files `**/urls.py`, templates `**/templates/**/*.html`, frontend `**/src/**/*.ts` and `**/app/**/*.js`; guard checks append `ruff` and `ruff-format`.
 - `fastapi`: routes extracted from `**/*.py`, same frontend globs; guard checks append `ruff` and `ruff-format`.
+- `web`: template globs `**/*.html` and frontend globs `**/src/**/*.ts` and `**/app/**/*.js`; guard checks append `eslint` and `prettier`.
 
 ### Blocking behavior
 

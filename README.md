@@ -33,7 +33,7 @@ The change-set also handles the full breadth of realistic push shapes: direct pu
 pip install diffimpactscout
 ```
 
-The package is pure Python (standard library only at runtime) and requires Python 3.6 or newer and the `git` CLI on `PATH`.
+The package is pure Python (standard library only at runtime) and requires Python 3.8 or newer and the `git` CLI on `PATH`.
 
 Optional tools are only needed for the checks that use them: `ruff`, `eslint` (via `npx`), and `prettier` (via `npx`). If one is missing, the affected check emits a warning and the guard continues; it never blocks a push because a tool is absent.
 
@@ -289,7 +289,7 @@ All checks are incremental: file-scoped checks run on files in the change-set, a
 
 ## Requirements
 
-- Python 3.6 or newer.
+- Python 3.8 or newer.
 - Standard library only at runtime; no third-party dependencies.
 - The `git` CLI on `PATH`.
 - Optional: `ruff`, `eslint`, and `prettier` for their respective checks (missing tools degrade to warnings).

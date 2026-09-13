@@ -9,6 +9,7 @@ import diffimpactscout.gitrun as gitrun
 
 CFG_NAME = ".diffimpactscout.json"
 DEFAULT_PROFILE = "generic"
+PROFILE_CHOICES = ("generic", "django", "fastapi", "python", "web")
 MODE_PRE_PUSH = "pre-push"
 
 DEFAULT_IGNORE_PATHS = [

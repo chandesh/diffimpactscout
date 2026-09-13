@@ -130,6 +130,33 @@ def test_load_profile_generic():
     assert "guard" not in prof
 
 
+def test_load_profile_python():
+    prof = config.load_profile("python")
+    assert prof["impact"]["profile"] == "python"
+    assert prof["impact"]["urls_globs"] == []
+    prof_ids = [c["id"] for c in prof["guard"]["checks"]]
+    assert prof_ids == ["ruff", "ruff-format"]
+
+
+def test_load_profile_web():
+    prof = config.load_profile("web")
+    assert prof["impact"]["profile"] == "web"
+    assert "**/*.html" in prof["impact"]["template_globs"]
+    assert "**/src/**/*.ts" in prof["impact"]["frontend_globs"]
+    prof_ids = [c["id"] for c in prof["guard"]["checks"]]
+    assert prof_ids == ["eslint", "prettier"]
+
+
+def test_profile_choices():
+    assert config.PROFILE_CHOICES == (
+        "generic",
+        "django",
+        "fastapi",
+        "python",
+        "web",
+    )
+
+
 def test_is_excluded_via_ignore_paths(tmp_path):
     cfg = {"ignore_paths": ["**/node_modules/**"]}
     assert config.is_excluded("src/node_modules/x/y.js", cfg, str(tmp_path)) is True

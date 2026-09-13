@@ -210,7 +210,10 @@ def _cmd_check(args):
 
 
 def _is_tty():
-    return sys.stdin.isatty()
+    try:
+        return sys.stdin.isatty()
+    except (OSError, ValueError):
+        return False
 
 
 def _read_answer():
@@ -254,9 +257,12 @@ def _resolve_profile(args, detected):
     return config.DEFAULT_PROFILE
 
 
-def _render_preview(detected, profile, cfg):
+def _render_preview(detected, cfg):
+    profile = cfg["impact"].get("profile") or config.DEFAULT_PROFILE
+    if profile not in config.PROFILE_CHOICES:
+        profile = config.DEFAULT_PROFILE
     checks = cfg["guard"]["checks"]
-    impact_on = cfg["impact"].get("profile") != config.DEFAULT_PROFILE
+    impact_on = profile != config.DEFAULT_PROFILE
     blocking = cfg["guard"].get("blocking", "warn")
     lines = []
     if detected == profile:
@@ -277,7 +283,9 @@ def _render_preview(detected, profile, cfg):
     return "\n".join(lines)
 
 
-def _other_stack_note(root):
+def _other_stack_note(root, profile):
+    if profile != config.DEFAULT_PROFILE:
+        return None
     other = detect.describe_other_stack(root)
     if not other:
         return None
@@ -367,6 +375,7 @@ def _cmd_install_hooks(args):
         return 0
     cfg_path = os.path.join(root, config.CFG_NAME)
     has_config = os.path.exists(cfg_path)
+    proceed = True
     if has_config and not args.reconfigure:
         print(
             "diffimpactscout: %s already exists; leaving it unchanged "
@@ -376,22 +385,24 @@ def _cmd_install_hooks(args):
         detected = detect.detect_stack(root)
         profile = _resolve_profile(args, detected)
         data = _build_config_data(profile, args)
-        sys.stdout.write(_render_preview(detected, profile, data))
-        note = _other_stack_note(root)
+        sys.stdout.write(_render_preview(detected, data))
+        note = _other_stack_note(root, profile)
         if note:
             sys.stderr.write("diffimpactscout: %s\n" % note)
         interactive = not args.yes and _is_tty()
-        proceed = True
         if interactive:
             proceed = _prompt_yes_default("Proceed? [Y/n]", True)
             if not proceed:
                 _ask_overrides(data, args)
-                sys.stdout.write(_render_preview(detected, profile, data))
+                sys.stdout.write(_render_preview(detected, data))
                 proceed = _prompt_yes_default("Proceed? [Y/n]", True)
         if proceed:
             rc = _write_config(cfg_path, data)
             if rc != 0:
                 return rc
+    if not proceed:
+        print("diffimpactscout: setup skipped; no changes made")
+        return 0
     try:
         installed = launcher.install_hook(root, force=args.force)
     except OSError as exc:

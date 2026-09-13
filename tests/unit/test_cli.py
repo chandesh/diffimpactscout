@@ -611,6 +611,45 @@ def test_install_hooks_other_stack_notes_future_layout(tmp_path, capsys, monkeyp
     assert _read_cfg(repo)["impact"]["profile"] == "generic"
 
 
+def test_install_hooks_no_other_stack_note_for_python(tmp_path, capsys, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "go.mod", "module x\n", "base")
+    _commit(repo, "py/x.py", "x = 1\n", "add_python")
+    monkeypatch.chdir(repo)
+    assert _install(repo, "--yes") == 0
+    captured = capsys.readouterr()
+    assert "Go" not in captured.err
+    assert "planned for future releases" not in captured.err
+    assert _read_cfg(repo)["impact"]["profile"] == "python"
+
+
+def test_interactive_decline_aborts_install(tmp_path, capsys, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "", "", "", "n"]
+    assert _install_answers(repo, answers) == 0
+    captured = capsys.readouterr()
+    assert "setup skipped" in captured.out
+    assert not os.path.exists(os.path.join(repo, ".diffimpactscout.json"))
+    hook_path = os.path.join(repo, ".git", "hooks", "pre-push")
+    assert not os.path.exists(hook_path)
+
+
+def test_interactive_override_shows_new_profile_in_preview(
+    tmp_path, capsys, monkeypatch
+):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "frontend", "", "y", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    captured = capsys.readouterr()
+    assert "profile   : frontend" in captured.out
+    assert "detected framework: frontend" not in captured.out
+    assert _read_cfg(repo)["impact"]["profile"] == "frontend"
+
+
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "x\n", "base")

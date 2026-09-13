@@ -79,7 +79,7 @@ Writes a `.diffimpactscout.json` into the current directory. If the file already
 
 | Flag | Description |
 | --- | --- |
-| `--profile {generic,django,fastapi}` | Seed defaults from the named profile (default: `generic`). |
+| `--profile {generic,django,fastapi,python,frontend}` | Seed defaults from the named profile (default: `generic`). |
 
 ### `diffimpactscout guard`
 

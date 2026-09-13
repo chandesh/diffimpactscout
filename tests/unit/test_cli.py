@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -531,6 +532,72 @@ def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
     monkeypatch.chdir(repo)
     assert _install(repo, "--blocking", "strict") == 0
     assert _read_cfg(repo)["guard"]["blocking"] == "strict"
+
+
+def _install_answers(repo, answers, args=None):
+    queue = list(answers)
+    orig_tty = sys.stdin.isatty
+    sys.stdin.isatty = lambda: True
+
+    def readline():
+        return (queue.pop(0) + "\n") if queue else "\n"
+
+    orig_readline = sys.stdin.readline
+    sys.stdin.readline = readline
+    try:
+        return cli.main(["install-hooks"] + (args or []))
+    finally:
+        sys.stdin.isatty = orig_tty
+        sys.stdin.readline = orig_readline
+
+
+def test_interactive_confirm_yes_writes(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, ["y"]) == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "generic"
+
+
+def test_interactive_confirm_no_keeps_config(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"impact": {"profile": "django"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, ["n"]) == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "django"
+
+
+def test_interactive_override_profile(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "web", "", "y", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    cfg = _read_cfg(repo)
+    assert cfg["impact"]["profile"] == "web"
+    assert {"id": "eslint"} in cfg["guard"]["checks"]
+
+
+def test_interactive_override_keep_lint_no(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "python", "", "n", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    cfg = _read_cfg(repo)
+    assert {"id": "ruff"} not in cfg["guard"]["checks"]
+
+
+def test_yes_flag_skips_confirm_even_when_tty(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, [], args=["--yes"]) == 0
+    assert _read_cfg(repo)["impact"]["profile"] == "generic"
 
 
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):

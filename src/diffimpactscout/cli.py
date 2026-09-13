@@ -301,6 +301,51 @@ def _write_config(path, data):
     return 0
 
 
+_LINT_HINT = {
+    "django": "ruff + ruff-format",
+    "fastapi": "ruff + ruff-format",
+    "python": "ruff + ruff-format",
+    "web": "eslint + prettier",
+}
+
+
+def _ask_overrides(data, args):
+    profile = data["impact"].get("profile") or config.DEFAULT_PROFILE
+    if profile not in config.PROFILE_CHOICES:
+        profile = config.DEFAULT_PROFILE
+    profile = _prompt_choice("Profile", list(config.PROFILE_CHOICES), profile)
+    merged = config._deep_merge(config._defaults(), config.load_profile(profile))
+    if args.blocking:
+        merged["guard"]["blocking"] = args.blocking
+    data["guard"] = merged["guard"]
+    data["impact"] = merged["impact"]
+    if not args.blocking:
+        strict = _prompt_yes_default(
+            "Block the push when checks report issues? (strict mode) [y/N]", False
+        )
+        data["guard"]["blocking"] = "strict" if strict else "warn"
+    hint = _LINT_HINT.get(profile)
+    if hint:
+        keep = _prompt_yes_default(
+            "Keep the extra lint checks? (%s) [Y/n]" % hint, True
+        )
+        if not keep:
+            data["guard"]["checks"] = [dict(c) for c in config.DEFAULT_GUARD_CHECKS]
+    impact_on = _prompt_yes_default(
+        "Enable impact analysis? [Y/n]",
+        bool(
+            merged["impact"].get("urls_globs")
+            or merged["impact"].get("template_globs")
+            or merged["impact"].get("frontend_globs")
+        ),
+    )
+    if not impact_on:
+        generic = config._deep_merge(
+            config._defaults(), config.load_profile("generic")
+        )
+        data["impact"] = generic["impact"]
+
+
 def _cmd_install_hooks(args):
     root = _require_repo()
     if root is None:
@@ -334,6 +379,10 @@ def _cmd_install_hooks(args):
         proceed = True
         if interactive:
             proceed = _prompt_yes_default("Proceed? [Y/n]", True)
+            if not proceed:
+                _ask_overrides(data, args)
+                sys.stdout.write(_render_preview(detected, profile, data))
+                proceed = _prompt_yes_default("Proceed? [Y/n]", True)
         if proceed:
             rc = _write_config(cfg_path, data)
             if rc != 0:

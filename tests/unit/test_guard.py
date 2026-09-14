@@ -361,6 +361,20 @@ def test_private_key_always_block_disabled_in_warn_mode(tmp_path, capsys):
     assert "private key detected" in captured.out
 
 
+def test_ignored_file_excluded_from_guard_scope(tmp_path, capsys):
+    """Checks that files matching ignore_paths are excluded from the guard."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    _anchor(repo)
+    os.makedirs(os.path.join(repo, "node_modules/dep"))
+    _commit(repo, "node_modules/dep/key.pem", "-----BEGIN RSA PRIVATE KEY-----\n", "dev")
+    cfg = _cfg(repo, [{"id": "repo/private-key"}])
+    assert guard.run_guard(repo, cfg) == 0
+    captured = capsys.readouterr()
+    assert "private key detected" not in captured.out
+    assert "[PASS]" in captured.out
+
+
 def test_blocking_check_zero_issues_returns_zero(tmp_path, capsys):
     """Checks that a strict blocking check with no issues returns zero."""
     repo = _make_repo(tmp_path)

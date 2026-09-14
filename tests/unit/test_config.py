@@ -275,6 +275,12 @@ def test_load_config_default_use_gitignore_false(tmp_path):
     assert cfg["use_gitignore"] is False
 
 
+def test_default_ignore_paths_covers_impact_cache():
+    """Checks that the default ignore paths exclude the impact cache file."""
+    cfg = config._defaults()
+    assert config.is_excluded(".impact_analysis_cache.json", cfg, "/tmp") is True
+
+
 def test_deep_merge_list_vs_scalar():
     """Checks that a scalar overrides a list during deep merge."""
     assert config._deep_merge({"l": [1]}, {"l": "x"}) == {"l": "x"}

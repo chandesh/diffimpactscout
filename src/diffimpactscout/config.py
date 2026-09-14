@@ -21,6 +21,7 @@ DEFAULT_IGNORE_PATHS = [
     "**/dist/**",
     "**/build/**",
     "**/.git/**",
+    "**/.impact_analysis_cache.json",
 ]
 
 DEFAULT_GUARD_CHECKS = [

@@ -10,6 +10,7 @@ import diffimpactscout.env as env
 import diffimpactscout.gitrun as gitrun
 import diffimpactscout.scope as scope
 from diffimpactscout.checks.base import CheckContext, make_check
+from diffimpactscout.config import is_excluded
 
 DIFF_FILTER = "ACMRT"
 
@@ -137,6 +138,8 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None):
     else:
         anchor = dev_scope.scope_base(from_ref, to_ref)
         file_set = dev_scope.dev_files(anchor, from_ref, to_ref)
+
+    file_set = [p for p in file_set if not is_excluded(p, cfg, root)]
 
     mode = _guard_mode(cfg)
     ctx = CheckContext(

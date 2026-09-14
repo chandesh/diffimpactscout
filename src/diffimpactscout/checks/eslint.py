@@ -155,8 +155,8 @@ class EslintCheck(Check):
                     issues.append(
                         CheckIssue(
                             path,
-                            line or 0,
-                            column or 0,
+                            line,
+                            column,
                             rule_id or self.id,
                             message.get("message") or "",
                         )

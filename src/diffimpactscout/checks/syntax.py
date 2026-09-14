@@ -38,8 +38,8 @@ class JsonSyntaxCheck(Check):
                 issues.append(
                     CheckIssue(
                         path,
-                        getattr(exc, "lineno", 0) or 0,
-                        getattr(exc, "colno", 0) or 0,
+                        getattr(exc, "lineno", None),
+                        getattr(exc, "colno", None),
                         self.id,
                         "invalid JSON: %s" % exc,
                     )
@@ -69,8 +69,8 @@ class AstSyntaxCheck(Check):
                 issues.append(
                     CheckIssue(
                         path,
-                        exc.lineno or 0,
-                        exc.offset or 0,
+                        exc.lineno,
+                        exc.offset,
                         self.id,
                         "invalid python syntax: %s" % (exc.msg or "syntax error"),
                     )
@@ -78,7 +78,11 @@ class AstSyntaxCheck(Check):
             except ValueError as exc:
                 issues.append(
                     CheckIssue(
-                        path, 0, 0, self.id, "invalid python source: %s" % exc
+                        path,
+                        None,
+                        None,
+                        self.id,
+                        "invalid python source: %s" % exc,
                     )
                 )
         return CheckResult(issues=issues)
@@ -111,7 +115,7 @@ class MergeConflictCheck(Check):
                 line = lines[lineno - 1]
                 if self._is_marker(line):
                     issues.append(
-                        CheckIssue(path, lineno, 0, self.id, "conflict marker found")
+                        CheckIssue(path, lineno, None, self.id, "conflict marker found")
                     )
         return CheckResult(issues=issues)
 

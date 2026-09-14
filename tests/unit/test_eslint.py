@@ -462,7 +462,7 @@ def test_eslint_message_without_line_untracked_reported(
     )
     assert not result.ok()
     assert len(result.issues) == 1
-    assert result.issues[0].line == 0
+    assert result.issues[0].line is None
     assert result.issues[0].code == "eslint"
 
 

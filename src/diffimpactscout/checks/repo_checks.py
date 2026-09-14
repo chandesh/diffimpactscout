@@ -43,8 +43,8 @@ class CaseConflictCheck(Check):
                     issues.append(
                         CheckIssue(
                             path,
-                            0,
-                            0,
+                            None,
+                            None,
                             self.id,
                             "case conflict detected with %s" % other,
                         )
@@ -91,8 +91,8 @@ class LargeFilesCheck(Check):
                 issues.append(
                     CheckIssue(
                         path,
-                        0,
-                        0,
+                        None,
+                        None,
                         self.id,
                         "file size %d kB exceeds limit of %d kB; consider git lfs"
                         % (size_kb, self.max_kb),
@@ -119,7 +119,7 @@ class PrivateKeyCheck(Check):
             for marker in PRIVATE_KEY_MARKERS:
                 if marker in data:
                     issues.append(
-                        CheckIssue(path, 0, 0, self.id, "private key detected")
+                        CheckIssue(path, None, None, self.id, "private key detected")
                     )
                     break
         return CheckResult(issues=issues)

@@ -185,8 +185,8 @@ def test_ast_decode_failure_reports_issue_at_origin(tmp_path):
     issue = result.issues[0]
     assert issue.path == "bad.py"
     assert issue.code == "syntax/ast-syntax"
-    assert issue.line == 0
-    assert issue.column == 0
+    assert issue.line is None
+    assert issue.column is None
     assert "invalid python source" in issue.message
 
 
@@ -200,7 +200,7 @@ def test_merge_conflict_reports_markers_on_changed_lines(tmp_path):
     assert len(result.issues) == 3
     assert [i.line for i in result.issues] == [1, 3, 5]
     assert all(i.code == "syntax/merge-conflict" for i in result.issues)
-    assert all(i.column == 0 for i in result.issues)
+    assert all(i.column is None for i in result.issues)
 
 
 def test_merge_conflict_ignores_markers_outside_changed_lines(tmp_path):

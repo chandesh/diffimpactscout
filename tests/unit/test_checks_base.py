@@ -413,10 +413,16 @@ def test_issue_format():
     assert issue.format() == "a.txt:3:5: RUF100 unused noqa"
 
 
-def test_issue_format_zero_position():
-    """Checks that issue formatting handles a zero position."""
-    issue = CheckIssue("b.txt", 0, 0, "ext/tool", "failed")
-    assert issue.format() == "b.txt:0:0: ext/tool failed"
+def test_issue_format_file_level_no_position():
+    """Checks that a file-level issue renders the path without a position."""
+    issue = CheckIssue("b.txt", None, None, "ext/tool", "failed")
+    assert issue.format() == "b.txt: ext/tool failed"
+
+
+def test_issue_format_line_only_renders_dash_column():
+    """Checks that a missing column renders as a dash."""
+    issue = CheckIssue("c.txt", 7, None, "ext/tool", "failed")
+    assert issue.format() == "c.txt:7:-: ext/tool failed"
 
 
 def test_result_ok_and_has_issues():

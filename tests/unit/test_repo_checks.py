@@ -266,8 +266,8 @@ def test_private_key_flags_rsa_marker(tmp_path):
     issue = result.issues[0]
     assert issue.path == "key.pem"
     assert issue.code == "repo/private-key"
-    assert issue.line == 0
-    assert issue.column == 0
+    assert issue.line is None
+    assert issue.column is None
 
 
 def test_private_key_flags_all_markers(tmp_path):

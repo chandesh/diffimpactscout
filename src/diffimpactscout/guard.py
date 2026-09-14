@@ -99,9 +99,15 @@ def _print_summary(ran, total_issues, total_fixed):
     )
 
 
-def _print_verdict(blocked, total_issues, mode):
+def _print_verdict(blocked, total_issues, mode, always_blocked):
     if blocked:
-        verdict = "[BLOCKED] push rejected (strict mode: %d issue(s))" % total_issues
+        if always_blocked:
+            verdict = (
+                "[BLOCKED] push rejected (%s mode; hard-block check: %d issue(s))"
+                % (mode, total_issues)
+            )
+        else:
+            verdict = "[BLOCKED] push rejected (strict mode: %d issue(s))" % total_issues
     elif total_issues:
         verdict = "[ALLOWED] push allowed (%s mode: %d issue(s) reported)" % (
             mode,
@@ -149,6 +155,7 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None):
     total_issues = 0
     total_fixed = 0
     blocked = False
+    always_blocked = False
 
     for entry in cfg.get("guard", {}).get("checks") or []:
         check = None
@@ -171,11 +178,13 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None):
             should_block = check.always_block or (check.blocking and mode == "strict")
             if should_block and result.has_issues():
                 blocked = True
+                if check.always_block:
+                    always_blocked = True
             _print_check_result(check, result)
         except Exception as exc:
             _warn("check %r failed: %s" % (check.id, exc))
             continue
 
     _print_summary(ran, total_issues, total_fixed)
-    _print_verdict(blocked, total_issues, mode)
+    _print_verdict(blocked, total_issues, mode, always_blocked)
     return 1 if blocked else 0

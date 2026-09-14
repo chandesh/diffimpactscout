@@ -150,6 +150,20 @@ def test_private_key_always_blocks_in_warn_mode(tmp_path, capsys):
     assert guard.run_guard(repo, cfg) == 1
     captured = capsys.readouterr()
     assert "private key detected" in captured.out
+    assert "hard-block check" in captured.out
+
+
+def test_guard_warn_mode_blocked_verdict_names_hard_block(tmp_path, capsys):
+    """Checks that a warn-mode hard-block verdict names the hard-block check."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    _anchor(repo)
+    _commit(repo, "key.pem", "-----BEGIN RSA PRIVATE KEY-----\n", "dev")
+    cfg = _cfg(repo, [{"id": "repo/private-key"}])
+    assert guard.run_guard(repo, cfg) == 1
+    out = capsys.readouterr().out
+    assert "[BLOCKED]" in out
+    assert "warn mode; hard-block check" in out
 
 
 def test_missing_external_tool_warns_and_returns_zero(tmp_path, capsys):

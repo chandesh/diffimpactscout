@@ -136,6 +136,39 @@ def test_render_report_summary_changed_count():
     assert "Medium: 1" in out
 
 
+def test_render_report_findings_with_severity_tags():
+    rows = [
+        {
+            "path": "app/views/order.py",
+            "module": "app/views",
+            "category": "template",
+            "ref": "{% url 'order-detail' %} at app/templates/orders.html:14",
+            "severity": "High",
+            "action": "review/verify",
+        }
+    ]
+    out = reporter.render_report(rows, [], 1)
+    assert "[HIGH] app/views/order.py -> {% url 'order-detail' %} at app/templates/orders.html:14" in out
+    assert "Category: template" in out
+    assert "review/verify" in out
+    assert "Summary: High: 1" in out
+
+
+def test_render_report_findings_all_severity_bands():
+    rows = [
+        {"path": "a.py", "module": "m", "category": "python",
+         "ref": "x", "severity": "High", "action": "review/verify"},
+        {"path": "b.py", "module": "m", "category": "python",
+         "ref": "y", "severity": "Medium", "action": "verify"},
+        {"path": "c.py", "module": "m", "category": "python",
+         "ref": "z", "severity": "Low", "action": "ok"},
+    ]
+    out = reporter.render_report(rows, [], 3)
+    assert "[HIGH] a.py -> x" in out
+    assert "[MEDIUM] b.py -> y" in out
+    assert "[LOW] c.py -> z" in out
+
+
 def _fake_tty(monkeypatch, value):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: value)
     return reporter.interactive_tty()

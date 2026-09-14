@@ -48,6 +48,71 @@ def _warn(text):
     sys.stderr.write("diffimpactscout: warning: %s\n" % text)
 
 
+_FIX_HINTS = {
+    "ruff": "ruff check --fix {path}",
+    "ruff-format": "ruff format {path}",
+    "eslint": "eslint --fix {path}",
+    "prettier": "prettier --write {path}",
+}
+
+
+def _fix_hint(check_id, path):
+    template = _FIX_HINTS.get(check_id)
+    if not template or not path:
+        return None
+    return template.format(path=path)
+
+
+def _print_header(anchor, num_files, mode):
+    print("=" * 70)
+    print("  DiffImpactScout Guard")
+    print(
+        "  Diff Base: %s | %d changed file(s) | %s mode"
+        % (anchor or "none", num_files, mode)
+    )
+    print("=" * 70)
+
+
+def _print_check_result(check, result):
+    if result.has_issues():
+        print("  [FAIL]   %s" % check.id)
+        for issue in result.issues:
+            print("      %s" % issue.format())
+        hint = _fix_hint(check.id, result.issues[0].path)
+        if hint:
+            print("      --> Fix with: %s" % hint)
+    elif result.fixed:
+        print("  [FIXED]  %s" % check.id)
+        for path in result.fixed:
+            print("      [fixed] %s" % path)
+    elif result.warned:
+        print("  [SKIP]   %s" % check.id)
+    else:
+        print("  [PASS]   %s" % check.id)
+
+
+def _print_summary(ran, total_issues, total_fixed):
+    print("-" * 70)
+    print(
+        "  diffimpactscout: %d check(s), %d issue(s), %d fixed"
+        % (ran, total_issues, total_fixed)
+    )
+
+
+def _print_verdict(blocked, total_issues, mode):
+    if blocked:
+        verdict = "[BLOCKED] push rejected (strict mode: %d issue(s))" % total_issues
+    elif total_issues:
+        verdict = "[ALLOWED] push allowed (%s mode: %d issue(s) reported)" % (
+            mode,
+            total_issues,
+        )
+    else:
+        verdict = "[ALLOWED] push allowed (%s mode: no issues)" % mode
+    print("  Verdict: %s" % verdict)
+    print("=" * 70)
+
+
 def run_guard(root, cfg, staged=False, all_files=False, files=None):
     if _skip_requested():
         return 0
@@ -78,8 +143,11 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None):
         echo=True,
     )
 
+    _print_header(anchor, len(file_set), mode)
+
     ran = 0
     total_issues = 0
+    total_fixed = 0
     blocked = False
 
     for entry in cfg.get("guard", {}).get("checks") or []:
@@ -96,21 +164,18 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None):
         check_files = [] if check.scoped == "repo" else file_set
         try:
             result = check.run(ctx, check_files)
-            for issue in result.issues:
-                print(issue.format())
-                total_issues += 1
-            for path in result.fixed:
-                print("[fixed] %s" % path)
+            total_issues += len(result.issues)
+            total_fixed += len(result.fixed)
             for text in result.warned:
                 _warn(text)
             should_block = check.always_block or (check.blocking and mode == "strict")
             if should_block and result.has_issues():
                 blocked = True
+            _print_check_result(check, result)
         except Exception as exc:
             _warn("check %r failed: %s" % (check.id, exc))
             continue
 
-    print(
-        "diffimpactscout: %d check(s), %d issue(s)" % (ran, total_issues)
-    )
+    _print_summary(ran, total_issues, total_fixed)
+    _print_verdict(blocked, total_issues, mode)
     return 1 if blocked else 0

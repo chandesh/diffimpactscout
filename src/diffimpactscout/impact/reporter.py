@@ -62,6 +62,20 @@ def render_report(rows, unresolved, changed_count):
                 _cell(row, "action"),
             )
         )
+    lines.append("")
+    lines.append("## Findings")
+    for row in rows or []:
+        sev = _cell(row, "severity")
+        if not sev:
+            sev = "Unknown"
+        lines.append(
+            "[%s] %s -> %s"
+            % (sev.upper(), _cell(row, "path"), _cell(row, "ref"))
+        )
+        lines.append(
+            "    Category: %s | Module: %s | Action: %s"
+            % (_cell(row, "category"), _cell(row, "module"), _cell(row, "action"))
+        )
     if unresolved:
         lines.append("")
         lines.append("## Unresolved references (manual check required)")
@@ -70,8 +84,8 @@ def render_report(rows, unresolved, changed_count):
     lines.append("")
     counts = _counts(rows or [])
     lines.append(
-        "Summary: %d changed file(s); High: %d, Medium: %d, Low: %d"
-        % (changed_count, counts["High"], counts["Medium"], counts["Low"])
+        "Summary: High: %d, Medium: %d, Low: %d (%d changed file(s))"
+        % (counts["High"], counts["Medium"], counts["Low"], changed_count)
     )
     return "\n".join(lines) + "\n"
 

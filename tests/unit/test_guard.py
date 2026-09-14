@@ -376,6 +376,40 @@ def test_non_dict_check_entry_warns_and_skips(tmp_path, capsys):
     assert "0 check(s), 0 issue(s)" in captured.out
 
 
+def test_guard_prints_pass_status_and_verdict(tmp_path, capsys):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "ok.json", "{}\n", "base")
+    _anchor(repo)
+    cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
+    assert guard.run_guard(repo, cfg) == 0
+    out = capsys.readouterr().out
+    assert "[PASS]" in out
+    assert "syntax/json-syntax" in out
+    assert "[ALLOWED]" in out
+
+
+def test_guard_prints_fail_status_and_blocked_verdict(tmp_path, monkeypatch, capsys):
+    repo = _json_repo(tmp_path)
+    cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
+    monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
+    assert guard.run_guard(repo, cfg) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[BLOCKED]" in out
+    assert "DiffImpactScout Guard" in out
+
+
+def test_guard_prints_no_emojis(tmp_path, capsys):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "ok.json", "{}\n", "base")
+    _anchor(repo)
+    cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
+    guard.run_guard(repo, cfg)
+    out = capsys.readouterr().out
+    for ch in ("\u2605", "\u2713", "\u2717", "\u2714", "\u26a1", "\u2728", "\U0001f7e2", "\U0001f534"):
+        assert ch not in out, "emoji %r leaked into guard output" % ch
+
+
 def test_external_check_always_block_blocks_in_warn_mode(tmp_path, capsys):
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")

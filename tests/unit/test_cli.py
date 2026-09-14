@@ -573,13 +573,15 @@ def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
     assert _read_cfg(repo)["guard"]["blocking"] == "strict"
 
 
-def test_interactive_confirm_yes_defaults_strict(tmp_path, monkeypatch):
+def test_interactive_confirm_yes_defaults_strict(tmp_path, monkeypatch, capsys):
     """Checks that confirming interactively defaults blocking to strict."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
     assert _install_answers(repo, ["y"]) == 0
     assert _read_cfg(repo)["guard"]["blocking"] == "strict"
+    captured = capsys.readouterr()
+    assert "blocking  : strict" in captured.out
 
 
 def test_interactive_override_blocking_defaults_strict(tmp_path, monkeypatch):

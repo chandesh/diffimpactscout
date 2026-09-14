@@ -396,13 +396,13 @@ def _cmd_install_hooks(args):
         detected = detect.detect_stack(root)
         profile = _resolve_profile(args, detected)
         data = _build_config_data(profile, args)
+        interactive = not args.yes and _is_tty()
+        if interactive and not args.blocking:
+            data["guard"]["blocking"] = "strict"
         sys.stdout.write(_render_preview(detected, data))
         note = _other_stack_note(root, profile)
         if note:
             sys.stderr.write("diffimpactscout: %s\n" % note)
-        interactive = not args.yes and _is_tty()
-        if interactive and not args.blocking:
-            data["guard"]["blocking"] = "strict"
         if interactive:
             proceed = _prompt_yes_default("Proceed? [Y/n]", True)
             if not proceed:

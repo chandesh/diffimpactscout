@@ -540,6 +540,32 @@ def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
     assert _read_cfg(repo)["guard"]["blocking"] == "strict"
 
 
+def test_interactive_confirm_yes_defaults_strict(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install_answers(repo, ["y"]) == 0
+    assert _read_cfg(repo)["guard"]["blocking"] == "strict"
+
+
+def test_interactive_override_blocking_defaults_strict(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "", "", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    assert _read_cfg(repo)["guard"]["blocking"] == "strict"
+
+
+def test_interactive_override_blocking_prompt_selects_warn(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "", "warn", "y", "y"]
+    assert _install_answers(repo, answers) == 0
+    assert _read_cfg(repo)["guard"]["blocking"] == "warn"
+
+
 def _install_answers(repo, answers, args=None):
     # Test-time counterpart of the _non_tty fixture: the report code only
     # prompts when stdin is a terminal, so to test the interactive path we

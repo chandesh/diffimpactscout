@@ -529,7 +529,11 @@ def test_run_impact_frontend_same_line_dedup(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert _count_category(out, "frontend") == 1
-    assert out.count('http.get("/api/v1/orders/") at src/orders.service.ts:2') == 1
+    # Dedup verified at the row level: the ref appears in exactly one table
+    # row plus its single Findings line (the findings section repeats the
+    # per-row summary introduced by the output-formatting feature).
+    assert out.count('| http.get("/api/v1/orders/") at src/orders.service.ts:2 |') == 1
+    assert out.count('[HIGH] src/orders.service.ts -> http.get("/api/v1/orders/") at src/orders.service.ts:2') == 1
 
 
 def test_run_impact_frontend_duplicate_calls_distinct_lines(tmp_path, capsys):
@@ -574,7 +578,9 @@ def test_run_impact_template_duplicate_tag_dedup(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert _count_category(out, "template") == 1
-    assert out.count("{% url 'order-list' %}") == 1
+    # Dedup verified at the row level (see frontend same-line dedup test):
+    # one table row plus its single Findings line = 2 occurrences total.
+    assert out.count("{% url 'order-list' %}") == 2
 
 
 def test_run_impact_tty_accept_proceeds(tmp_path, monkeypatch, capsys):

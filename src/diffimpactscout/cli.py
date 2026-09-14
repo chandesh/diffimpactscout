@@ -243,6 +243,20 @@ def _prompt_choice(text, choices, default):
     return default
 
 
+def _prompt_blocking(default):
+    sys.stdout.write(
+        "Guard blocking mode: strict (block the push) or warn (report only)? "
+        "[strict/Warn] (default: %s): " % default
+    )
+    sys.stdout.flush()
+    answer = _read_answer()
+    if answer in ("strict", "s"):
+        return "strict"
+    if answer in ("warn", "w"):
+        return "warn"
+    return default
+
+
 def _check_id(entry):
     if isinstance(entry, dict):
         return entry.get("id", "?")
@@ -334,10 +348,7 @@ def _ask_overrides(data, args):
     data["guard"] = merged["guard"]
     data["impact"] = merged["impact"]
     if not args.blocking:
-        strict = _prompt_yes_default(
-            "Block the push when checks report issues? (strict mode) [y/N]", False
-        )
-        data["guard"]["blocking"] = "strict" if strict else "warn"
+        data["guard"]["blocking"] = _prompt_blocking("strict")
     hint = _LINT_HINT.get(profile)
     if hint:
         keep = _prompt_yes_default(
@@ -390,6 +401,8 @@ def _cmd_install_hooks(args):
         if note:
             sys.stderr.write("diffimpactscout: %s\n" % note)
         interactive = not args.yes and _is_tty()
+        if interactive and not args.blocking:
+            data["guard"]["blocking"] = "strict"
         if interactive:
             proceed = _prompt_yes_default("Proceed? [Y/n]", True)
             if not proceed:

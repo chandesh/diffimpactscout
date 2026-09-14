@@ -46,6 +46,11 @@ def _parser():
     p_impact.add_argument("--staged", action="store_true")
     p_impact.add_argument("--fast", action="store_true")
     p_impact.add_argument("--json", action="store_true")
+    p_impact.add_argument(
+        "--markdown",
+        action="store_true",
+        help="emit a Markdown table instead of the plain ASCII table",
+    )
     p_impact.set_defaults(func=_cmd_impact)
 
     p_check = sub.add_parser(
@@ -148,6 +153,7 @@ def _cmd_impact(args):
         staged=args.staged,
         fast=args.fast,
         json_out=args.json,
+        markdown=args.markdown,
     )
 
 
@@ -243,6 +249,20 @@ def _prompt_choice(text, choices, default):
     return default
 
 
+def _prompt_blocking(default):
+    sys.stdout.write(
+        "Guard blocking mode: strict (block the push) or warn (report only)? "
+        "[strict/Warn] (default: %s): " % default
+    )
+    sys.stdout.flush()
+    answer = _read_answer()
+    if answer in ("strict", "s"):
+        return "strict"
+    if answer in ("warn", "w"):
+        return "warn"
+    return default
+
+
 def _check_id(entry):
     if isinstance(entry, dict):
         return entry.get("id", "?")
@@ -334,10 +354,7 @@ def _ask_overrides(data, args):
     data["guard"] = merged["guard"]
     data["impact"] = merged["impact"]
     if not args.blocking:
-        strict = _prompt_yes_default(
-            "Block the push when checks report issues? (strict mode) [y/N]", False
-        )
-        data["guard"]["blocking"] = "strict" if strict else "warn"
+        data["guard"]["blocking"] = _prompt_blocking("strict")
     hint = _LINT_HINT.get(profile)
     if hint:
         keep = _prompt_yes_default(
@@ -385,11 +402,13 @@ def _cmd_install_hooks(args):
         detected = detect.detect_stack(root)
         profile = _resolve_profile(args, detected)
         data = _build_config_data(profile, args)
+        interactive = not args.yes and _is_tty()
+        if interactive and not args.blocking:
+            data["guard"]["blocking"] = "strict"
         sys.stdout.write(_render_preview(detected, data))
         note = _other_stack_note(root, profile)
         if note:
             sys.stderr.write("diffimpactscout: %s\n" % note)
-        interactive = not args.yes and _is_tty()
         if interactive:
             proceed = _prompt_yes_default("Proceed? [Y/n]", True)
             if not proceed:

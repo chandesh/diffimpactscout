@@ -119,18 +119,21 @@ def _write_file(root, relpath, content):
 
 
 def test_prettier_checks_registered():
+    """Verifies that the prettier check is registered as file-scoped."""
     assert "prettier" in REGISTRY
     assert REGISTRY["prettier"].scoped == "files"
     assert REGISTRY["prettier"].blocking is True
 
 
 def test_prettier_buildable_from_config():
+    """Checks that the prettier check can be built from configuration."""
     check = make_check({"id": "prettier"})
     assert check is not None
     assert check.scoped == "files"
 
 
 def test_prettier_reports_unformatted_file(tmp_path, monkeypatch):
+    """Verifies that an unformatted file produces a prettier issue."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_PRETTIER_FAIL", json.dumps(["web/src/app.js"]))
     root = str(tmp_path)
@@ -148,6 +151,7 @@ def test_prettier_reports_unformatted_file(tmp_path, monkeypatch):
 
 
 def test_prettier_formatted_file_passes(tmp_path, monkeypatch):
+    """Checks that a formatted file passes without issues."""
     _write_fake_npx(tmp_path, monkeypatch)
     root = str(tmp_path)
     _write_file(root, "web/src/app.js", "const x = 1;\n")
@@ -159,6 +163,7 @@ def test_prettier_formatted_file_passes(tmp_path, monkeypatch):
 
 
 def test_prettier_unsupported_extension_skipped(tmp_path, monkeypatch):
+    """Verifies that unsupported extensions are skipped by prettier."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)
@@ -174,6 +179,7 @@ def test_prettier_unsupported_extension_skipped(tmp_path, monkeypatch):
 
 
 def test_prettier_path_guard_skips_outside_src_app(tmp_path, monkeypatch):
+    """Checks that files outside src/ and app/ dirs are skipped."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)
@@ -189,6 +195,7 @@ def test_prettier_path_guard_skips_outside_src_app(tmp_path, monkeypatch):
 
 
 def test_prettier_top_level_src_checked(tmp_path, monkeypatch):
+    """Verifies that a top-level src/ file is checked by prettier."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_PRETTIER_FAIL", json.dumps(["src/app.js"]))
     root = str(tmp_path)
@@ -203,6 +210,7 @@ def test_prettier_top_level_src_checked(tmp_path, monkeypatch):
 
 
 def test_prettier_top_level_app_checked(tmp_path, monkeypatch):
+    """Checks that a top-level app/ file is checked by prettier."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_PRETTIER_FAIL", json.dumps(["app/main.js"]))
     root = str(tmp_path)
@@ -216,6 +224,7 @@ def test_prettier_top_level_app_checked(tmp_path, monkeypatch):
 
 
 def test_prettier_component_guard_skips_ambiguous_dirs(tmp_path, monkeypatch):
+    """Verifies that ambiguous directory names are skipped by the component guard."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)
@@ -237,6 +246,7 @@ def test_prettier_component_guard_skips_ambiguous_dirs(tmp_path, monkeypatch):
 def test_prettier_baseline_crlf_and_dotprefix_normalized(
     tmp_path, monkeypatch
 ):
+    """Checks that baseline entries normalize CRLF and dot prefixes."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)
@@ -258,6 +268,7 @@ def test_prettier_baseline_crlf_and_dotprefix_normalized(
 
 
 def test_prettier_baseline_skip_unless_dev_changed(tmp_path, monkeypatch):
+    """Verifies baseline skips a file unless the dev actually changed it."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)
@@ -279,6 +290,7 @@ def test_prettier_baseline_skip_unless_dev_changed(tmp_path, monkeypatch):
 
 
 def test_prettier_missing_npx_warns(tmp_path, monkeypatch):
+    """Checks that a missing npx produces a warning without failing."""
     empty = str(tmp_path / "empty")
     os.makedirs(empty)
     monkeypatch.setenv("PATH", empty)
@@ -294,6 +306,7 @@ def test_prettier_missing_npx_warns(tmp_path, monkeypatch):
 
 
 def test_prettier_other_rc_warns(tmp_path, monkeypatch):
+    """Verifies that an unexpected prettier exit code triggers a warning."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_PRETTIER_RC", "2")
     root = str(tmp_path)
@@ -311,6 +324,7 @@ def test_prettier_other_rc_warns(tmp_path, monkeypatch):
 def test_prettier_real_repo_dev_changed_overrides_baseline(
     tmp_path, monkeypatch
 ):
+    """Checks that a dev-changed file overrides the baseline in a real repo."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_PRETTIER_FAIL", json.dumps(["web/src/app.js"]))
     repo = _make_repo(tmp_path)
@@ -339,6 +353,7 @@ def test_prettier_real_repo_dev_changed_overrides_baseline(
 def test_prettier_real_repo_baseline_skip_not_dev_changed(
     tmp_path, monkeypatch
 ):
+    """Verifies a baseline file is skipped when the dev did not change it."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)

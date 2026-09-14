@@ -141,6 +141,7 @@ def _sha(repo, ref="HEAD"):
 
 
 def test_ruff_checks_registered():
+    """Verifies that ruff checks are registered with expected scope and blocking flags."""
     for cid, scoped in (("ruff", "lines"), ("ruff-format", "lines")):
         assert cid in REGISTRY
         assert REGISTRY[cid].scoped == scoped
@@ -148,6 +149,7 @@ def test_ruff_checks_registered():
 
 
 def test_ruff_checks_buildable_from_config():
+    """Checks that every ruff check can be built from its config id."""
     for cid in ("ruff", "ruff-format"):
         check = make_check({"id": cid})
         assert check is not None
@@ -155,6 +157,7 @@ def test_ruff_checks_buildable_from_config():
 
 
 def test_ruff_reports_only_changed_line_violations(tmp_path, monkeypatch):
+    """Verifies that ruff reports only violations on changed lines."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv(
         "RUFF_FAKE_VIOLATIONS",
@@ -176,6 +179,7 @@ def test_ruff_reports_only_changed_line_violations(tmp_path, monkeypatch):
 
 
 def test_ruff_untracked_file_checks_whole_file(tmp_path, monkeypatch):
+    """Verifies that untracked files are checked across the whole file."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv(
         "RUFF_FAKE_VIOLATIONS",
@@ -192,6 +196,7 @@ def test_ruff_untracked_file_checks_whole_file(tmp_path, monkeypatch):
 
 
 def test_ruff_empty_changed_set_skips_file(tmp_path, monkeypatch):
+    """Checks that an empty changed-line set skips running ruff on the file."""
     log = str(tmp_path / "log.txt")
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_LOG", log)
@@ -207,6 +212,7 @@ def test_ruff_empty_changed_set_skips_file(tmp_path, monkeypatch):
 
 
 def test_ruff_missing_tool_warns_no_block(tmp_path, monkeypatch):
+    """Verifies that a missing ruff tool warns without blocking."""
     empty = str(tmp_path / "empty")
     os.makedirs(empty)
     monkeypatch.setenv("PATH", empty)
@@ -223,6 +229,7 @@ def test_ruff_missing_tool_warns_no_block(tmp_path, monkeypatch):
 
 
 def test_ruff_rc2_tool_problem_warns(tmp_path, monkeypatch):
+    """Verifies that a ruff rc=2 exit is reported as a warning."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_CHECK_RC", "2")
     root = str(tmp_path)
@@ -239,6 +246,7 @@ def test_ruff_rc2_tool_problem_warns(tmp_path, monkeypatch):
 
 
 def test_ruff_non_py_files_skipped(tmp_path, monkeypatch):
+    """Checks that non-Python files are skipped by the ruff check."""
     log = str(tmp_path / "log.txt")
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_LOG", log)
@@ -252,6 +260,7 @@ def test_ruff_non_py_files_skipped(tmp_path, monkeypatch):
 
 
 def test_ruff_real_repo_incremental(tmp_path, monkeypatch):
+    """Verifies incremental ruff checks on a real git repo report only changed lines."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv(
         "RUFF_FAKE_VIOLATIONS",
@@ -285,6 +294,7 @@ def test_ruff_real_repo_incremental(tmp_path, monkeypatch):
 
 
 def test_ruff_real_repo_untracked_whole_file(tmp_path, monkeypatch):
+    """Verifies untracked files in a real repo are checked across the whole file."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_VIOLATIONS", json.dumps([_violation(3)]))
     repo = _make_repo(tmp_path)
@@ -310,6 +320,7 @@ def test_ruff_real_repo_untracked_whole_file(tmp_path, monkeypatch):
 
 
 def test_filter_diff_by_lines_keeps_only_changed_blocks():
+    """Verifies that diff filtering keeps only hunks touching changed lines."""
     kept = ruff._filter_diff_by_lines(FORMAT_DIFF, {4})
     assert "-  z = 3" in kept
     assert "+ z = 3" in kept
@@ -319,18 +330,22 @@ def test_filter_diff_by_lines_keeps_only_changed_blocks():
 
 
 def test_filter_diff_by_lines_none_keeps_whole_diff():
+    """Verifies that a None filter keeps the whole diff unchanged."""
     assert ruff._filter_diff_by_lines(FORMAT_DIFF, None) == FORMAT_DIFF
 
 
 def test_filter_diff_by_lines_empty_returns_empty():
+    """Verifies that an empty filter set returns an empty diff."""
     assert ruff._filter_diff_by_lines(FORMAT_DIFF, set()) == ""
 
 
 def test_filter_diff_by_lines_no_match_returns_empty():
+    """Verifies that a filter with no matching lines returns an empty diff."""
     assert ruff._filter_diff_by_lines(FORMAT_DIFF, {50}) == ""
 
 
 def test_ruff_format_reports_only_changed_blocks(tmp_path, monkeypatch):
+    """Verifies that ruff-format reports issues only for changed blocks."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_FORMAT_CHECK_RC", "1")
     monkeypatch.setenv("RUFF_FAKE_FORMAT_DIFF", FORMAT_DIFF)
@@ -352,6 +367,7 @@ def test_ruff_format_reports_only_changed_blocks(tmp_path, monkeypatch):
 
 
 def test_ruff_format_clean_passes(tmp_path, monkeypatch):
+    """Verifies that a clean ruff-format check passes with no issues."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_FORMAT_CHECK_RC", "0")
     root = str(tmp_path)
@@ -365,6 +381,7 @@ def test_ruff_format_clean_passes(tmp_path, monkeypatch):
 
 
 def test_ruff_format_other_rc_warns(tmp_path, monkeypatch):
+    """Verifies that a non-zero ruff-format rc is reported as a warning."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_FORMAT_CHECK_RC", "2")
     root = str(tmp_path)
@@ -380,6 +397,7 @@ def test_ruff_format_other_rc_warns(tmp_path, monkeypatch):
 
 
 def test_ruff_format_missing_tool_warns(tmp_path, monkeypatch):
+    """Verifies that a missing ruff tool warns for the format check."""
     empty = str(tmp_path / "empty")
     os.makedirs(empty)
     monkeypatch.setenv("PATH", empty)
@@ -395,6 +413,7 @@ def test_ruff_format_missing_tool_warns(tmp_path, monkeypatch):
 
 
 def test_ruff_format_diff_rc2_warns_no_block(tmp_path, monkeypatch):
+    """Verifies that a ruff-format diff rc=2 warns without blocking."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_FORMAT_CHECK_RC", "1")
     monkeypatch.setenv("RUFF_FAKE_FORMAT_DIFF_RC", "2")
@@ -412,6 +431,7 @@ def test_ruff_format_diff_rc2_warns_no_block(tmp_path, monkeypatch):
 
 
 def test_filter_diff_by_lines_body_starts_with_hunk_header():
+    """Verifies diff filtering keeps blocks when the diff body starts with a hunk header."""
     diff = (
         "@@ -2,4 +2,4 @@\n"
         "-  x = 1\n"
@@ -429,6 +449,7 @@ def test_filter_diff_by_lines_body_starts_with_hunk_header():
 
 
 def test_filter_diff_by_lines_all_hunks_no_header():
+    """Verifies diff filtering keeps hunks when no file header is present."""
     diff = (
         "@@ -1,2 +1,2 @@\n"
         "- a\n"
@@ -440,6 +461,7 @@ def test_filter_diff_by_lines_all_hunks_no_header():
 
 
 def test_filter_diff_by_lines_handles_dashed_content():
+    """Verifies diff filtering correctly handles lines containing dashes."""
     diff = (
         "--- a/f.py\n"
         "+++ b/f.py\n"
@@ -456,6 +478,7 @@ def test_filter_diff_by_lines_handles_dashed_content():
 
 
 def test_ruff_format_untracked_keeps_whole_diff(tmp_path, monkeypatch):
+    """Verifies that untracked files keep the whole format diff."""
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_FORMAT_CHECK_RC", "1")
     monkeypatch.setenv("RUFF_FAKE_FORMAT_DIFF", FORMAT_DIFF)
@@ -472,6 +495,7 @@ def test_ruff_format_untracked_keeps_whole_diff(tmp_path, monkeypatch):
 
 
 def test_ruff_format_empty_changed_set_skips(tmp_path, monkeypatch):
+    """Checks that an empty changed-line set skips running ruff-format."""
     log = str(tmp_path / "log.txt")
     _write_fake(tmp_path, monkeypatch)
     monkeypatch.setenv("RUFF_FAKE_LOG", log)

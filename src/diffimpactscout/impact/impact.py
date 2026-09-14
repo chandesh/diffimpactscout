@@ -30,7 +30,7 @@ _ENTITY_KINDS = {
 _DEFAULT_KINDS = ("name",)
 
 
-def run_impact(root, cfg, staged=False, fast=False, json_out=False):
+def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -82,7 +82,9 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False):
             + "\n"
         )
     else:
-        sys.stdout.write(reporter.render_report(rows, unresolved, changed_count))
+        sys.stdout.write(
+            reporter.render_report(rows, unresolved, changed_count, markdown=markdown)
+        )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")
     tty = reporter.interactive_tty()
     block, reason = reporter.should_block(strict_env, tty)
@@ -172,6 +174,9 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
         name = row.pop("_entity")
         deleted = row.pop("_deleted")
         row["severity"] = reporter.classify_severity(
+            layers.get(name) or (), deleted, changed_paths, row.get("path")
+        )
+        row["reason"] = reporter.severity_reason(
             layers.get(name) or (), deleted, changed_paths, row.get("path")
         )
         row["action"] = _action(row["severity"], deleted)

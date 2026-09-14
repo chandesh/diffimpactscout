@@ -125,18 +125,21 @@ def _write_baseline(root, data):
 
 
 def test_eslint_checks_registered():
+    """Verifies that the eslint check is registered as scoped and blocking."""
     assert "eslint" in REGISTRY
     assert REGISTRY["eslint"].scoped == "lines"
     assert REGISTRY["eslint"].blocking is True
 
 
 def test_eslint_buildable_from_config():
+    """Checks that the eslint check can be built from configuration."""
     check = make_check({"id": "eslint"})
     assert check is not None
     assert check.scoped == "lines"
 
 
 def test_eslint_reports_only_changed_line_issues(tmp_path, monkeypatch):
+    """Verifies that eslint only reports issues on changed lines."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5), _message(20)])
     root = str(tmp_path)
@@ -156,6 +159,7 @@ def test_eslint_reports_only_changed_line_issues(tmp_path, monkeypatch):
 
 
 def test_eslint_untracked_file_checks_whole_file(tmp_path, monkeypatch):
+    """Checks that untracked files are checked across the whole file."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5), _message(20)])
     root = str(tmp_path)
@@ -170,6 +174,7 @@ def test_eslint_untracked_file_checks_whole_file(tmp_path, monkeypatch):
 
 
 def test_eslint_empty_changed_set_skips_file(tmp_path, monkeypatch):
+    """Verifies that a file with no changed lines is skipped entirely."""
     log = str(tmp_path / "log.txt")
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_LOG", log)
@@ -186,6 +191,7 @@ def test_eslint_empty_changed_set_skips_file(tmp_path, monkeypatch):
 
 
 def test_eslint_missing_npx_warns_no_block(tmp_path, monkeypatch):
+    """Checks that a missing npx warns without blocking the run."""
     empty = str(tmp_path / "empty")
     os.makedirs(empty)
     monkeypatch.setenv("PATH", empty)
@@ -202,6 +208,7 @@ def test_eslint_missing_npx_warns_no_block(tmp_path, monkeypatch):
 
 
 def test_eslint_rc2_tool_problem_warns(tmp_path, monkeypatch):
+    """Verifies that an rc2 exit code warns about a tool problem."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_ESLINT_RC", "2")
     root = str(tmp_path)
@@ -218,6 +225,7 @@ def test_eslint_rc2_tool_problem_warns(tmp_path, monkeypatch):
 
 
 def test_eslint_invalid_json_ignored(tmp_path, monkeypatch):
+    """Checks that invalid JSON output from eslint is silently ignored."""
     _write_fake_npx(tmp_path, monkeypatch)
     monkeypatch.setenv("NPX_FAKE_ESLINT_JSON", "not-json")
     root = str(tmp_path)
@@ -238,6 +246,7 @@ def _write_src_file(root):
 
 
 def test_eslint_baseline_suppresses_issue_on_changed_line(tmp_path, monkeypatch):
+    """Verifies that a baseline issue on a changed line is suppressed."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5)])
     root = str(tmp_path)
@@ -261,6 +270,7 @@ def test_eslint_baseline_suppresses_issue_on_changed_line(tmp_path, monkeypatch)
 def test_eslint_baseline_reports_non_suppressed_issue_on_changed_line(
     tmp_path, monkeypatch
 ):
+    """Checks that non-suppressed issues on changed lines are reported."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5, col=1), _message(5, col=2)])
     root = str(tmp_path)
@@ -283,6 +293,7 @@ def test_eslint_baseline_reports_non_suppressed_issue_on_changed_line(
 
 
 def test_eslint_baseline_absolute_filepath_suppresses(tmp_path, monkeypatch):
+    """Verifies that absolute baseline file paths suppress matching issues."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5)])
     root = str(tmp_path)
@@ -304,6 +315,7 @@ def test_eslint_baseline_absolute_filepath_suppresses(tmp_path, monkeypatch):
 
 
 def test_eslint_baseline_results_wrapper_suppresses(tmp_path, monkeypatch):
+    """Checks that a results-wrapped baseline suppresses matching issues."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5)])
     root = str(tmp_path)
@@ -327,6 +339,7 @@ def test_eslint_baseline_results_wrapper_suppresses(tmp_path, monkeypatch):
 
 
 def test_eslint_baseline_dict_form_suppresses(tmp_path, monkeypatch):
+    """Verifies that a dict-form baseline suppresses matching issues."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5)])
     root = str(tmp_path)
@@ -343,6 +356,7 @@ def test_eslint_baseline_dict_form_suppresses(tmp_path, monkeypatch):
 def test_eslint_baseline_changed_elsewhere_still_reports_new(
     tmp_path, monkeypatch
 ):
+    """Checks that new issues on lines changed elsewhere are still reported."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(
         monkeypatch,
@@ -369,6 +383,7 @@ def test_eslint_baseline_changed_elsewhere_still_reports_new(
 
 
 def test_eslint_baseline_otherapp_js_does_not_suppress(tmp_path, monkeypatch):
+    """Verifies that a baseline for another app does not suppress issues."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5)])
     root = str(tmp_path)
@@ -394,6 +409,7 @@ def test_eslint_baseline_otherapp_js_does_not_suppress(tmp_path, monkeypatch):
 def test_eslint_baseline_suffix_otherapp_js_does_not_suppress(
     tmp_path, monkeypatch
 ):
+    """Checks that a matching suffix baseline for another app does not suppress."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5)])
     root = str(tmp_path)
@@ -419,6 +435,7 @@ def test_eslint_baseline_suffix_otherapp_js_does_not_suppress(
 def test_eslint_message_without_line_tracked_not_reported(
     tmp_path, monkeypatch
 ):
+    """Checks that line-less messages on tracked files are not reported."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [{"fatal": True, "message": "Parsing error"}])
     root = str(tmp_path)
@@ -434,6 +451,7 @@ def test_eslint_message_without_line_tracked_not_reported(
 def test_eslint_message_without_line_untracked_reported(
     tmp_path, monkeypatch
 ):
+    """Verifies that line-less messages on untracked files are reported."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [{"fatal": True, "message": "Parsing error"}])
     root = str(tmp_path)
@@ -444,11 +462,12 @@ def test_eslint_message_without_line_untracked_reported(
     )
     assert not result.ok()
     assert len(result.issues) == 1
-    assert result.issues[0].line == 0
+    assert result.issues[0].line is None
     assert result.issues[0].code == "eslint"
 
 
 def test_eslint_real_repo_incremental(tmp_path, monkeypatch):
+    """Verifies incremental linting reports only issues on changed lines."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(3), _message(7)])
     repo = _make_repo(tmp_path)
@@ -478,6 +497,7 @@ def test_eslint_real_repo_incremental(tmp_path, monkeypatch):
 
 
 def test_eslint_real_repo_baseline_suppression(tmp_path, monkeypatch):
+    """Checks that a real-repo baseline suppresses issues on changed lines."""
     _write_fake_npx(tmp_path, monkeypatch)
     _set_json(monkeypatch, [_message(5), _message(6)])
     repo = _make_repo(tmp_path)

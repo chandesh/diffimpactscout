@@ -93,8 +93,8 @@ class PrettierCheck(Check):
             issues.append(
                 CheckIssue(
                     path,
-                    0,
-                    0,
+                    None,
+                    None,
                     self.id,
                     "%s is not formatted. Fix with: npx prettier --write %s"
                     % (path, path),

@@ -92,21 +92,25 @@ def _ref(file, path, dynamic=False, line=1, method="get"):
 
 
 def test_str_value_constant():
+    """Verifies that _str_value extracts a string constant's value."""
     node = ast.parse("x = 'orders/'").body[0].value
     assert rl._str_value(node) == "orders/"
 
 
 def test_str_value_nonstring():
+    """Checks that _str_value returns None for non-string nodes."""
     node = ast.parse("x = 123").body[0].value
     assert rl._str_value(node) is None
 
 
 def test_iter_files_globs():
+    """Checks that _iter_files returns no files for a nonexistent root."""
     root = "/nonexistent/dir"
     assert list(rl._iter_files(root, ["**/urls.py"], (".py",))) == []
 
 
 def test_iter_files_walk(tmp_path):
+    """Verifies that _iter_files walks the tree and applies glob filters."""
     _write(str(tmp_path), "a/b/urls.py", "x = 1\n")
     _write(str(tmp_path), "a/c.py", "y = 1\n")
     _write(str(tmp_path), "plain.html", "<p></p>\n")
@@ -119,6 +123,7 @@ def test_iter_files_walk(tmp_path):
 
 
 def test_extract_django_routes(tmp_path):
+    """Verifies that Django routes are extracted with name, path, and handler."""
     _build_tree(tmp_path)
     routes = rl.extract_django_routes(str(tmp_path), ["**/urls.py"])
     by_name = {r.name: r for r in routes}
@@ -132,11 +137,13 @@ def test_extract_django_routes(tmp_path):
 
 
 def test_extract_django_routes_empty_globs(tmp_path):
+    """Checks that extract_django_routes returns no routes for empty globs."""
     _build_tree(tmp_path)
     assert rl.extract_django_routes(str(tmp_path), []) == []
 
 
 def test_extract_fastapi_routes(tmp_path):
+    """Verifies that FastAPI routes are extracted with their handler paths."""
     _write(str(tmp_path), "main.py", FASTAPI)
     routes = rl.extract_fastapi_routes(str(tmp_path), ["**/*.py"])
     paths = {r.handler: r.path for r in routes}
@@ -148,6 +155,7 @@ def test_extract_fastapi_routes(tmp_path):
 
 
 def test_fastapi_base_allowlist(tmp_path):
+    """Checks that only routes on allowlisted base objects are extracted."""
     src = (
         "config = Config()\n"
         "db = Database()\n"
@@ -187,6 +195,7 @@ def test_fastapi_base_allowlist(tmp_path):
 
 
 def test_extract_template_refs(tmp_path):
+    """Verifies that Django template url tags are extracted as references."""
     _build_tree(tmp_path)
     refs = rl.extract_template_refs(str(tmp_path), ["**/templates/**/*.html"])
     names = {name for _f, name in refs}
@@ -195,6 +204,7 @@ def test_extract_template_refs(tmp_path):
 
 
 def test_extract_template_refs_flat_template(tmp_path):
+    """Checks that a flat template's url tag is captured as a reference."""
     _write(
         str(tmp_path),
         "app/templates/orders.html",
@@ -205,6 +215,7 @@ def test_extract_template_refs_flat_template(tmp_path):
 
 
 def test_match_template_refs(tmp_path):
+    """Verifies that template references match to known routes or stay unresolved."""
     _build_tree(tmp_path)
     refs = rl.extract_template_refs(str(tmp_path), ["**/templates/**/*.html"])
     routes = [
@@ -219,6 +230,7 @@ def test_match_template_refs(tmp_path):
 
 
 def test_extract_frontend_refs(tmp_path):
+    """Verifies that frontend HTTP calls are extracted as static and dynamic refs."""
     _build_tree(tmp_path)
     refs = rl.extract_frontend_refs(str(tmp_path), ["**/src/**/*.ts"])
     static = [r["ref"] for r in refs if not r["dynamic"]]
@@ -234,6 +246,7 @@ def test_extract_frontend_refs(tmp_path):
 
 
 def test_extract_frontend_refs_ignores_comments(tmp_path):
+    """Checks that commented-out HTTP calls are not extracted as refs."""
     src = (
         "// this.http.get('/fake/')\n"
         "/* this.http.get('/blocked/') and http.post('/x') */\n"
@@ -250,6 +263,7 @@ def test_extract_frontend_refs_ignores_comments(tmp_path):
 
 
 def test_extract_frontend_refs_real_lines(tmp_path):
+    """Verifies that extracted refs report the real source line number."""
     src = (
         "import { HttpClient } from '@angular/common/http';\n"
         "// comment line\n"
@@ -263,6 +277,7 @@ def test_extract_frontend_refs_real_lines(tmp_path):
 
 
 def test_extract_frontend_refs_block_comment_preserves_lines(tmp_path):
+    """Checks that block comments preserve accurate line numbers for refs."""
     src = (
         "/* this.http.get('/blocked/')\n"
         "   still blocked */\n"
@@ -275,6 +290,7 @@ def test_extract_frontend_refs_block_comment_preserves_lines(tmp_path):
 
 
 def test_match_endpoints_wildcard_and_prefix(tmp_path):
+    """Verifies that refs match routes via wildcard and prefix patterns."""
     routes = [Route("item-detail", "/api/v1/orders/<int:id>/", "items", "u.py")]
     refs = [
         _ref("f.ts", "/api/v1/orders/5/"),
@@ -288,6 +304,7 @@ def test_match_endpoints_wildcard_and_prefix(tmp_path):
 
 
 def test_match_endpoints_exact_and_dynamic(tmp_path):
+    """Checks that exact, dynamic, and unknown refs are handled by match_endpoints."""
     routes = [
         Route("order-list", "/api/v1/orders/", "OrderList.as_view", "u.py"),
         Route("report-list", "/api/v1/reports/", "reports", "u.py"),
@@ -307,6 +324,7 @@ def test_match_endpoints_exact_and_dynamic(tmp_path):
 
 
 def test_match_endpoints_leading_slash_tolerant(tmp_path):
+    """Verifies that match_endpoints tolerates a leading slash difference."""
     routes = [
         Route("order-list", "api/v1/orders/", "OrderList.as_view", "u.py"),
         Route("report-list", "api/v1/reports/", "reports", "u.py"),
@@ -323,6 +341,7 @@ def test_match_endpoints_leading_slash_tolerant(tmp_path):
 
 
 def test_match_endpoints_prefix_boundary_nonmatch(tmp_path):
+    """Checks that a partial prefix at a boundary does not match the route."""
     routes = [Route("order-list", "/api/v1/orders/", "OrderList.as_view", "u.py")]
     refs = [_ref("f.ts", "/api/v1/order")]
     matched, unresolved = rl.match_endpoints(refs, routes)
@@ -332,6 +351,7 @@ def test_match_endpoints_prefix_boundary_nonmatch(tmp_path):
 
 
 def test_re_path_route_extracted_as_regex_source(tmp_path):
+    """Verifies that re_path routes store their raw regex as the path."""
     _build_tree(tmp_path)
     routes = rl.extract_django_routes(str(tmp_path), ["**/urls.py"])
     by_name = {r.name: r for r in routes}
@@ -345,6 +365,7 @@ def test_re_path_route_extracted_as_regex_source(tmp_path):
 
 
 def test_template_url_tag_with_args_not_captured(tmp_path):
+    """Checks that url tags with extra arguments are not captured as refs."""
     _write(
         str(tmp_path),
         "app/templates/orders.html",
@@ -355,6 +376,7 @@ def test_template_url_tag_with_args_not_captured(tmp_path):
 
 
 def test_route_class():
+    """Verifies that the Route class stores name, path, handler, and module."""
     r = Route("order-list", "orders/", "OrderList.as_view", "urls.py")
     assert r.name == "order-list"
     assert r.path == "orders/"

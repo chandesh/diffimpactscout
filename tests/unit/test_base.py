@@ -4,6 +4,38 @@ import subprocess
 import diffimpactscout.base as base
 
 
+def test_default_limit_ignores_oldest_sprint(tmp_path):
+    """Verifies the default limit ignores the oldest sprint candidate."""
+    repo = _make_repo(tmp_path)
+    master_sha = _commit(repo, "a.txt", "one\n", "m0", date="2023-01-01T00:00:00")
+    s3_sha = _commit(repo, "s3.txt", "s3\n", "s3", date="2026-03-01T00:00:00")
+    s4_sha = _commit(repo, "s4.txt", "s4\n", "s4", date="2026-04-01T00:00:00")
+    s5_sha = _commit(repo, "s5.txt", "s5\n", "s5", date="2026-05-01T00:00:00")
+    s6_sha = _commit(repo, "s6.txt", "s6\n", "s6", date="2026-06-01T00:00:00")
+    s2_sha = _commit(repo, "s2.txt", "s2\n", "s2", date="2026-02-01T00:00:00")
+    s1_sha = _commit(repo, "s1.txt", "s1\n", "s1", date="2026-01-01T00:00:00")
+
+    _git("update-ref", "refs/remotes/upstream/master", master_sha, cwd=repo)
+    for name, sha in (
+        ("s6", s6_sha),
+        ("s5", s5_sha),
+        ("s4", s4_sha),
+        ("s3", s3_sha),
+        ("s2", s2_sha),
+        ("s1", s1_sha),
+    ):
+        _git("update-ref", "refs/remotes/upstream/sprint/%s" % name, sha, cwd=repo)
+
+    # s1 is the oldest sprint and its tree is identical to HEAD (zero diff).
+    # With the default candidate limit it is dropped, so the closest remaining
+    # sprint (s2, one file short of HEAD) is chosen instead.
+    assert base.resolve_change_base(repo) == "refs/remotes/upstream/sprint/s2"
+    # An explicit limit large enough to include s1 makes it win via zero diff.
+    assert (
+        base.resolve_change_base(repo, limit=6) == "refs/remotes/upstream/sprint/s1"
+    )
+
+
 def _git_env(extra=None):
     env = dict(os.environ)
     env["GIT_CONFIG_GLOBAL"] = "/dev/null"
@@ -51,6 +83,7 @@ def _sha(repo, ref="HEAD"):
 
 
 def test_no_remote_tracking_refs_returns_none(tmp_path):
+    """Checks that no remote tracking refs returns None from resolve_change_base."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "initial")
     _commit(repo, "b.txt", "two\n", "second")
@@ -58,6 +91,7 @@ def test_no_remote_tracking_refs_returns_none(tmp_path):
 
 
 def test_origin_master_resolved(tmp_path):
+    """Verifies resolve_change_base picks origin/master when present."""
     repo = _make_repo(tmp_path)
     sha = _commit(repo, "a.txt", "one\n", "initial")
     _git("update-ref", "refs/remotes/origin/master", sha, cwd=repo)
@@ -65,6 +99,7 @@ def test_origin_master_resolved(tmp_path):
 
 
 def test_origin_head_symbolic_ref_target(tmp_path):
+    """Checks that origin/HEAD's symbolic target is resolved as the base."""
     repo = _make_repo(tmp_path)
     sha = _commit(repo, "a.txt", "one\n", "initial")
     _git("update-ref", "refs/remotes/origin/master", sha, cwd=repo)
@@ -78,6 +113,7 @@ def test_origin_head_symbolic_ref_target(tmp_path):
 
 
 def test_upstream_preferred_over_origin_same_tree(tmp_path):
+    """Verifies upstream/master is preferred over origin on equal trees."""
     repo = _make_repo(tmp_path)
     sha = _commit(repo, "a.txt", "one\n", "initial")
     _git("update-ref", "refs/remotes/origin/master", sha, cwd=repo)
@@ -86,6 +122,7 @@ def test_upstream_preferred_over_origin_same_tree(tmp_path):
 
 
 def test_closest_tree_zero_diff_short_circuit(tmp_path):
+    """Checks that a zero-diff sprint short-circuits base resolution."""
     repo = _make_repo(tmp_path)
     master_sha = _commit(repo, "a.txt", "one\n", "initial")
     head_sha = _commit(repo, "b.txt", "two\n", "second")
@@ -95,6 +132,7 @@ def test_closest_tree_zero_diff_short_circuit(tmp_path):
 
 
 def test_closest_tree_smallest_diff_count_wins(tmp_path):
+    """Verifies the sprint with the smallest diff count is chosen."""
     repo = _make_repo(tmp_path)
     master_sha = _commit(repo, "a.txt", "one\n", "initial")
     sprint_sha = _commit(repo, "b.txt", "two\n", "second")
@@ -105,6 +143,7 @@ def test_closest_tree_smallest_diff_count_wins(tmp_path):
 
 
 def test_limit_caps_sprint_candidates(tmp_path):
+    """Checks that the limit caps how many sprint candidates are considered."""
     repo = _make_repo(tmp_path)
     s2_sha = _commit(repo, "a.txt", "one\n", "s2", date="2025-01-01T00:00:00")
     s1_sha = _commit(repo, "b.txt", "two\n", "s1", date="2024-01-01T00:00:00")
@@ -121,6 +160,7 @@ def test_limit_caps_sprint_candidates(tmp_path):
 
 
 def test_closest_tree_master_wins_tie(tmp_path):
+    """Verifies master wins when it ties a sprint candidate."""
     repo = _make_repo(tmp_path)
     master_sha = _commit(repo, "a.txt", "one\n", "initial")
     _commit(repo, "b.txt", "two\n", "second")
@@ -130,6 +170,7 @@ def test_closest_tree_master_wins_tie(tmp_path):
 
 
 def test_origin_fallback_main_before_master(tmp_path):
+    """Checks that origin/main is used as fallback before origin/master."""
     repo = _make_repo(tmp_path)
     sha = _commit(repo, "a.txt", "one\n", "initial")
     _git("update-ref", "refs/remotes/origin/main", sha, cwd=repo)

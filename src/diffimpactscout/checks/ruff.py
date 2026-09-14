@@ -157,8 +157,8 @@ class RuffCheck(Check):
                 issues.append(
                     CheckIssue(
                         path,
-                        row or 0,
-                        location.get("column") or 0,
+                        row,
+                        location.get("column"),
                         violation.get("code") or self.id,
                         violation.get("message") or "",
                     )
@@ -215,8 +215,8 @@ class RuffFormatCheck(Check):
             issues.append(
                 CheckIssue(
                     path,
-                    0,
-                    0,
+                    None,
+                    None,
                     self.id,
                     "formatting issue in changed lines:\n%s\nFix with: ruff format %s"
                     % (_truncate(kept), path),

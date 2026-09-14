@@ -59,6 +59,7 @@ def _ctx(root="/repo", scope=None, anchor="A", from_ref="F", to_ref="T"):
 
 
 def test_register_stores_by_id_and_returns_class():
+    """Verifies that register stores the check by id and returns the class."""
     REGISTRY.pop(FakeCheck.id, None)
     try:
         assert register(FakeCheck) is FakeCheck
@@ -68,6 +69,7 @@ def test_register_stores_by_id_and_returns_class():
 
 
 def test_register_rejects_idless_class():
+    """Checks that register raises ValueError for a class without an id."""
     class NoIdCheck(Check):
         scoped = "files"
 
@@ -77,6 +79,7 @@ def test_register_rejects_idless_class():
 
 
 def test_register_later_wins_on_collision():
+    """Checks that registering a later check with the same id wins."""
     REGISTRY.pop(FakeCheck.id, None)
 
     class OtherCheck(Check):
@@ -91,6 +94,7 @@ def test_register_later_wins_on_collision():
 
 
 def test_make_check_instantiates_registered_class():
+    """Verifies that make_check instantiates the registered check class."""
     REGISTRY[FakeCheck.id] = FakeCheck
     try:
         check = make_check({"id": "test/fake"})
@@ -103,6 +107,7 @@ def test_make_check_instantiates_registered_class():
 
 
 def test_make_check_applies_entry_args_and_blocking():
+    """Checks that make_check applies entry args and blocking flag."""
     REGISTRY[FakeCheck.id] = FakeCheck
     try:
         check = make_check(
@@ -115,6 +120,7 @@ def test_make_check_applies_entry_args_and_blocking():
 
 
 def test_make_check_parses_string_bool_values():
+    """Checks that make_check parses string boolean values correctly."""
     REGISTRY[FakeCheck.id] = FakeCheck
     try:
         check = make_check(
@@ -137,6 +143,7 @@ def test_make_check_parses_string_bool_values():
 
 
 def test_external_check_parses_string_always_block():
+    """Checks that ExternalCheck parses string always_block values."""
     check = ExternalCheck(
         {"id": "ext/str", "command": ["echo", "hi"], "always_block": "false"}
     )
@@ -148,6 +155,7 @@ def test_external_check_parses_string_always_block():
 
 
 def test_make_check_appends_args_to_fixed_args():
+    """Checks that make_check appends entry args to the check's fixed args."""
     REGISTRY[FakeCheck.id] = FakeCheck
     try:
 
@@ -167,6 +175,7 @@ def test_make_check_appends_args_to_fixed_args():
 
 
 def test_make_check_always_block_default_and_override():
+    """Checks that always_block uses its default and respects overrides."""
     REGISTRY[AlwaysBlockCheck.id] = AlwaysBlockCheck
     try:
         default = make_check({"id": "test/always-block", "blocking": False})
@@ -179,15 +188,18 @@ def test_make_check_always_block_default_and_override():
 
 
 def test_make_check_unknown_id_returns_none():
+    """Checks that make_check returns None for an unknown check id."""
     assert make_check({"id": "nope/nope"}) is None
 
 
 def test_make_check_non_dict_returns_none():
+    """Checks that make_check returns None for non-dict entries."""
     assert make_check(None) is None
     assert make_check("oops") is None
 
 
 def test_external_check_created_for_external_type():
+    """Verifies that make_check creates an ExternalCheck for external type."""
     check = make_check(
         {
             "type": "external",
@@ -200,12 +212,14 @@ def test_external_check_created_for_external_type():
 
 
 def test_make_check_external_without_id_derives_default():
+    """Checks that external checks without an id get a derived default id."""
     check = make_check({"type": "external", "command": ["echo", "hi"]})
     assert isinstance(check, ExternalCheck)
     assert check.id == "external:echo"
 
 
 def test_external_check_inplace_file_substitution_and_rc(tmp_path):
+    """Verifies external checks substitute {file} in place and use the rc."""
     root = str(tmp_path)
     script = 'echo "mid=$1 end=$2"; exit 7'
     check = ExternalCheck(
@@ -222,6 +236,7 @@ def test_external_check_inplace_file_substitution_and_rc(tmp_path):
 
 
 def test_external_check_appends_path_when_no_placeholder(tmp_path):
+    """Checks that external checks append the path when no placeholder exists."""
     root = str(tmp_path)
     script = 'echo "got=$1"; exit 3'
     check = ExternalCheck({"id": "ext/append", "command": ["sh", "-c", script, "sh"]})
@@ -233,6 +248,7 @@ def test_external_check_appends_path_when_no_placeholder(tmp_path):
 
 
 def test_external_check_zero_rc_is_clean(tmp_path):
+    """Checks that an external check returning zero is clean."""
     root = str(tmp_path)
     check = ExternalCheck(
         {"id": "ext/ok", "command": ["sh", "-c", "exit 0", "sh", "{file}"]}
@@ -244,6 +260,7 @@ def test_external_check_zero_rc_is_clean(tmp_path):
 
 
 def test_external_check_missing_command_warns_not_blocks(tmp_path):
+    """Checks that a missing external command warns without blocking."""
     root = str(tmp_path)
     check = ExternalCheck(
         {"id": "ext/missing", "command": ["/nonexistent/tool-xyz", "{file}"]}
@@ -256,6 +273,7 @@ def test_external_check_missing_command_warns_not_blocks(tmp_path):
 
 
 def test_external_check_missing_command_warns_once_for_many_files(tmp_path):
+    """Checks that a missing command warns only once across many files."""
     root = str(tmp_path)
     check = ExternalCheck(
         {"id": "ext/missing-many", "command": ["/nonexistent/tool-xyz", "{file}"]}
@@ -267,6 +285,7 @@ def test_external_check_missing_command_warns_once_for_many_files(tmp_path):
 
 
 def test_external_check_nonzero_rc_no_output_falls_back_to_exit_code(tmp_path):
+    """Checks that a silent nonzero rc falls back to the exit code message."""
     root = str(tmp_path)
     script = "exit 9"
     check = ExternalCheck(
@@ -278,7 +297,21 @@ def test_external_check_nonzero_rc_no_output_falls_back_to_exit_code(tmp_path):
     assert result.issues[0].message == "exit code 9"
 
 
+def test_external_check_surfaces_tool_exit_code_with_output(tmp_path):
+    """Checks that a failing tool with output surfaces its real exit code."""
+    root = str(tmp_path)
+    check = ExternalCheck(
+        {"id": "ext/boom", "command": ["sh", "-c", 'echo "boom"; exit 127', "sh", "{file}"]}
+    )
+    result = check.run(_ctx(root=root), ["a.txt"])
+    assert not result.ok()
+    assert len(result.issues) == 1
+    assert "boom" in result.issues[0].message
+    assert "(exit code 127)" in result.issues[0].message
+
+
 def test_external_check_empty_file_list_is_clean(tmp_path):
+    """Checks that an external check with no files is clean."""
     root = str(tmp_path)
     check = ExternalCheck({"id": "ext/none", "command": ["/bin/echo", "hi"]})
     result = check.run(_ctx(root=root), [])
@@ -288,6 +321,7 @@ def test_external_check_empty_file_list_is_clean(tmp_path):
 
 
 def test_external_check_path_with_spaces_stays_single_argv(tmp_path):
+    """Checks that paths with spaces remain a single argv entry."""
     root = str(tmp_path)
     script = 'echo "got=$1"; exit 4'
     check = ExternalCheck(
@@ -297,9 +331,11 @@ def test_external_check_path_with_spaces_stays_single_argv(tmp_path):
     assert not result.ok()
     assert len(result.issues) == 1
     assert "got=dir with space/a file.txt" in result.issues[0].message
+    assert "(exit code 4)" in result.issues[0].message
 
 
 def test_external_check_repo_scoped_runs_once_no_file(tmp_path):
+    """Checks that repo-scoped external checks run once without a file."""
     root = str(tmp_path)
     script = 'echo "repo-check"; exit 5'
     check = ExternalCheck(
@@ -314,9 +350,11 @@ def test_external_check_repo_scoped_runs_once_no_file(tmp_path):
     assert len(result.issues) == 1
     assert result.issues[0].path == "."
     assert "repo-check" in result.issues[0].message
+    assert "(exit code 5)" in result.issues[0].message
 
 
 def test_external_check_repo_scoped_zero_rc_is_clean(tmp_path):
+    """Checks that a repo-scoped external check with zero rc is clean."""
     root = str(tmp_path)
     check = ExternalCheck(
         {
@@ -332,6 +370,7 @@ def test_external_check_repo_scoped_zero_rc_is_clean(tmp_path):
 
 
 def test_external_check_repo_scoped_missing_command_warns(tmp_path):
+    """Checks that a missing repo-scoped command warns without blocking."""
     root = str(tmp_path)
     check = ExternalCheck(
         {"id": "ext/repo-missing", "scoped": "repo", "command": ["/nonexistent/repo-tool"]}
@@ -343,6 +382,7 @@ def test_external_check_repo_scoped_missing_command_warns(tmp_path):
 
 
 def test_context_changed_lines_delegates_to_scope():
+    """Verifies that context.changed_lines delegates to the scope object."""
     scope = FakeScope()
     ctx = _ctx(scope=scope)
     assert ctx.changed_lines("a.txt") == {3}
@@ -352,6 +392,7 @@ def test_context_changed_lines_delegates_to_scope():
 
 
 def test_context_is_tracked_delegates_to_scope():
+    """Verifies that context.is_tracked delegates to the scope object."""
     scope = FakeScope()
     ctx = _ctx(scope=scope)
     assert ctx.is_tracked("a.txt") is True
@@ -360,12 +401,14 @@ def test_context_is_tracked_delegates_to_scope():
 
 
 def test_context_fail_open_on_scope_errors():
+    """Checks that scope errors fail open rather than raising."""
     ctx = _ctx(scope=BoomScope())
     assert ctx.changed_lines("a.txt") is None
     assert ctx.is_tracked("a.txt") is False
 
 
 def test_context_echo_note_respects_flag(capsys):
+    """Checks that context.note respects the echo flag."""
     scope = FakeScope()
     quiet = _ctx(scope=scope, root="/repo")
     loud = _ctx(scope=scope, root="/repo")
@@ -380,16 +423,25 @@ def test_context_echo_note_respects_flag(capsys):
 
 
 def test_issue_format():
+    """Verifies that CheckIssue formats path, line, column, code, and message."""
     issue = CheckIssue("a.txt", 3, 5, "RUF100", "unused noqa")
     assert issue.format() == "a.txt:3:5: RUF100 unused noqa"
 
 
-def test_issue_format_zero_position():
-    issue = CheckIssue("b.txt", 0, 0, "ext/tool", "failed")
-    assert issue.format() == "b.txt:0:0: ext/tool failed"
+def test_issue_format_file_level_no_position():
+    """Checks that a file-level issue renders the path without a position."""
+    issue = CheckIssue("b.txt", None, None, "ext/tool", "failed")
+    assert issue.format() == "b.txt: ext/tool failed"
+
+
+def test_issue_format_line_only_renders_dash_column():
+    """Checks that a missing column renders as a dash."""
+    issue = CheckIssue("c.txt", 7, None, "ext/tool", "failed")
+    assert issue.format() == "c.txt:7:-: ext/tool failed"
 
 
 def test_result_ok_and_has_issues():
+    """Verifies CheckResult.ok and has_issues for clean and dirty results."""
     clean = CheckResult()
     assert clean.ok()
     assert not clean.has_issues()
@@ -410,12 +462,14 @@ def test_result_ok_and_has_issues():
 
 
 def test_warned_alone_is_ok():
+    """Checks that a result with only warnings is still ok."""
     result = CheckResult(warned=["missing tool"])
     assert result.ok()
     assert not result.has_issues()
 
 
 def test_extend_config_ignores_unknown_keys():
+    """Checks that extend_config ignores unknown config keys."""
     check = FakeCheck()
     check.extend_config({"id": "test/fake", "unknown": 1, "args": [], "blocking": True})
     assert check.blocking is True
@@ -423,10 +477,12 @@ def test_extend_config_ignores_unknown_keys():
 
 
 def test_check_requires_id():
+    """Checks that instantiating a Check without an id raises ValueError."""
     with pytest.raises(ValueError):
         Check()
 
 
 def test_external_check_requires_command():
+    """Checks that ExternalCheck without a command raises ValueError."""
     with pytest.raises(ValueError):
         ExternalCheck({"id": "ext/none"})

@@ -21,6 +21,7 @@ DEFAULT_IGNORE_PATHS = [
     "**/dist/**",
     "**/build/**",
     "**/.git/**",
+    "**/.impact_analysis_cache.json",
 ]
 
 DEFAULT_GUARD_CHECKS = [
@@ -32,6 +33,7 @@ DEFAULT_GUARD_CHECKS = [
     {"id": "syntax/merge-conflict"},
     {"id": "repo/large-files", "args": ["--maxkb=250000"]},
     {"id": "repo/private-key"},
+    {"id": "repo/case-conflict"},
 ]
 
 

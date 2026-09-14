@@ -80,6 +80,7 @@ def _json_repo(tmp_path, content="{ not valid"):
 
 
 def test_skip_env_returns_zero_and_runs_no_checks(tmp_path, monkeypatch, capsys):
+    """Verifies that the skip env var returns zero and runs no checks."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     monkeypatch.setenv("DIFFIMPACTSCOUT_SKIP", "1")
@@ -90,6 +91,7 @@ def test_skip_env_returns_zero_and_runs_no_checks(tmp_path, monkeypatch, capsys)
 
 
 def test_impact_check_skip_env_returns_zero(tmp_path, monkeypatch, capsys):
+    """Checks that the IMPACT_CHECK_SKIP env var returns zero."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     monkeypatch.setenv("IMPACT_CHECK_SKIP", "1")
@@ -99,6 +101,7 @@ def test_impact_check_skip_env_returns_zero(tmp_path, monkeypatch, capsys):
 
 
 def test_warn_mode_blocking_issue_returns_zero(tmp_path, capsys):
+    """Verifies that a blocking issue returns zero in warn mode."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     assert guard.run_guard(repo, cfg) == 0
@@ -109,6 +112,7 @@ def test_warn_mode_blocking_issue_returns_zero(tmp_path, capsys):
 
 
 def test_strict_env_blocking_issue_returns_one(tmp_path, monkeypatch, capsys):
+    """Verifies that a blocking issue returns one with the strict env var."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
@@ -118,6 +122,7 @@ def test_strict_env_blocking_issue_returns_one(tmp_path, monkeypatch, capsys):
 
 
 def test_strict_config_blocking_issue_returns_one(tmp_path, capsys):
+    """Verifies that a blocking issue returns one with strict config."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}], blocking="strict")
     assert guard.run_guard(repo, cfg) == 1
@@ -126,6 +131,7 @@ def test_strict_config_blocking_issue_returns_one(tmp_path, capsys):
 
 
 def test_blocking_false_never_blocks_in_strict(tmp_path, monkeypatch, capsys):
+    """Checks that a non-blocking check never blocks even in strict mode."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax", "blocking": False}])
     monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
@@ -135,6 +141,7 @@ def test_blocking_false_never_blocks_in_strict(tmp_path, monkeypatch, capsys):
 
 
 def test_private_key_always_blocks_in_warn_mode(tmp_path, capsys):
+    """Verifies that a private key always blocks even in warn mode."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -143,9 +150,24 @@ def test_private_key_always_blocks_in_warn_mode(tmp_path, capsys):
     assert guard.run_guard(repo, cfg) == 1
     captured = capsys.readouterr()
     assert "private key detected" in captured.out
+    assert "hard-block check" in captured.out
+
+
+def test_guard_warn_mode_blocked_verdict_names_hard_block(tmp_path, capsys):
+    """Checks that a warn-mode hard-block verdict names the hard-block check."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    _anchor(repo)
+    _commit(repo, "key.pem", "-----BEGIN RSA PRIVATE KEY-----\n", "dev")
+    cfg = _cfg(repo, [{"id": "repo/private-key"}])
+    assert guard.run_guard(repo, cfg) == 1
+    out = capsys.readouterr().out
+    assert "[BLOCKED]" in out
+    assert "warn mode; hard-block check" in out
 
 
 def test_missing_external_tool_warns_and_returns_zero(tmp_path, capsys):
+    """Checks that a missing external tool warns and returns zero."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg = _cfg(
@@ -166,6 +188,7 @@ def test_missing_external_tool_warns_and_returns_zero(tmp_path, capsys):
 
 
 def test_explicit_files_mode(tmp_path, capsys):
+    """Verifies that run_guard checks only the explicitly given files."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _commit(repo, "bad.json", "{ not valid", "dev")
@@ -176,6 +199,7 @@ def test_explicit_files_mode(tmp_path, capsys):
 
 
 def test_staged_mode_uses_cached_diff(tmp_path, capsys):
+    """Verifies that staged mode checks files from the git index."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.json", "{}", "base")
     with open(os.path.join(repo, "staged.json"), "w") as fh:
@@ -188,6 +212,7 @@ def test_staged_mode_uses_cached_diff(tmp_path, capsys):
 
 
 def test_all_files_mode(tmp_path, capsys):
+    """Verifies that all_files mode checks every tracked file."""
     repo = _make_repo(tmp_path)
     _commit(repo, "ok.json", "{}", "base")
     _commit(repo, "bad.json", "{ not valid", "dev")
@@ -198,6 +223,7 @@ def test_all_files_mode(tmp_path, capsys):
 
 
 def test_hygiene_fixer_prints_fixed(tmp_path, capsys):
+    """Verifies that the hygiene fixer prints and applies a fix."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -211,6 +237,7 @@ def test_hygiene_fixer_prints_fixed(tmp_path, capsys):
 
 
 def test_unknown_check_warns_and_skips(tmp_path, capsys):
+    """Checks that an unknown check id warns and is skipped."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -223,6 +250,7 @@ def test_unknown_check_warns_and_skips(tmp_path, capsys):
 
 
 def test_invalid_check_config_warns_and_skips(tmp_path, capsys):
+    """Checks that an invalid check config warns and is skipped."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -233,6 +261,7 @@ def test_invalid_check_config_warns_and_skips(tmp_path, capsys):
 
 
 def test_check_run_exception_fails_open(tmp_path, monkeypatch, capsys):
+    """Verifies that a check run exception fails open and returns zero."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
 
@@ -252,6 +281,7 @@ def test_check_run_exception_fails_open(tmp_path, monkeypatch, capsys):
 
 
 def test_repo_scoped_external_runs_once(tmp_path, capsys):
+    """Verifies that a repo-scoped external check runs once."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg = _cfg(
@@ -272,6 +302,7 @@ def test_repo_scoped_external_runs_once(tmp_path, capsys):
 
 
 def test_skip_env_empty_value_still_skips(tmp_path, monkeypatch, capsys):
+    """Checks that an empty skip env value still skips all checks."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     monkeypatch.setenv("DIFFIMPACTSCOUT_SKIP", "")
@@ -282,6 +313,7 @@ def test_skip_env_empty_value_still_skips(tmp_path, monkeypatch, capsys):
 
 
 def test_strict_env_zero_is_not_strict(tmp_path, monkeypatch, capsys):
+    """Checks that a strict env value of zero does not enable strict mode."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     monkeypatch.setenv("IMPACT_CHECK_STRICT", "0")
@@ -289,6 +321,7 @@ def test_strict_env_zero_is_not_strict(tmp_path, monkeypatch, capsys):
 
 
 def test_strict_env_false_is_not_strict(tmp_path, monkeypatch, capsys):
+    """Checks that a strict env value of false does not enable strict mode."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
     monkeypatch.setenv("IMPACT_CHECK_STRICT", "FALSE")
@@ -296,6 +329,7 @@ def test_strict_env_false_is_not_strict(tmp_path, monkeypatch, capsys):
 
 
 def test_check_run_returning_none_fails_open(tmp_path, monkeypatch, capsys):
+    """Verifies that a check returning None fails open and reports failure."""
     repo = _json_repo(tmp_path)
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
 
@@ -316,6 +350,7 @@ def test_check_run_returning_none_fails_open(tmp_path, monkeypatch, capsys):
 
 
 def test_private_key_always_block_disabled_in_warn_mode(tmp_path, capsys):
+    """Verifies that disabling always_block lets a private key pass in warn mode."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -326,7 +361,22 @@ def test_private_key_always_block_disabled_in_warn_mode(tmp_path, capsys):
     assert "private key detected" in captured.out
 
 
+def test_ignored_file_excluded_from_guard_scope(tmp_path, capsys):
+    """Checks that files matching ignore_paths are excluded from the guard."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    _anchor(repo)
+    os.makedirs(os.path.join(repo, "node_modules/dep"))
+    _commit(repo, "node_modules/dep/key.pem", "-----BEGIN RSA PRIVATE KEY-----\n", "dev")
+    cfg = _cfg(repo, [{"id": "repo/private-key"}])
+    assert guard.run_guard(repo, cfg) == 0
+    captured = capsys.readouterr()
+    assert "private key detected" not in captured.out
+    assert "[PASS]" in captured.out
+
+
 def test_blocking_check_zero_issues_returns_zero(tmp_path, capsys):
+    """Checks that a strict blocking check with no issues returns zero."""
     repo = _make_repo(tmp_path)
     _commit(repo, "ok.json", "{}", "base")
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}], blocking="strict")
@@ -336,6 +386,7 @@ def test_blocking_check_zero_issues_returns_zero(tmp_path, capsys):
 
 
 def test_empty_checks_config_returns_zero(tmp_path, capsys):
+    """Checks that an empty checks config returns zero."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg = _cfg(repo, [])
@@ -345,6 +396,7 @@ def test_empty_checks_config_returns_zero(tmp_path, capsys):
 
 
 def test_empty_file_set_returns_zero(tmp_path, capsys):
+    """Checks that an empty file set returns zero."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
@@ -354,6 +406,7 @@ def test_empty_file_set_returns_zero(tmp_path, capsys):
 
 
 def test_single_file_string_mode(tmp_path, capsys):
+    """Verifies that a single file passed as a string is handled."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _commit(repo, "bad.json", "{ not valid", "dev")
@@ -365,6 +418,7 @@ def test_single_file_string_mode(tmp_path, capsys):
 
 
 def test_non_dict_check_entry_warns_and_skips(tmp_path, capsys):
+    """Checks that a non-dict check entry warns and is skipped."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -376,7 +430,45 @@ def test_non_dict_check_entry_warns_and_skips(tmp_path, capsys):
     assert "0 check(s), 0 issue(s)" in captured.out
 
 
+def test_guard_prints_pass_status_and_verdict(tmp_path, capsys):
+    """Verifies that guard prints a pass status and allowed verdict."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "ok.json", "{}\n", "base")
+    _anchor(repo)
+    cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
+    assert guard.run_guard(repo, cfg) == 0
+    out = capsys.readouterr().out
+    assert "[PASS]" in out
+    assert "syntax/json-syntax" in out
+    assert "[ALLOWED]" in out
+
+
+def test_guard_prints_fail_status_and_blocked_verdict(tmp_path, monkeypatch, capsys):
+    """Verifies that guard prints a fail status and blocked verdict on issues."""
+    repo = _json_repo(tmp_path)
+    cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
+    monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
+    assert guard.run_guard(repo, cfg) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "[BLOCKED]" in out
+    assert "DiffImpactScout Guard" in out
+
+
+def test_guard_prints_no_emojis(tmp_path, capsys):
+    """Checks that guard output contains no emoji characters."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "ok.json", "{}\n", "base")
+    _anchor(repo)
+    cfg = _cfg(repo, [{"id": "syntax/json-syntax"}])
+    guard.run_guard(repo, cfg)
+    out = capsys.readouterr().out
+    for ch in ("\u2605", "\u2713", "\u2717", "\u2714", "\u26a1", "\u2728", "\U0001f7e2", "\U0001f534"):
+        assert ch not in out, "emoji %r leaked into guard output" % ch
+
+
 def test_external_check_always_block_blocks_in_warn_mode(tmp_path, capsys):
+    """Verifies that an always-block external check blocks in warn mode."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg = _cfg(

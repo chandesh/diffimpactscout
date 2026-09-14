@@ -97,7 +97,9 @@ class ExternalCheck(Check):
                 output = (out or err).decode("utf-8", errors="replace").strip()
                 if not output:
                     output = "exit code %s" % proc.returncode
-                issues.append(CheckIssue(".", 0, 0, self.id, output))
+                else:
+                    output = "%s (exit code %s)" % (output, proc.returncode)
+                issues.append(CheckIssue(".", None, None, self.id, output))
             return CheckResult(issues=issues, fixed=fixed, skipped=skipped, warned=warned)
         for path in files or []:
             argv = self._argv_for(path)
@@ -116,7 +118,9 @@ class ExternalCheck(Check):
                 output = (out or err).decode("utf-8", errors="replace").strip()
                 if not output:
                     output = "exit code %s" % proc.returncode
-                issues.append(CheckIssue(path, 0, 0, self.id, output))
+                else:
+                    output = "%s (exit code %s)" % (output, proc.returncode)
+                issues.append(CheckIssue(path, None, None, self.id, output))
         return CheckResult(issues=issues, fixed=fixed, skipped=skipped, warned=warned)
 
 
@@ -151,7 +155,7 @@ class CheckContext(object):
 
 
 class CheckIssue(object):
-    def __init__(self, path, line, column, code, message):
+    def __init__(self, path, line=None, column=None, code=None, message=None):
         self.path = path
         self.line = line
         self.column = column
@@ -159,13 +163,13 @@ class CheckIssue(object):
         self.message = message
 
     def format(self):
-        return "%s:%s:%s: %s %s" % (
-            self.path,
-            self.line,
-            self.column,
-            self.code,
-            self.message,
-        )
+        if self.line is None and self.column is None:
+            location = self.path
+        else:
+            line = "-" if self.line is None else str(self.line)
+            column = "-" if self.column is None else str(self.column)
+            location = "%s:%s:%s" % (self.path, line, column)
+        return "%s: %s %s" % (location, self.code, self.message)
 
 
 class CheckResult(object):

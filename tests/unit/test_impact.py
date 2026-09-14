@@ -333,6 +333,7 @@ def _count_parse(monkeypatch):
 
 
 def test_run_impact_cross_layer_report(tmp_path, capsys):
+    """Verifies that the impact report links changed views to URL, template, and frontend refs."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -350,6 +351,7 @@ def test_run_impact_cross_layer_report(tmp_path, capsys):
 
 
 def test_run_impact_model_field_plain(tmp_path, capsys):
+    """Verifies that a changed model field is reported with medium severity."""
     repo, base, _head = _build_plain_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -361,6 +363,7 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
 
 
 def test_run_impact_deleted_function(tmp_path, capsys):
+    """Verifies that a deleted function is reported as a dangling reference."""
     repo, base, _head = _build_deleted_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -373,6 +376,7 @@ def test_run_impact_deleted_function(tmp_path, capsys):
 
 
 def test_run_impact_json_output(tmp_path, capsys):
+    """Verifies that JSON output contains the expected structured impact data."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -388,6 +392,7 @@ def test_run_impact_json_output(tmp_path, capsys):
 
 
 def test_run_impact_strict_blocks(tmp_path, monkeypatch, capsys):
+    """Verifies that strict mode blocks with a non-zero exit code."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -398,6 +403,7 @@ def test_run_impact_strict_blocks(tmp_path, monkeypatch, capsys):
 
 
 def test_run_impact_skip_env_returns_zero_no_output(tmp_path, monkeypatch, capsys):
+    """Verifies that the skip env var returns zero and produces no output."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -409,6 +415,7 @@ def test_run_impact_skip_env_returns_zero_no_output(tmp_path, monkeypatch, capsy
 
 
 def test_run_impact_unresolved_dynamic_not_false_matched(tmp_path, capsys):
+    """Verifies that unresolved dynamic references are reported without false matches."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -420,6 +427,7 @@ def test_run_impact_unresolved_dynamic_not_false_matched(tmp_path, capsys):
 
 
 def test_run_impact_cache_skips_reparse_on_second_run(tmp_path, monkeypatch):
+    """Verifies that the cache prevents reparsing on a second impact run."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -436,6 +444,7 @@ def test_run_impact_cache_skips_reparse_on_second_run(tmp_path, monkeypatch):
 
 
 def test_run_impact_fast_mode(tmp_path, capsys):
+    """Verifies that fast mode skips template and frontend analysis."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -448,6 +457,7 @@ def test_run_impact_fast_mode(tmp_path, capsys):
 
 
 def test_run_impact_pre_commit_env_range(tmp_path, monkeypatch, capsys):
+    """Verifies that pre-commit ref env vars are honored as the change range."""
     repo, _base, head = _build_django_repo(tmp_path)
     cfg = config.load_config(repo)
     monkeypatch.setenv("PRE_COMMIT_FROM_REF", "HEAD~1")
@@ -458,6 +468,7 @@ def test_run_impact_pre_commit_env_range(tmp_path, monkeypatch, capsys):
 
 
 def test_run_impact_env_refs_yield_to_resolved_anchor(tmp_path, monkeypatch, capsys):
+    """Verifies that a resolved anchor takes precedence over env-provided refs."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")
@@ -485,6 +496,7 @@ def test_run_impact_env_refs_yield_to_resolved_anchor(tmp_path, monkeypatch, cap
 
 
 def test_run_impact_staged(tmp_path, capsys):
+    """Verifies that staged changes are analyzed for impact."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")
@@ -503,6 +515,7 @@ def test_run_impact_staged(tmp_path, capsys):
 
 
 def test_run_impact_django_cbv_linked(tmp_path, capsys):
+    """Verifies that Django class-based views are linked to URL and template refs."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")
@@ -523,6 +536,7 @@ def test_run_impact_django_cbv_linked(tmp_path, capsys):
 
 
 def test_run_impact_frontend_same_line_dedup(tmp_path, capsys):
+    """Verifies that duplicate frontend refs on the same line are deduplicated."""
     repo, base, _head = _build_ts_repo(tmp_path, TS_SAME_LINE)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -537,6 +551,7 @@ def test_run_impact_frontend_same_line_dedup(tmp_path, capsys):
 
 
 def test_run_impact_frontend_duplicate_calls_distinct_lines(tmp_path, capsys):
+    """Verifies that duplicate frontend refs on distinct lines are both reported."""
     repo, base, _head = _build_ts_repo(tmp_path, TS_DIFF_LINES)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -548,6 +563,7 @@ def test_run_impact_frontend_duplicate_calls_distinct_lines(tmp_path, capsys):
 
 
 def test_run_impact_frontend_rows_monotonic(tmp_path, capsys):
+    """Verifies that frontend findings grow monotonically with added calls."""
     repo, base, _head = _build_ts_repo(tmp_path, TS_SINGLE)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -563,6 +579,7 @@ def test_run_impact_frontend_rows_monotonic(tmp_path, capsys):
 
 
 def test_run_impact_template_duplicate_tag_dedup(tmp_path, capsys):
+    """Verifies that duplicate template tags are deduplicated."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")
@@ -584,6 +601,7 @@ def test_run_impact_template_duplicate_tag_dedup(tmp_path, capsys):
 
 
 def test_run_impact_tty_accept_proceeds(tmp_path, monkeypatch, capsys):
+    """Verifies that confirming on a TTY proceeds with the impact run."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -595,6 +613,7 @@ def test_run_impact_tty_accept_proceeds(tmp_path, monkeypatch, capsys):
 
 
 def test_run_impact_tty_decline_blocks(tmp_path, monkeypatch, capsys):
+    """Verifies that declining on a TTY blocks with a non-zero exit code."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -604,6 +623,7 @@ def test_run_impact_tty_decline_blocks(tmp_path, monkeypatch, capsys):
 
 
 def test_run_impact_tty_empty_input_accepts(tmp_path, monkeypatch, capsys):
+    """Verifies that empty input on a TTY proceeds with the impact run."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
@@ -613,6 +633,7 @@ def test_run_impact_tty_empty_input_accepts(tmp_path, monkeypatch, capsys):
 
 
 def test_run_impact_rename_only(tmp_path, capsys):
+    """Verifies that a pure rename reports dangling references for removed helpers."""
     repo = _make_repo(tmp_path)
     _write(repo, "app/__init__.py", "")
     _write(repo, "app/legacy.py", RENAME_SRC)
@@ -633,6 +654,7 @@ def test_run_impact_rename_only(tmp_path, capsys):
 
 
 def test_run_impact_non_python_change_set(tmp_path, capsys):
+    """Verifies that non-Python changes produce no Python impact rows."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")
@@ -652,6 +674,7 @@ def test_run_impact_non_python_change_set(tmp_path, capsys):
 
 
 def test_run_impact_empty_change_set(tmp_path, capsys):
+    """Verifies that an empty change set reports zero changed files and no rows."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")
@@ -669,6 +692,7 @@ def test_run_impact_empty_change_set(tmp_path, capsys):
 
 
 def test_run_impact_fast_mode_excludes_unrelated(tmp_path, capsys):
+    """Verifies that fast mode excludes unrelated and dependency files from analysis."""
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
     _write(repo, "app/__init__.py", "")

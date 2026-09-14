@@ -67,6 +67,7 @@ def _cls(cid):
 
 
 def test_repo_checks_registered():
+    """Verifies that all repo checks are registered with the expected metadata."""
     assert "repo/large-files" in REGISTRY
     assert REGISTRY["repo/large-files"].scoped == "files"
     assert REGISTRY["repo/large-files"].blocking is True
@@ -81,6 +82,7 @@ def test_repo_checks_registered():
 
 
 def test_repo_checks_buildable_from_config():
+    """Verifies that each repo check can be built from its config id."""
     lf = make_check({"id": "repo/large-files"})
     assert lf is not None
     assert lf.scoped == "files"
@@ -95,6 +97,7 @@ def test_repo_checks_buildable_from_config():
 
 
 def test_case_conflict_no_collision_when_single_file(tmp_path):
+    """Checks that a single file never triggers a case-conflict issue."""
     root = _repo(tmp_path)
     _commit(root, "file.txt")
     result = _cls("repo/case-conflict")().run(_ctx(root), ["file.txt"])
@@ -103,6 +106,7 @@ def test_case_conflict_no_collision_when_single_file(tmp_path):
 
 
 def test_case_conflict_flags_against_tracked_file(tmp_path):
+    """Verifies that a differing-case path is flagged against its tracked sibling."""
     root = _repo(tmp_path)
     _commit(root, "file.txt")
     result = _cls("repo/case-conflict")().run(_ctx(root), ["FILE.TXT"])
@@ -116,6 +120,7 @@ def test_case_conflict_flags_against_tracked_file(tmp_path):
 
 
 def test_case_conflict_flags_colliding_side_of_changed_pair(tmp_path):
+    """Checks that only the colliding path of a changed pair is flagged."""
     root = _repo(tmp_path)
     _commit(root, "file.txt")
     # Only the incoming name that diverges from the tracked sibling is
@@ -126,6 +131,7 @@ def test_case_conflict_flags_colliding_side_of_changed_pair(tmp_path):
 
 
 def test_case_conflict_same_name_only_is_clean(tmp_path):
+    """Checks that a single same-case path alone produces no issue."""
     root = _repo(tmp_path)
     _commit(root, "ReadMe.md")
     result = _cls("repo/case-conflict")().run(_ctx(root), ["ReadMe.md"])
@@ -134,6 +140,7 @@ def test_case_conflict_same_name_only_is_clean(tmp_path):
 
 
 def test_case_conflict_empty_and_none_file_list(tmp_path):
+    """Checks that empty or None file lists pass without issues."""
     root = _repo(tmp_path)
     _commit(root, "file.txt")
     for files in ([], None):
@@ -143,6 +150,7 @@ def test_case_conflict_empty_and_none_file_list(tmp_path):
 
 
 def test_case_conflict_untracked_uknown_path_ok(tmp_path):
+    """Checks that an unknown/untracked path is treated as clean."""
     root = _repo(tmp_path)
     _commit(root, "file.txt")
     result = _cls("repo/case-conflict")().run(_ctx(root), ["ghost.txt"])
@@ -151,11 +159,13 @@ def test_case_conflict_untracked_uknown_path_ok(tmp_path):
 
 
 def test_large_files_default_max_kb():
+    """Verifies that the default max_kb for large-files is 250000."""
     check = make_check({"id": "repo/large-files"})
     assert check.max_kb == 250000
 
 
 def test_large_files_under_limit_is_clean(tmp_path):
+    """Checks that a file under the size limit produces no issue."""
     root = str(tmp_path)
     _write(root, "small.txt", b"x" * 1024)
     result = _cls("repo/large-files")().run(_ctx(root), ["small.txt"])
@@ -165,6 +175,7 @@ def test_large_files_under_limit_is_clean(tmp_path):
 
 
 def test_large_files_over_limit_reports_issue(tmp_path):
+    """Verifies that a file over the limit reports an issue with its size."""
     root = str(tmp_path)
     _write(root, "big.txt", b"x" * (2 * 1024))
     check = _cls("repo/large-files")()
@@ -180,6 +191,7 @@ def test_large_files_over_limit_reports_issue(tmp_path):
 
 
 def test_large_files_maxkb_via_make_check(tmp_path):
+    """Verifies that --maxkb is honored when building via make_check."""
     root = str(tmp_path)
     _write(root, "big.txt", b"x" * (2 * 1024))
     check = make_check({"id": "repo/large-files", "args": ["--maxkb=1"]})
@@ -191,6 +203,7 @@ def test_large_files_maxkb_via_make_check(tmp_path):
 
 
 def test_large_files_default_limit_enforced(tmp_path, monkeypatch):
+    """Verifies that the default 250000 kB limit is enforced at runtime."""
     root = str(tmp_path)
     _write(root, "huge.txt", b"")
     monkeypatch.setattr("os.path.getsize", lambda fn: 250001 * 1024)
@@ -202,6 +215,7 @@ def test_large_files_default_limit_enforced(tmp_path, monkeypatch):
 
 
 def test_large_files_accepts_maxkb_at_config_time():
+    """Checks that maxkb is applied when config is extended at runtime."""
     check = _cls("repo/large-files")()
     out = check.extend_config({"id": "repo/large-files", "args": ["--maxkb=100"]})
     assert out is check
@@ -210,6 +224,7 @@ def test_large_files_accepts_maxkb_at_config_time():
 
 
 def test_large_files_rejects_invalid_maxkb():
+    """Verifies that invalid maxkb values raise ValueError and fail construction."""
     check = _cls("repo/large-files")()
     for bad in ("abc", "", "0", "-5", "1.5"):
         with pytest.raises(ValueError):
@@ -218,6 +233,7 @@ def test_large_files_rejects_invalid_maxkb():
 
 
 def test_large_files_rejects_separate_maxkb_value():
+    """Verifies that a standalone maxkb argument (not --maxkb=) is rejected."""
     check = _cls("repo/large-files")()
     with pytest.raises(ValueError):
         check.extend_config({"args": ["--maxkb", "100"]})
@@ -225,6 +241,7 @@ def test_large_files_rejects_separate_maxkb_value():
 
 
 def test_large_files_missing_file_skipped(tmp_path):
+    """Checks that a missing file is skipped without warnings or issues."""
     root = str(tmp_path)
     result = _cls("repo/large-files")().run(_ctx(root), ["ghost.txt"])
     assert result.ok()
@@ -233,6 +250,7 @@ def test_large_files_missing_file_skipped(tmp_path):
 
 
 def test_large_files_empty_and_none_file_list(tmp_path):
+    """Checks that empty or None file lists produce no issues."""
     root = str(tmp_path)
     for files in ([], None):
         result = _cls("repo/large-files")().run(_ctx(root), files)
@@ -241,6 +259,7 @@ def test_large_files_empty_and_none_file_list(tmp_path):
 
 
 def test_private_key_flags_rsa_marker(tmp_path):
+    """Verifies that an RSA private key marker is flagged as an issue."""
     root = str(tmp_path)
     _write(
         root,
@@ -258,6 +277,7 @@ def test_private_key_flags_rsa_marker(tmp_path):
 
 
 def test_private_key_flags_all_markers(tmp_path):
+    """Checks that every known private key marker is flagged."""
     root = str(tmp_path)
     markers = [
         b"-----BEGIN RSA PRIVATE KEY-----",
@@ -276,6 +296,7 @@ def test_private_key_flags_all_markers(tmp_path):
 
 
 def test_private_key_marker_beyond_16kb_flagged(tmp_path):
+    """Verifies that a marker beyond the 16 kB scan window is still flagged."""
     root = str(tmp_path)
     data = b"x" * 16384 + b"-----BEGIN RSA PRIVATE KEY-----"
     _write(root, "deep.txt", data)
@@ -285,6 +306,7 @@ def test_private_key_marker_beyond_16kb_flagged(tmp_path):
 
 
 def test_private_key_marker_straddling_16kb_flagged(tmp_path):
+    """Verifies that a marker straddling the 16 kB boundary is flagged."""
     root = str(tmp_path)
     marker = b"-----BEGIN OPENSSH PRIVATE KEY-----"
     data = b"x" * (16384 - len(marker)) + marker
@@ -295,6 +317,7 @@ def test_private_key_marker_straddling_16kb_flagged(tmp_path):
 
 
 def test_private_key_marker_just_inside_16kb_flagged(tmp_path):
+    """Verifies that a marker just inside the 16 kB boundary is flagged."""
     root = str(tmp_path)
     marker = b"-----BEGIN RSA PRIVATE KEY-----"
     data = b"x" * (16384 - len(marker)) + marker
@@ -305,6 +328,7 @@ def test_private_key_marker_just_inside_16kb_flagged(tmp_path):
 
 
 def test_private_key_clean_file_is_clean(tmp_path):
+    """Checks that a file with no private key markers is clean."""
     root = str(tmp_path)
     _write(root, "clean.txt", b"no secrets here\n")
     result = _cls("repo/private-key")().run(_ctx(root), ["clean.txt"])
@@ -313,6 +337,7 @@ def test_private_key_clean_file_is_clean(tmp_path):
 
 
 def test_private_key_missing_file_skipped(tmp_path):
+    """Checks that a missing file is skipped without warnings or issues."""
     root = str(tmp_path)
     result = _cls("repo/private-key")().run(_ctx(root), ["ghost.txt"])
     assert result.ok()
@@ -321,6 +346,7 @@ def test_private_key_missing_file_skipped(tmp_path):
 
 
 def test_private_key_empty_and_none_file_list(tmp_path):
+    """Checks that empty or None file lists produce no issues."""
     root = str(tmp_path)
     for files in ([], None):
         result = _cls("repo/private-key")().run(_ctx(root), files)
@@ -329,6 +355,7 @@ def test_private_key_empty_and_none_file_list(tmp_path):
 
 
 def test_private_key_always_block_overridable():
+    """Verifies that always_block can be overridden via extend_config."""
     check = _cls("repo/private-key")()
     assert check.always_block is True
     out = check.extend_config(
@@ -340,6 +367,7 @@ def test_private_key_always_block_overridable():
 
 
 def test_private_key_always_block_not_overridable_via_make_check():
+    """Verifies that always_block stays true when built via make_check."""
     check = make_check({"id": "repo/private-key", "blocking": False})
     assert check is not None
     assert check.always_block is True

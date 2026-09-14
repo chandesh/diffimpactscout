@@ -63,6 +63,7 @@ class BoomCtx(object):
 
 
 def test_syntax_checks_registered():
+    """Verifies that all syntax checks are registered with expected scope and blocking flags."""
     for cid, scoped in (
         ("syntax/json-syntax", "files"),
         ("syntax/ast-syntax", "files"),
@@ -74,6 +75,7 @@ def test_syntax_checks_registered():
 
 
 def test_syntax_checks_buildable_from_config():
+    """Checks that every syntax check can be built from its config id."""
     for cid in ("syntax/json-syntax", "syntax/ast-syntax", "syntax/merge-conflict"):
         check = make_check({"id": cid})
         assert check is not None
@@ -81,6 +83,7 @@ def test_syntax_checks_buildable_from_config():
 
 
 def test_json_valid_is_clean(tmp_path):
+    """Verifies that a valid JSON file passes with no issues."""
     root = str(tmp_path)
     _write(root, "good.json", '{"a": 1}\n')
     result = _cls("syntax/json-syntax")().run(_ctx(root), ["good.json"])
@@ -90,6 +93,7 @@ def test_json_valid_is_clean(tmp_path):
 
 
 def test_json_invalid_reports_issue_with_position(tmp_path):
+    """Verifies that invalid JSON reports a single issue with position details."""
     root = str(tmp_path)
     _write(root, "bad.json", '{\n"a": 1,\n"b": bad\n}\n')
     result = _cls("syntax/json-syntax")().run(_ctx(root), ["bad.json"])
@@ -104,6 +108,7 @@ def test_json_invalid_reports_issue_with_position(tmp_path):
 
 
 def test_json_non_json_files_skipped(tmp_path):
+    """Checks that non-JSON files are skipped by the JSON syntax check."""
     root = str(tmp_path)
     _write(root, "data.txt", "{ not json\n")
     result = _cls("syntax/json-syntax")().run(_ctx(root), ["data.txt"])
@@ -112,6 +117,7 @@ def test_json_non_json_files_skipped(tmp_path):
 
 
 def test_json_missing_file_skipped(tmp_path):
+    """Verifies that a missing JSON file is skipped without warnings."""
     root = str(tmp_path)
     result = _cls("syntax/json-syntax")().run(_ctx(root), ["nope.json"])
     assert result.ok()
@@ -120,6 +126,7 @@ def test_json_missing_file_skipped(tmp_path):
 
 
 def test_ast_valid_is_clean(tmp_path):
+    """Verifies that a valid Python file passes with no issues."""
     root = str(tmp_path)
     _write(root, "good.py", "x = 1\ndef f():\n    return x\n")
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["good.py"])
@@ -128,6 +135,7 @@ def test_ast_valid_is_clean(tmp_path):
 
 
 def test_ast_invalid_reports_issue_with_line(tmp_path):
+    """Verifies that invalid Python syntax reports an issue with its line."""
     root = str(tmp_path)
     _write(root, "bad.py", "x = 1\n\ndef bad(:\n    pass\n")
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["bad.py"])
@@ -142,6 +150,7 @@ def test_ast_invalid_reports_issue_with_line(tmp_path):
 
 
 def test_ast_non_py_files_skipped(tmp_path):
+    """Checks that non-Python files are skipped by the AST syntax check."""
     root = str(tmp_path)
     _write(root, "script.sh", "def broken(:\n")
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["script.sh"])
@@ -150,6 +159,7 @@ def test_ast_non_py_files_skipped(tmp_path):
 
 
 def test_ast_missing_file_skipped(tmp_path):
+    """Verifies that a missing Python file is skipped with no issues."""
     root = str(tmp_path)
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["nope.py"])
     assert result.ok()
@@ -157,6 +167,7 @@ def test_ast_missing_file_skipped(tmp_path):
 
 
 def test_ast_utf8_bom_parses_clean(tmp_path):
+    """Verifies that a UTF-8 BOM Python file parses cleanly."""
     root = str(tmp_path)
     _write_bytes(root, "bom.py", b"\xef\xbb\xbfx = 1\n")
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["bom.py"])
@@ -165,6 +176,7 @@ def test_ast_utf8_bom_parses_clean(tmp_path):
 
 
 def test_ast_decode_failure_reports_issue_at_origin(tmp_path):
+    """Verifies that undecodable source reports an issue at the file origin."""
     root = str(tmp_path)
     _write_bytes(root, "bad.py", b"\xff\xff\xff\xff\n")
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["bad.py"])
@@ -179,6 +191,7 @@ def test_ast_decode_failure_reports_issue_at_origin(tmp_path):
 
 
 def test_merge_conflict_reports_markers_on_changed_lines(tmp_path):
+    """Verifies that merge-conflict markers on changed lines are reported as issues."""
     root = str(tmp_path)
     _write(root, "a.txt", "<<<<<<< HEAD\none\n=======\ntwo\n>>>>>>> master\n")
     scope = FakeScope(changed={1, 3, 5})
@@ -191,6 +204,7 @@ def test_merge_conflict_reports_markers_on_changed_lines(tmp_path):
 
 
 def test_merge_conflict_ignores_markers_outside_changed_lines(tmp_path):
+    """Checks that markers outside the changed lines are ignored."""
     root = str(tmp_path)
     _write(root, "a.txt", "<<<<<<< HEAD\n")
     scope = FakeScope(changed={5})
@@ -200,6 +214,7 @@ def test_merge_conflict_ignores_markers_outside_changed_lines(tmp_path):
 
 
 def test_merge_conflict_untracked_checks_whole_file(tmp_path):
+    """Verifies that untracked files are checked across the whole file."""
     root = str(tmp_path)
     _write(root, "u.txt", "a\n=======\nb\n")
     scope = FakeScope(changed=None, tracked=False)
@@ -210,6 +225,7 @@ def test_merge_conflict_untracked_checks_whole_file(tmp_path):
 
 
 def test_merge_conflict_empty_changed_set_skips(tmp_path):
+    """Checks that an empty changed-line set skips the merge-conflict check."""
     root = str(tmp_path)
     _write(root, "a.txt", "<<<<<<< HEAD\n")
     scope = FakeScope(changed=set())
@@ -219,6 +235,7 @@ def test_merge_conflict_empty_changed_set_skips(tmp_path):
 
 
 def test_merge_conflict_tracked_scope_failure_skips(tmp_path):
+    """Verifies that a failed tracked scope lookup causes the check to skip."""
     root = str(tmp_path)
     _write(root, "a.txt", "=======\n")
     scope = FakeScope(changed=None, tracked=True)
@@ -228,6 +245,7 @@ def test_merge_conflict_tracked_scope_failure_skips(tmp_path):
 
 
 def test_merge_conflict_scope_error_skips(tmp_path):
+    """Verifies that a scope error causes the merge-conflict check to skip cleanly."""
     root = str(tmp_path)
     _write(root, "a.txt", "<<<<<<< HEAD\n")
     result = _cls("syntax/merge-conflict")().run(BoomCtx(root), ["a.txt"])
@@ -237,6 +255,7 @@ def test_merge_conflict_scope_error_skips(tmp_path):
 
 
 def test_merge_conflict_missing_file_skipped(tmp_path):
+    """Verifies that a missing file is skipped by the merge-conflict check."""
     root = str(tmp_path)
     scope = FakeScope(changed={1})
     result = _cls("syntax/merge-conflict")().run(_ctx(root, scope), ["nope.txt"])
@@ -245,6 +264,7 @@ def test_merge_conflict_missing_file_skipped(tmp_path):
 
 
 def test_merge_conflict_does_not_flag_similar_non_markers(tmp_path):
+    """Checks that similar-looking lines are not flagged as merge markers."""
     root = str(tmp_path)
     _write(root, "a.txt", "======\n<<<<<< HEAD\n>>>>>> master\n")
     scope = FakeScope(changed={1, 2, 3})
@@ -254,6 +274,7 @@ def test_merge_conflict_does_not_flag_similar_non_markers(tmp_path):
 
 
 def test_merge_conflict_flags_exact_seven_equals(tmp_path):
+    """Verifies that an exact seven-equals line is flagged as a merge marker."""
     root = str(tmp_path)
     _write(root, "a.txt", "x\n=======\ny\n")
     scope = FakeScope(changed={2})
@@ -264,6 +285,7 @@ def test_merge_conflict_flags_exact_seven_equals(tmp_path):
 
 
 def test_merge_conflict_does_not_flag_rst_underline(tmp_path):
+    """Checks that an RST-style underline is not flagged as a merge marker."""
     root = str(tmp_path)
     _write(root, "a.txt", "Title\n==========\nbody\n")
     scope = FakeScope(changed={1, 2, 3})
@@ -273,6 +295,7 @@ def test_merge_conflict_does_not_flag_rst_underline(tmp_path):
 
 
 def test_merge_conflict_out_of_range_lineno_skipped(tmp_path):
+    """Verifies that out-of-range line numbers cause the check to skip."""
     root = str(tmp_path)
     _write(root, "a.txt", "<<<<<<< HEAD\n")
     scope = FakeScope(changed={0, 10, -3})
@@ -282,6 +305,7 @@ def test_merge_conflict_out_of_range_lineno_skipped(tmp_path):
 
 
 def test_merge_conflict_empty_and_none_file_list(tmp_path):
+    """Verifies that empty or None file lists pass the merge-conflict check cleanly."""
     root = str(tmp_path)
     check = _cls("syntax/merge-conflict")()
     for files in ([], None):

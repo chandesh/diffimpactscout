@@ -89,11 +89,13 @@ CHECKERS = {
 
 
 def test_gitrepo_scenarios(gitrepo):
+    """Verifies that the gitrepo fixture is valid and matches its expected scenario state."""
     assert gitrepo.git_ok("rev-parse", "--verify", "HEAD")
     CHECKERS[gitrepo.scenario](gitrepo)
 
 
 def test_repo_helpers_rm_mv_merge(tmp_path):
+    """Verifies that the GitRepo helper methods for merge, rm, mv, and commit behave correctly."""
     repo = GitRepo.init(str(tmp_path / "repo"))
     repo.write("a.txt", "a\n")
     repo.commit("A")

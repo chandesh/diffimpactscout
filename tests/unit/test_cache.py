@@ -20,6 +20,7 @@ def _sample_data():
 
 
 def test_roundtrip_save_load(tmp_path):
+    """Verifies that saved cache data loads back unchanged."""
     path = str(tmp_path / "cache.json")
     data = _sample_data()
     SymbolCache(path).save(data)
@@ -28,11 +29,13 @@ def test_roundtrip_save_load(tmp_path):
 
 
 def test_load_missing_returns_empty(tmp_path):
+    """Checks that loading a missing cache file returns an empty dict."""
     path = str(tmp_path / "nope" / "cache.json")
     assert SymbolCache(path).load() == {}
 
 
 def test_load_corrupt_returns_empty(tmp_path):
+    """Verifies that a corrupt cache file loads as an empty dict."""
     path = str(tmp_path / "cache.json")
     with open(path, "wb") as fh:
         fh.write(b"\x00\x01not-json{")
@@ -42,6 +45,7 @@ def test_load_corrupt_returns_empty(tmp_path):
 
 
 def test_load_non_object_returns_empty(tmp_path):
+    """Checks that a non-object cache file loads as an empty dict."""
     path = str(tmp_path / "cache.json")
     with open(path, "w") as fh:
         fh.write("[1, 2, 3]")
@@ -49,6 +53,7 @@ def test_load_non_object_returns_empty(tmp_path):
 
 
 def test_save_creates_nested_parent_dirs(tmp_path):
+    """Verifies that save creates nested parent directories as needed."""
     path = str(tmp_path / "nested" / "deep" / "cache.json")
     data = _sample_data()
     SymbolCache(path).save(data)
@@ -57,6 +62,7 @@ def test_save_creates_nested_parent_dirs(tmp_path):
 
 
 def test_save_parent_is_file_no_raise(tmp_path, capsys):
+    """Checks that save warns instead of raising when the parent is a file."""
     blocker = tmp_path / "blocker"
     with open(str(blocker), "w") as fh:
         fh.write("occupied")
@@ -66,6 +72,7 @@ def test_save_parent_is_file_no_raise(tmp_path, capsys):
 
 
 def test_save_replace_failure_no_raise(tmp_path, monkeypatch, capsys):
+    """Verifies that a replace failure warns without raising."""
     path = str(tmp_path / "cache.json")
 
     def _boom(src, dst):
@@ -78,6 +85,7 @@ def test_save_replace_failure_no_raise(tmp_path, monkeypatch, capsys):
 
 
 def test_save_open_failure_no_raise(tmp_path, monkeypatch, capsys):
+    """Checks that an open failure warns without raising."""
     path = str(tmp_path / "cache.json")
 
     def _boom(*args, **kwargs):
@@ -89,6 +97,7 @@ def test_save_open_failure_no_raise(tmp_path, monkeypatch, capsys):
 
 
 def test_save_leaves_no_temp_file(tmp_path):
+    """Verifies that save leaves no temporary file behind."""
     path = str(tmp_path / "cache.json")
     SymbolCache(path).save(_sample_data())
     leftovers = glob.glob(str(tmp_path / "cache.json.tmp"))
@@ -96,6 +105,7 @@ def test_save_leaves_no_temp_file(tmp_path):
 
 
 def test_prune_removes_stale_keys(tmp_path):
+    """Checks that prune removes cache keys not in the given files."""
     path = str(tmp_path / "cache.json")
     sc = SymbolCache(path)
     sc.save(_sample_data())
@@ -105,6 +115,7 @@ def test_prune_removes_stale_keys(tmp_path):
 
 
 def test_prune_keeps_all_when_no_existing(tmp_path):
+    """Verifies prune keeps all entries when none are prunable."""
     path = str(tmp_path / "cache.json")
     sc = SymbolCache(path)
     sc.save(_sample_data())
@@ -112,6 +123,7 @@ def test_prune_keeps_all_when_no_existing(tmp_path):
 
 
 def test_prune_accepts_list_and_empty(tmp_path):
+    """Checks that prune accepts a file list and handles an empty list."""
     path = str(tmp_path / "cache.json")
     sc = SymbolCache(path)
     sc.save(_sample_data())

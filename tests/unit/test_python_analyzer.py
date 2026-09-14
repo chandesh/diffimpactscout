@@ -47,6 +47,7 @@ def _count_parse(monkeypatch):
 
 
 def test_analyze_source_defs():
+    """Verifies that analyze_source extracts the expected symbol definitions."""
     analysis = _analysis(SRC)
     assert analysis is not None
     assert analysis["hash"] == hashlib.sha1(SRC.encode("utf-8")).hexdigest()
@@ -65,6 +66,7 @@ def test_analyze_source_defs():
 
 
 def test_analyze_source_usages():
+    """Verifies that analyze_source extracts the expected symbol usages."""
     analysis = _analysis(SRC)
     assert analysis["usages"] == [
         {"line": 1, "name": "helper", "kind": "import", "ctx_qname": "", "ctx_kind": "module"},
@@ -78,6 +80,7 @@ def test_analyze_source_usages():
 
 
 def test_analyze_source_definitions_not_usages():
+    """Verifies that definitions are recorded and not reported as usages."""
     analysis = _analysis("def f():\n    return 1\nclass C:\n    x = 1\n")
     assert analysis["usages"] == []
     assert "f" in analysis["defs"]
@@ -86,6 +89,7 @@ def test_analyze_source_definitions_not_usages():
 
 
 def test_analyze_source_class_bases_and_decorators_are_usages():
+    """Verifies that class bases and decorators are tracked as usages."""
     source = "@decorate\nclass Book(Base):\n    pass\n"
     analysis = _analysis(source)
     names = [u["name"] for u in analysis["usages"]]
@@ -93,17 +97,20 @@ def test_analyze_source_class_bases_and_decorators_are_usages():
 
 
 def test_analyze_source_attribute_load_skips_base_name():
+    """Verifies that attribute loads skip the base object name as a usage."""
     analysis = _analysis("value = obj.status\n")
     assert [u["name"] for u in analysis["usages"]] == ["status"]
     assert analysis["usages"][0]["kind"] == "attr"
 
 
 def test_analyze_source_nested_attributes():
+    """Verifies that nested attribute accesses are captured as separate usages."""
     analysis = _analysis("out = a.b.c\n")
     assert [u["name"] for u in analysis["usages"]] == ["c", "b"]
 
 
 def test_analyze_source_import_kinds():
+    """Verifies that imports are recorded with the import kind."""
     analysis = _analysis("import os.path as p\nimport pkg.mod\nfrom util import a, b\n")
     usages = analysis["usages"]
     assert [u["name"] for u in usages] == ["os", "pkg", "a", "b"]
@@ -111,6 +118,7 @@ def test_analyze_source_import_kinds():
 
 
 def test_analyze_source_strings_and_docstrings_3_6_12_safe():
+    """Verifies that strings and docstrings are safely handled across Python versions."""
     source = (
         '"""module docstring"""\n'
         "from django.contrib import admin as a\n"
@@ -130,17 +138,20 @@ def test_analyze_source_strings_and_docstrings_3_6_12_safe():
 
 
 def test_analyze_source_accepts_bytes():
+    """Verifies that analyze_source accepts bytes input."""
     analysis = _analysis(SRC.encode("utf-8"))
     assert analysis is not None
     assert analysis["defs"]["process"]["kind"] == "function"
 
 
 def test_analyze_source_unparseable_returns_none():
+    """Verifies that unparseable source returns None."""
     assert pa.analyze_source("def broken(:\n") is None
     assert pa.analyze_source(b"def broken(:\n") is None
 
 
 def test_find_references_across_files():
+    """Verifies that references to a name are found across multiple files."""
     analyses = {
         "a.py": _analysis("import widget\n"),
         "b.py": _analysis("from util import widget\n\ndef run():\n    return widget()\n"),
@@ -164,6 +175,7 @@ def test_find_references_across_files():
 
 
 def test_find_references_unused_name_empty():
+    """Verifies that unused or empty names yield no references."""
     analyses = {"a.py": _analysis("import widget\n")}
     assert pa.find_references(analyses, ["nope"]) == []
     assert pa.find_references(analyses, []) == []
@@ -171,6 +183,7 @@ def test_find_references_unused_name_empty():
 
 
 def test_find_references_attr_name_matches_field_usage():
+    """Verifies that an attribute name matches the corresponding field usage."""
     analyses = {
         "models.py": _analysis(
             "class Book(object):\n    status = models.CharField()\n"
@@ -184,6 +197,7 @@ def test_find_references_attr_name_matches_field_usage():
 
 
 def test_find_references_skips_attribute_base_names():
+    """Verifies that attribute base object names are skipped as references."""
     analyses = {
         "models.py": _analysis(
             "class Book(object):\n    status = models.CharField()\n"
@@ -195,6 +209,7 @@ def test_find_references_skips_attribute_base_names():
 
 
 def test_find_references_deterministic_order():
+    """Verifies that references are returned in a deterministic order."""
     analyses = {"a.py": _analysis("from m import alpha, beta\n")}
     hits = pa.find_references(analyses, ["beta", "alpha"])
     assert [(h["name"], h["line"], h["how"]) for h in hits] == [
@@ -204,6 +219,7 @@ def test_find_references_deterministic_order():
 
 
 def test_find_references_kinds_attr_excludes_bare_name():
+    """Verifies that the attr kind filters out bare name usages."""
     analyses = {
         "models.py": _analysis(
             "class Book(object):\n    status = models.CharField()\n\n"
@@ -222,6 +238,7 @@ def test_find_references_kinds_attr_excludes_bare_name():
 
 
 def test_find_references_kinds_none_matches_all_kinds():
+    """Verifies that None kinds matches references of every kind."""
     analyses = {
         "a.py": _analysis("import widget\n"),
         "b.py": _analysis("def run():\n    return widget()\n"),
@@ -236,6 +253,7 @@ def test_find_references_kinds_none_matches_all_kinds():
 
 
 def test_find_references_kinds_name_only_name_hits():
+    """Verifies that the name kind only matches bare name usages."""
     analyses = {
         "a.py": _analysis("import widget\n"),
         "b.py": _analysis("value = obj.widget\n"),
@@ -246,6 +264,7 @@ def test_find_references_kinds_name_only_name_hits():
 
 
 def test_find_references_kinds_multiple():
+    """Verifies that multiple requested kinds are all matched."""
     analyses = {"a.py": _analysis("import widget\n"), "b.py": _analysis("value = obj.widget\n")}
     hits = pa.find_references(analyses, ["widget"], kinds={"attr", "import"})
     assert [(h["path"], h["how"]) for h in hits] == [
@@ -255,6 +274,7 @@ def test_find_references_kinds_multiple():
 
 
 def test_find_references_accepts_cache_entries():
+    """Verifies that find_references accepts cached analysis entries."""
     analysis = _analysis("import widget\n")
     analyses = {"a.py": {"hash": analysis["hash"], "analysis": analysis}}
     hits = pa.find_references(analyses, ["widget"])
@@ -262,6 +282,7 @@ def test_find_references_accepts_cache_entries():
 
 
 def test_analyze_path_analyzes_and_stores(tmp_path):
+    """Verifies that analyze_path analyzes a file and stores the result in the cache."""
     _write(str(tmp_path / "mod.py"), "import widget\n")
     cache = SymbolCache(str(tmp_path / "cache.json"))
     analysis = pa.analyze_path("mod.py", str(tmp_path), cache)
@@ -273,6 +294,7 @@ def test_analyze_path_analyzes_and_stores(tmp_path):
 
 
 def test_analyze_path_cache_hit_skips_reparse(tmp_path, monkeypatch):
+    """Verifies that a cache hit skips re-parsing the source."""
     _write(str(tmp_path / "mod.py"), SRC)
     cache = SymbolCache(str(tmp_path / "cache.json"))
     calls = _count_parse(monkeypatch)
@@ -284,6 +306,7 @@ def test_analyze_path_cache_hit_skips_reparse(tmp_path, monkeypatch):
 
 
 def test_analyze_path_reparses_when_content_changes(tmp_path, monkeypatch):
+    """Verifies that a file is re-parsed when its content changes."""
     path = str(tmp_path / "mod.py")
     _write(path, SRC)
     cache = SymbolCache(str(tmp_path / "cache.json"))
@@ -296,6 +319,7 @@ def test_analyze_path_reparses_when_content_changes(tmp_path, monkeypatch):
 
 
 def test_analyze_path_uses_preseeded_cache_entry(tmp_path):
+    """Verifies that a preseeded cache entry is reused without re-analysis."""
     _write(str(tmp_path / "mod.py"), "import widget\n")
     cache = SymbolCache(str(tmp_path / "cache.json"))
     analysis = _analysis("import widget\n")
@@ -305,6 +329,7 @@ def test_analyze_path_uses_preseeded_cache_entry(tmp_path):
 
 
 def test_analyze_path_relative_posix_key(tmp_path):
+    """Verifies that analyze_path stores entries under a relative posix-style key."""
     _write(str(tmp_path / "pkg" / "mod.py"), "import widget\n")
     cache = SymbolCache(str(tmp_path / "cache.json"))
     analysis = pa.analyze_path("pkg/mod.py", str(tmp_path), cache)
@@ -313,6 +338,7 @@ def test_analyze_path_relative_posix_key(tmp_path):
 
 
 def test_analyze_path_accepts_plain_dict_and_none_cache(tmp_path):
+    """Verifies that analyze_path accepts a plain dict or None as the cache."""
     _write(str(tmp_path / "mod.py"), "import widget\n")
     plain = {}
     analysis = pa.analyze_path("mod.py", str(tmp_path), plain)
@@ -322,6 +348,7 @@ def test_analyze_path_accepts_plain_dict_and_none_cache(tmp_path):
 
 
 def test_analyze_path_unparseable_returns_none(tmp_path):
+    """Verifies that an unparseable file returns None and leaves the cache empty."""
     _write(str(tmp_path / "bad.py"), "def broken(:\n")
     cache = SymbolCache(str(tmp_path / "cache.json"))
     assert pa.analyze_path("bad.py", str(tmp_path), cache) is None
@@ -329,12 +356,14 @@ def test_analyze_path_unparseable_returns_none(tmp_path):
 
 
 def test_analyze_path_missing_file_returns_none(tmp_path):
+    """Verifies that a missing file returns None."""
     cache = SymbolCache(str(tmp_path / "cache.json"))
     assert pa.analyze_path("missing.py", str(tmp_path), cache) is None
     assert pa.analyze_path("missing.py", None, cache) is None
 
 
 def test_analyze_path_directory_returns_none(tmp_path):
+    """Verifies that a directory path returns None."""
     os.makedirs(str(tmp_path / "adir"))
     cache = SymbolCache(str(tmp_path / "cache.json"))
     assert pa.analyze_path("adir", str(tmp_path), cache) is None

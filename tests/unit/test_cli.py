@@ -179,6 +179,7 @@ def _clean_env(monkeypatch):
 
 
 def test_init_writes_config(tmp_path, monkeypatch):
+    """Verifies that init writes a config file with the chosen profile."""
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
@@ -192,6 +193,7 @@ def test_init_writes_config(tmp_path, monkeypatch):
 
 
 def test_init_default_profile_is_generic(tmp_path, monkeypatch):
+    """Checks that init defaults to the generic profile."""
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
@@ -203,6 +205,7 @@ def test_init_default_profile_is_generic(tmp_path, monkeypatch):
 
 
 def test_init_second_run_idempotent(tmp_path, monkeypatch):
+    """Checks that a second init run leaves an existing config untouched."""
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     monkeypatch.chdir(proj)
@@ -217,6 +220,7 @@ def test_init_second_run_idempotent(tmp_path, monkeypatch):
 
 
 def test_guard_clean_returns_zero(tmp_path, capsys, monkeypatch):
+    """Verifies that guard returns zero when no issues are found."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _anchor(repo)
@@ -228,6 +232,7 @@ def test_guard_clean_returns_zero(tmp_path, capsys, monkeypatch):
 
 
 def test_guard_violation_warn_returns_zero(tmp_path, capsys, monkeypatch):
+    """Checks that guard returns zero on issues in warn mode."""
     repo = _json_repo(tmp_path)
     monkeypatch.chdir(repo)
     assert cli.main(["guard"]) == 0
@@ -237,6 +242,7 @@ def test_guard_violation_warn_returns_zero(tmp_path, capsys, monkeypatch):
 
 
 def test_guard_violation_strict_returns_one(tmp_path, capsys, monkeypatch):
+    """Verifies that guard returns one on issues in strict mode."""
     repo = _json_repo(tmp_path)
     monkeypatch.chdir(repo)
     monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
@@ -244,6 +250,7 @@ def test_guard_violation_strict_returns_one(tmp_path, capsys, monkeypatch):
 
 
 def test_guard_dispatches_flags(tmp_path, monkeypatch):
+    """Checks that guard passes staged/all/files flags to run_guard."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -261,6 +268,7 @@ def test_guard_dispatches_flags(tmp_path, monkeypatch):
 
 
 def test_impact_non_tty_returns_zero(tmp_path, capsys, monkeypatch):
+    """Verifies that impact returns zero and reports impacted routes."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     monkeypatch.chdir(repo)
@@ -271,6 +279,7 @@ def test_impact_non_tty_returns_zero(tmp_path, capsys, monkeypatch):
 
 
 def test_impact_strict_returns_one(tmp_path, capsys, monkeypatch):
+    """Verifies that impact returns one on findings in strict mode."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     monkeypatch.chdir(repo)
@@ -279,6 +288,7 @@ def test_impact_strict_returns_one(tmp_path, capsys, monkeypatch):
 
 
 def test_impact_json_stdout(tmp_path, capsys, monkeypatch):
+    """Checks that impact outputs parseable JSON to stdout."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     monkeypatch.chdir(repo)
@@ -290,6 +300,7 @@ def test_impact_json_stdout(tmp_path, capsys, monkeypatch):
 
 
 def test_impact_dispatches_flags(tmp_path, monkeypatch):
+    """Checks that impact passes staged/fast/json flags to run_impact."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -307,6 +318,7 @@ def test_impact_dispatches_flags(tmp_path, monkeypatch):
 
 
 def test_check_bad_json_returns_one(tmp_path, capsys, monkeypatch):
+    """Verifies that check returns one and reports a bad JSON file."""
     repo = _make_repo(tmp_path)
     _write(repo, "bad.json", "{ not valid\n")
     _git("add", "-A", cwd=repo, env=_git_env())
@@ -319,6 +331,7 @@ def test_check_bad_json_returns_one(tmp_path, capsys, monkeypatch):
 
 
 def test_check_good_json_returns_zero(tmp_path, capsys, monkeypatch):
+    """Checks that check returns zero and stays silent for valid JSON."""
     repo = _make_repo(tmp_path)
     _commit(repo, "ok.json", "{}\n", "base")
     monkeypatch.chdir(repo)
@@ -327,6 +340,7 @@ def test_check_good_json_returns_zero(tmp_path, capsys, monkeypatch):
 
 
 def test_check_trailing_whitespace_fixes(tmp_path, capsys, monkeypatch):
+    """Verifies that the trailing-whitespace check fixes the file in place."""
     repo = _make_repo(tmp_path)
     _commit(repo, "trail.txt", "hello   \n", "base")
     monkeypatch.chdir(repo)
@@ -338,6 +352,7 @@ def test_check_trailing_whitespace_fixes(tmp_path, capsys, monkeypatch):
 
 
 def test_check_missing_id_errors(tmp_path, capsys, monkeypatch):
+    """Checks that check returns one for an unknown check id."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "x\n", "base")
     monkeypatch.chdir(repo)
@@ -348,6 +363,7 @@ def test_check_missing_id_errors(tmp_path, capsys, monkeypatch):
 
 
 def test_install_hooks_writes_executable(tmp_path, monkeypatch):
+    """Verifies that install-hooks writes an executable pre-push hook."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -360,12 +376,14 @@ def test_install_hooks_writes_executable(tmp_path, monkeypatch):
 
 
 def test_unknown_subcommand_exits_two(capsys):
+    """Checks that an unknown subcommand exits with code two."""
     with pytest.raises(SystemExit) as exc:
         cli.main(["frobnicate"])
     assert exc.value.code == 2
 
 
 def test_not_a_repo_returns_one(tmp_path, capsys, monkeypatch):
+    """Verifies that guard returns one outside a git repository."""
     nonrepo = str(tmp_path / "nonrepo")
     os.makedirs(nonrepo)
     monkeypatch.chdir(nonrepo)
@@ -375,6 +393,7 @@ def test_not_a_repo_returns_one(tmp_path, capsys, monkeypatch):
 
 
 def test_version_flag(capsys):
+    """Verifies that --version prints the package version and exits zero."""
     with pytest.raises(SystemExit) as exc:
         cli.main(["--version"])
     assert exc.value.code == 0
@@ -382,12 +401,14 @@ def test_version_flag(capsys):
 
 
 def test_no_args_exits_two(capsys):
+    """Checks that running without arguments exits with code two."""
     with pytest.raises(SystemExit) as exc:
         cli.main([])
     assert exc.value.code == 2
 
 
 def test_install_hooks_non_repo_returns_one(tmp_path, capsys, monkeypatch):
+    """Verifies that install-hooks returns one outside a git repository."""
     nonrepo = str(tmp_path / "nonrepo")
     os.makedirs(nonrepo)
     monkeypatch.chdir(nonrepo)
@@ -397,6 +418,7 @@ def test_install_hooks_non_repo_returns_one(tmp_path, capsys, monkeypatch):
 
 
 def test_install_hooks_prints_installed(tmp_path, capsys, monkeypatch):
+    """Checks that install-hooks prints a confirmation message."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -405,6 +427,7 @@ def test_install_hooks_prints_installed(tmp_path, capsys, monkeypatch):
 
 
 def test_install_hooks_refuses_foreign_without_force(tmp_path, capsys, monkeypatch):
+    """Verifies that install-hooks refuses to overwrite an existing hook."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -419,6 +442,7 @@ def test_install_hooks_refuses_foreign_without_force(tmp_path, capsys, monkeypat
 
 
 def test_install_hooks_force_overwrites_foreign(tmp_path, capsys, monkeypatch):
+    """Checks that install-hooks --force overwrites an existing hook."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -432,6 +456,7 @@ def test_install_hooks_force_overwrites_foreign(tmp_path, capsys, monkeypatch):
 
 
 def test_install_hooks_uninstall(tmp_path, capsys, monkeypatch):
+    """Verifies that install-hooks --uninstall removes the hook."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -446,6 +471,7 @@ def test_install_hooks_uninstall(tmp_path, capsys, monkeypatch):
 
 
 def test_install_hooks_uninstall_leaves_foreign(tmp_path, capsys, monkeypatch):
+    """Verifies that uninstall leaves a non-owned hook in place."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -458,6 +484,7 @@ def test_install_hooks_uninstall_leaves_foreign(tmp_path, capsys, monkeypatch):
 
 
 def test_install_hooks_uninstall_with_force(tmp_path, capsys, monkeypatch):
+    """Checks that uninstall with --force removes the hook."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -480,6 +507,7 @@ def _read_cfg(repo):
 
 
 def test_install_hooks_writes_generic_config_on_first_run(tmp_path, monkeypatch):
+    """Checks that install-hooks writes a generic config on first run."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -490,6 +518,7 @@ def test_install_hooks_writes_generic_config_on_first_run(tmp_path, monkeypatch)
 
 
 def test_install_hooks_keeps_existing_config(tmp_path, monkeypatch):
+    """Verifies that install-hooks preserves an existing config file."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg_path = os.path.join(repo, ".diffimpactscout.json")
@@ -501,6 +530,7 @@ def test_install_hooks_keeps_existing_config(tmp_path, monkeypatch):
 
 
 def test_install_hooks_reconfigure_overwrites(tmp_path, monkeypatch):
+    """Checks that install-hooks --reconfigure overwrites existing config."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg_path = os.path.join(repo, ".diffimpactscout.json")
@@ -512,6 +542,7 @@ def test_install_hooks_reconfigure_overwrites(tmp_path, monkeypatch):
 
 
 def test_install_hooks_profile_flag(tmp_path, monkeypatch):
+    """Checks that the --profile flag selects the profile in the config."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -522,6 +553,7 @@ def test_install_hooks_profile_flag(tmp_path, monkeypatch):
 
 
 def test_install_hooks_yes_flag_keeps_existing_config(tmp_path, monkeypatch):
+    """Checks that the --yes flag keeps an existing config untouched."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg_path = os.path.join(repo, ".diffimpactscout.json")
@@ -533,6 +565,7 @@ def test_install_hooks_yes_flag_keeps_existing_config(tmp_path, monkeypatch):
 
 
 def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
+    """Checks that the --blocking flag sets the blocking mode in the config."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -541,6 +574,7 @@ def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
 
 
 def test_interactive_confirm_yes_defaults_strict(tmp_path, monkeypatch):
+    """Checks that confirming interactively defaults blocking to strict."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -549,6 +583,7 @@ def test_interactive_confirm_yes_defaults_strict(tmp_path, monkeypatch):
 
 
 def test_interactive_override_blocking_defaults_strict(tmp_path, monkeypatch):
+    """Checks that the override prompt defaults blocking to strict."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -558,6 +593,7 @@ def test_interactive_override_blocking_defaults_strict(tmp_path, monkeypatch):
 
 
 def test_interactive_override_blocking_prompt_selects_warn(tmp_path, monkeypatch):
+    """Checks that the override prompt selects warn when entered."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -589,6 +625,7 @@ def _install_answers(repo, answers, args=None):
 
 
 def test_interactive_confirm_yes_writes(tmp_path, monkeypatch):
+    """Verifies that interactive confirmation writes the config file."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -598,6 +635,7 @@ def test_interactive_confirm_yes_writes(tmp_path, monkeypatch):
 
 
 def test_interactive_confirm_no_keeps_config(tmp_path, monkeypatch):
+    """Checks that declining interactively keeps the existing config."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     cfg_path = os.path.join(repo, ".diffimpactscout.json")
@@ -609,6 +647,7 @@ def test_interactive_confirm_no_keeps_config(tmp_path, monkeypatch):
 
 
 def test_interactive_override_profile(tmp_path, monkeypatch):
+    """Checks that the override prompt selects the profile and lint check."""
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
@@ -620,6 +659,7 @@ def test_interactive_override_profile(tmp_path, monkeypatch):
 
 
 def test_interactive_override_keep_lint_no(tmp_path, monkeypatch):
+    """Checks that declining lint keeps it out of the config."""
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
@@ -630,6 +670,7 @@ def test_interactive_override_keep_lint_no(tmp_path, monkeypatch):
 
 
 def test_yes_flag_skips_confirm_even_when_tty(tmp_path, monkeypatch):
+    """Checks that --yes skips confirmation even when stdin is a terminal."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -638,6 +679,7 @@ def test_yes_flag_skips_confirm_even_when_tty(tmp_path, monkeypatch):
 
 
 def test_install_hooks_other_stack_notes_future_layout(tmp_path, capsys, monkeypatch):
+    """Checks that unsupported stacks print a future-layout note."""
     repo = _make_repo(tmp_path)
     _commit(repo, "go.mod", "module x\n", "base")
     monkeypatch.chdir(repo)
@@ -649,6 +691,7 @@ def test_install_hooks_other_stack_notes_future_layout(tmp_path, capsys, monkeyp
 
 
 def test_install_hooks_no_other_stack_note_for_python(tmp_path, capsys, monkeypatch):
+    """Checks that Python stacks do not print the future-layout note."""
     repo = _make_repo(tmp_path)
     _commit(repo, "go.mod", "module x\n", "base")
     _commit(repo, "py/x.py", "x = 1\n", "add_python")
@@ -661,6 +704,7 @@ def test_install_hooks_no_other_stack_note_for_python(tmp_path, capsys, monkeypa
 
 
 def test_interactive_decline_aborts_install(tmp_path, capsys, monkeypatch):
+    """Verifies that declining the final prompt aborts the install."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -676,6 +720,7 @@ def test_interactive_decline_aborts_install(tmp_path, capsys, monkeypatch):
 def test_interactive_override_shows_new_profile_in_preview(
     tmp_path, capsys, monkeypatch
 ):
+    """Checks that the preview shows the overridden profile, not the detected one."""
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
@@ -688,6 +733,7 @@ def test_interactive_override_shows_new_profile_in_preview(
 
 
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):
+    """Verifies that check returns one for a nonexistent file."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "x\n", "base")
     monkeypatch.chdir(repo)
@@ -697,6 +743,7 @@ def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):
 
 
 def test_init_unwritable_parent_returns_one(tmp_path, capsys, monkeypatch):
+    """Checks that init returns one when the parent directory is unwritable."""
     proj = str(tmp_path / "proj")
     os.makedirs(proj)
     blocker = os.path.join(proj, "blocker")

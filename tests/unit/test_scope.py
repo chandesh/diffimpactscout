@@ -71,36 +71,44 @@ def _make_scope(repo, cache_dir):
 
 
 def test_parse_hunks_simple():
+    """Verifies parsing of a simple hunk header into a tuple."""
     assert scope.parse_hunks("@@ -1,2 +1,3 @@\n ctx\n+add\n") == [(1, 2, 1, 3)]
 
 
 def test_parse_hunks_insertion():
+    """Verifies parsing of a pure-insertion hunk header."""
     assert scope.parse_hunks("@@ -10,0 +12,2 @@\n") == [(10, 0, 12, 2)]
 
 
 def test_hunk_new_lines_simple():
+    """Checks that new-side line numbers of a simple hunk are returned."""
     assert scope.hunk_new_lines("@@ -1,2 +1,3 @@\n") == {1, 2, 3}
 
 
 def test_hunk_new_lines_insertion():
+    """Checks new-side line numbers for a pure-insertion hunk."""
     assert scope.hunk_new_lines("@@ -10,0 +12,2 @@\n") == {12, 13}
 
 
 def test_hunk_new_lines_multiple_hunks():
+    """Checks that new lines from multiple hunks are combined."""
     text = "@@ -1,2 +1,3 @@\n@@ -10,0 +12,2 @@\n"
     assert scope.hunk_new_lines(text) == {1, 2, 3, 12, 13}
 
 
 def test_hunk_new_lines_omitted_counts():
+    """Checks new-line parsing when range counts are omitted."""
     assert scope.hunk_new_lines("@@ -2 +3 @@\n") == {3}
 
 
 def test_hunk_new_lines_pure_deletion():
+    """Checks that a pure-deletion hunk has no new-side lines."""
     assert scope.parse_hunks("@@ -5,3 +5,0 @@\n") == [(5, 3, 5, 0)]
     assert scope.hunk_new_lines("@@ -5,3 +5,0 @@\n") == set()
 
 
 def test_dev_files_only_dev_changes(tmp_path):
+    """Checks that dev_files returns only dev-authored changed files."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     anchor = _anchor(repo)
@@ -111,6 +119,7 @@ def test_dev_files_only_dev_changes(tmp_path):
 
 
 def test_dev_files_excludes_upstream_sync(tmp_path):
+    """Checks that upstream-synced changes are excluded from dev files."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "one")
     _anchor(repo)
@@ -122,6 +131,7 @@ def test_dev_files_excludes_upstream_sync(tmp_path):
 
 
 def test_dev_files_manual_union(tmp_path):
+    """Checks that dev_files includes uncommitted manual changes."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     with open(os.path.join(repo, "a.txt"), "a") as fh:
@@ -131,6 +141,7 @@ def test_dev_files_manual_union(tmp_path):
 
 
 def test_dev_files_range_fallback(tmp_path):
+    """Checks that dev_files falls back to an explicit commit range."""
     repo = _make_repo(tmp_path)
     sha_base = _commit(repo, "a.txt", "one\n", "base")
     _commit(repo, "b.txt", "two\n", "dev b")
@@ -139,6 +150,7 @@ def test_dev_files_range_fallback(tmp_path):
 
 
 def test_diverged_range_uses_merge_base(tmp_path):
+    """Verifies that a diverged range uses the merge base to exclude remote files."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     _git("checkout", "-b", "temp_remote", cwd=repo)
@@ -153,6 +165,7 @@ def test_diverged_range_uses_merge_base(tmp_path):
 
 
 def test_dev_files_cache_hit_after_repo_change(tmp_path):
+    """Checks that a cached dev-files result is not recomputed after repo changes."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     anchor = _anchor(repo)
@@ -164,6 +177,7 @@ def test_dev_files_cache_hit_after_repo_change(tmp_path):
 
 
 def test_contains(tmp_path):
+    """Checks that contains distinguishes dev files from tracked and unknown paths."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "one")
     anchor = _anchor(repo)
@@ -175,6 +189,7 @@ def test_contains(tmp_path):
 
 
 def test_changed_lines_append(tmp_path):
+    """Checks that appended lines are reported as changed lines."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\ntwo\n", "base")
     anchor = _anchor(repo)
@@ -184,6 +199,7 @@ def test_changed_lines_append(tmp_path):
 
 
 def test_changed_lines_range(tmp_path):
+    """Checks changed lines computed over an explicit commit range."""
     repo = _make_repo(tmp_path)
     sha_base = _commit(repo, "a.txt", "one\ntwo\n", "base")
     sha_to = _append(repo, "a.txt", "three\n", "append")
@@ -192,6 +208,7 @@ def test_changed_lines_range(tmp_path):
 
 
 def test_changed_lines_manual_union(tmp_path):
+    """Checks that uncommitted manual edits are counted as changed lines."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\ntwo\nthree\n", "base")
     with open(os.path.join(repo, "a.txt"), "a") as fh:
@@ -201,6 +218,7 @@ def test_changed_lines_manual_union(tmp_path):
 
 
 def test_is_tracked_and_new_file(tmp_path):
+    """Checks is_tracked for tracked vs new files and changed_lines for a new file."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     anchor = _anchor(repo)
@@ -213,6 +231,7 @@ def test_is_tracked_and_new_file(tmp_path):
 
 
 def test_scope_base_cached_once(tmp_path, monkeypatch):
+    """Verifies that scope_base resolves the change base only once per range."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     ref = _anchor(repo)
@@ -230,6 +249,7 @@ def test_scope_base_cached_once(tmp_path, monkeypatch):
 
 
 def test_scope_base_cache_keyed_by_range(tmp_path, monkeypatch):
+    """Verifies that the scope_base cache is keyed by the from/to range."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     ref = _anchor(repo)
@@ -247,6 +267,7 @@ def test_scope_base_cache_keyed_by_range(tmp_path, monkeypatch):
 
 
 def test_scope_base_manual_resolves_fresh(tmp_path, monkeypatch):
+    """Verifies that a manual (range-less) scope_base resolves fresh each time."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     ref = _anchor(repo)
@@ -264,6 +285,7 @@ def test_scope_base_manual_resolves_fresh(tmp_path, monkeypatch):
 
 
 def test_cache_write_failure_degrades(tmp_path, monkeypatch):
+    """Checks that cache write failures degrade gracefully without errors."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     sha_base = _sha(repo)
@@ -280,6 +302,7 @@ def test_cache_write_failure_degrades(tmp_path, monkeypatch):
 
 
 def test_corrupt_cache_file_tolerated(tmp_path):
+    """Checks that a corrupt cache file is tolerated and recomputed."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     sha_base = _sha(repo)
@@ -304,6 +327,7 @@ def test_corrupt_cache_file_tolerated(tmp_path):
 
 
 def test_scope_base_none_sentinel(tmp_path, monkeypatch):
+    """Verifies that a None resolved base is cached as a sentinel."""
     repo = _make_repo(tmp_path)
     _commit(repo, "a.txt", "one\n", "base")
     cache_dir = str(tmp_path / "cache")
@@ -323,12 +347,14 @@ def test_scope_base_none_sentinel(tmp_path, monkeypatch):
 
 
 def test_default_cache_dir_xdg(monkeypatch):
+    """Checks that the default cache dir honors XDG_CACHE_HOME."""
     monkeypatch.setenv("XDG_CACHE_HOME", "/xdg/cache")
     monkeypatch.setenv("HOME", "/home/test")
     assert scope.default_cache_dir() == os.path.join("/xdg/cache", "diffimpactscout")
 
 
 def test_default_cache_dir_home(monkeypatch):
+    """Checks that the default cache dir falls back to HOME when XDG is unset."""
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     monkeypatch.setenv("HOME", "/home/test")
     assert scope.default_cache_dir() == os.path.join(
@@ -337,6 +363,7 @@ def test_default_cache_dir_home(monkeypatch):
 
 
 def test_cache_key_stable_and_distinct():
+    """Verifies that cache keys are stable for the same inputs and hex-only."""
     key = scope.cache_key("/repo/.git", "from1", "to1")
     assert key == scope.cache_key("/repo/.git", "from1", "to1")
     assert key != scope.cache_key("/repo/.git", "from2", "to1")

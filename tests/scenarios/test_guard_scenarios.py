@@ -158,6 +158,7 @@ def _prepend_bin(monkeypatch, tmp_path):
 
 
 def test_01_direct_push(tmp_path):
+    """Verifies that a direct push anchors to origin/master and includes all pushed files."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.txt", "one\n")
@@ -175,6 +176,7 @@ def test_01_direct_push(tmp_path):
 
 
 def test_02_merge_sync(tmp_path):
+    """Verifies that after merging origin/master the dev files and changed lines are computed correctly."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.txt", "one\n")
@@ -201,6 +203,7 @@ def test_02_merge_sync(tmp_path):
 
 
 def test_03_rebase_sync(tmp_path):
+    """Verifies that after rebasing onto origin/master the dev files exclude upstream-only changes."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.txt", "one\n")
@@ -224,6 +227,7 @@ def test_03_rebase_sync(tmp_path):
 
 
 def test_04_squash_sync(tmp_path):
+    """Verifies that a squash merge of origin/master correctly scopes the dev files."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.txt", "one\n")
@@ -248,6 +252,7 @@ def test_04_squash_sync(tmp_path):
 
 
 def test_05_force_push(tmp_path):
+    """Verifies that an amended (force-pushed) commit still resolves the dev files correctly."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.txt", "one\n")
@@ -266,6 +271,7 @@ def test_05_force_push(tmp_path):
 
 
 def test_06_new_branch(tmp_path):
+    """Verifies that an unpushed new branch anchors to origin/master and scopes its dev files."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.txt", "one\n")
@@ -278,6 +284,7 @@ def test_06_new_branch(tmp_path):
 
 
 def test_07_stacked_branch(tmp_path):
+    """Verifies that stacked branches correctly scope dev files relative to origin/master."""
     repo = _setup(str(tmp_path))
     repo.branch("f1", "master")
     repo.write("f1.txt", "one\n")
@@ -302,6 +309,7 @@ def test_07_stacked_branch(tmp_path):
 
 
 def test_08_shallow_clones(tmp_path, capsys):
+    """Verifies that shallow clones fall back to the push range when no anchor is available."""
     seed = _setup(str(tmp_path))
     seed.write("u1.txt", "u1\n")
     seed.commit("U1")
@@ -336,6 +344,7 @@ def test_08_shallow_clones(tmp_path, capsys):
 
 
 def test_09_no_anchor(tmp_path, capsys):
+    """Verifies that a repo with no resolvable anchor falls back to the push range."""
     repo = _setup(str(tmp_path))
     repo.write("f1.txt", "one\n")
     repo.commit("D1")
@@ -356,6 +365,7 @@ def test_09_no_anchor(tmp_path, capsys):
 
 
 def test_10_ruff_sync(tmp_path, monkeypatch, capsys):
+    """Verifies that ruff reports only dev-owned violations, not upstream ones, under strict mode."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.py", "one\n")
@@ -389,6 +399,7 @@ def test_10_ruff_sync(tmp_path, monkeypatch, capsys):
 
 
 def test_11_eslint_sync(tmp_path, monkeypatch, capsys):
+    """Verifies that eslint reports only dev-owned messages, not upstream ones, under strict mode."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("a.ts", "one\n")
@@ -423,6 +434,7 @@ def test_11_eslint_sync(tmp_path, monkeypatch, capsys):
 
 
 def test_12_format_check_sync(tmp_path, monkeypatch, capsys):
+    """Verifies that ruff-format failures surface only for dev-owned files under strict mode."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.py", "one\n")
@@ -456,6 +468,7 @@ def test_12_format_check_sync(tmp_path, monkeypatch, capsys):
 
 
 def test_13_prettier_sync(tmp_path, monkeypatch, capsys):
+    """Verifies that prettier failures surface only for dev-owned files under strict mode."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("media/src/a.ts", "one\n")
@@ -489,6 +502,7 @@ def test_13_prettier_sync(tmp_path, monkeypatch, capsys):
 
 
 def test_14_scope_fixer(tmp_path, capsys):
+    """Verifies that hygiene fixers rewrite only dev-owned files and leave upstream files untouched."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("dev_crlf.py", "x\r\ny\r\n")
@@ -540,6 +554,7 @@ def test_14_scope_fixer(tmp_path, capsys):
 
 
 def test_15_dev_scope(tmp_path, monkeypatch, capsys):
+    """Verifies dev scope resolution, cached anchor/devset persistence, and explicit ref handling."""
     monkeypatch.setenv("PRE_COMMIT_FROM_REF", "fakefrom")
     monkeypatch.setenv("PRE_COMMIT_TO_REF", "faketo")
     repo = _setup(str(tmp_path))
@@ -584,6 +599,7 @@ def test_15_dev_scope(tmp_path, monkeypatch, capsys):
 
 
 def test_16_upstream_sync(tmp_path, capsys):
+    """Verifies sync from an upstream remote scopes dev files and avoids touching upstream-owned files."""
     prefix = str(tmp_path)
     canon = GitRepo.init(os.path.join(prefix, "canon"))
     canon.write("m0.txt", "M0\n")
@@ -663,6 +679,7 @@ def test_16_upstream_sync(tmp_path, capsys):
 
 
 def test_17_json_sync(tmp_path, monkeypatch, capsys):
+    """Verifies that JSON-syntax failures surface only for dev-owned files under strict mode."""
     repo = _setup(str(tmp_path))
     repo.branch("feature", "master")
     repo.write("f1.json", "{\"a\":1}\n")
@@ -693,6 +710,7 @@ def test_17_json_sync(tmp_path, monkeypatch, capsys):
 
 
 def test_18_hook_execution(tmp_path, monkeypatch):
+    """Verifies hook script generation, skip-when-missing behavior, and install/uninstall lifecycle."""
     repo = _setup(str(tmp_path))
     orig_path = os.environ.get("PATH", "")
     missing_exe = os.path.join(str(tmp_path), "missing-python")

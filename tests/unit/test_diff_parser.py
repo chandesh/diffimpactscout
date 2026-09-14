@@ -60,6 +60,7 @@ def _sig(change):
 
 
 def test_entity_fields():
+    """Verifies the Entity dataclass stores name, kind, line, and qualname."""
     ent = Entity("helper", "function", 3, "helper")
     assert ent.name == "helper"
     assert ent.kind == "function"
@@ -68,6 +69,7 @@ def test_entity_fields():
 
 
 def test_file_change_fields():
+    """Checks the FileChange dataclass stores path, status, old path, and ext."""
     fc = FileChange("a.py", "M", None, "py")
     assert fc.path == "a.py"
     assert fc.status == "M"
@@ -76,6 +78,7 @@ def test_file_change_fields():
 
 
 def test_extract_entities_fixture():
+    """Verifies entities are extracted from functions, classes, and fields."""
     source = (
         "import os\n"
         "\n"
@@ -115,6 +118,7 @@ def test_extract_entities_fixture():
 
 
 def test_extract_entities_skips_locals_and_nested():
+    """Checks that local and nested definitions are excluded from entities."""
     source = (
         "def outer():\n"
         "    def inner():\n"
@@ -130,15 +134,18 @@ def test_extract_entities_skips_locals_and_nested():
 
 
 def test_extract_entities_skips_imports():
+    """Verifies that import statements are not extracted as entities."""
     source = "import os\nfrom x import y\n"
     assert dp.extract_entities(source) == []
 
 
 def test_extract_entities_syntax_error_returns_empty():
+    """Checks that a syntax error yields no extracted entities."""
     assert dp.extract_entities("def broken(:\n") == []
 
 
 def test_parse_name_status_a_m_d_r():
+    """Verifies name-status parsing handles added, modified, deleted, renamed."""
     data = [
         "M",
         "a.py",
@@ -160,11 +167,13 @@ def test_parse_name_status_a_m_d_r():
 
 
 def test_parse_name_status_rename_without_score():
+    """Checks that a rename without a similarity score is parsed correctly."""
     changes = dp._parse_name_status(["R", "old.py", "new.py"], "/repo")
     assert [_sig(c) for c in changes] == [("new.py", "R", "old.py", "py")]
 
 
 def test_parse_name_status_resolves_absolute_paths():
+    """Verifies that absolute paths are resolved relative to the repo root."""
     changes = dp._parse_name_status(
         ["A", "/tmp/root/mod.py"], "/tmp/root"
     )
@@ -172,6 +181,7 @@ def test_parse_name_status_resolves_absolute_paths():
 
 
 def test_parse_name_status_handles_empty_and_garbage():
+    """Checks that empty and garbage name-status input is handled safely."""
     assert dp._parse_name_status([], "/repo") == []
     assert dp._parse_name_status(["M"], "/repo") == []
     changes = dp._parse_name_status(["junk", "A", "x.py"], "/repo")
@@ -179,6 +189,7 @@ def test_parse_name_status_handles_empty_and_garbage():
 
 
 def test_ext_lowercase_and_dotfiles():
+    """Verifies _ext lowercases extensions and ignores dotfiles."""
     assert dp._ext("IMG.PNG") == "png"
     assert dp._ext(".gitignore") == ""
     assert dp._ext("Makefile") == ""
@@ -186,6 +197,7 @@ def test_ext_lowercase_and_dotfiles():
 
 
 def test_get_file_changes_anchor_add_modify_rename(tmp_path):
+    """Verifies file changes report adds, modifies, and renames against anchor."""
     repo = _make_repo(tmp_path)
     _write(repo, "a.py", "a1\n")
     _write(repo, "old.py", "old\n")
@@ -204,6 +216,7 @@ def test_get_file_changes_anchor_add_modify_rename(tmp_path):
 
 
 def test_get_file_changes_anchor_deletion(tmp_path):
+    """Checks that deleted files are reported and readable at the anchor ref."""
     repo = _make_repo(tmp_path)
     _write(repo, "del.py", "def helper():\n    return 1\n")
     _commit(repo, "base")
@@ -217,6 +230,7 @@ def test_get_file_changes_anchor_deletion(tmp_path):
 
 
 def test_get_file_changes_staged(tmp_path):
+    """Verifies that staged changes are reported when staged=True."""
     repo = _make_repo(tmp_path)
     _write(repo, "a.py", "one\n")
     _commit(repo, "base")
@@ -227,6 +241,7 @@ def test_get_file_changes_staged(tmp_path):
 
 
 def test_get_file_changes_range(tmp_path):
+    """Checks that changes between explicit from/to refs are reported."""
     repo = _make_repo(tmp_path)
     _write(repo, "a.py", "one\n")
     from_sha = _commit(repo, "base")
@@ -237,6 +252,7 @@ def test_get_file_changes_range(tmp_path):
 
 
 def test_get_file_changes_heuristic_worktree(tmp_path):
+    """Verifies that uncommitted worktree edits are detected heuristically."""
     repo = _make_repo(tmp_path)
     _write(repo, "a.py", "one\n")
     _commit(repo, "base")
@@ -246,6 +262,7 @@ def test_get_file_changes_heuristic_worktree(tmp_path):
 
 
 def test_get_file_changes_heuristic_union_dedup(tmp_path):
+    """Checks that heuristic changes union staged and worktree without dupes."""
     repo = _make_repo(tmp_path)
     _write(repo, "a.py", "one\n")
     _write(repo, "plain.py", "base\n")
@@ -263,6 +280,7 @@ def test_get_file_changes_heuristic_union_dedup(tmp_path):
 
 
 def test_read_path_at_ref_deleted_file(tmp_path):
+    """Verifies reading a file at a ref before and after deletion."""
     repo = _make_repo(tmp_path)
     _write(repo, "del.py", "old-content\n")
     _commit(repo, "base")
@@ -274,6 +292,7 @@ def test_read_path_at_ref_deleted_file(tmp_path):
 
 
 def test_read_path_at_ref_renamed_old_path(tmp_path):
+    """Checks that renamed files can be read via old and new paths."""
     repo = _make_repo(tmp_path)
     _write(repo, "old.py", "payload\n")
     _commit(repo, "base")

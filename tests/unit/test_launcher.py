@@ -51,6 +51,7 @@ def _write_foreign(root, content):
 
 
 def test_hook_body_has_no_staged_and_calls_guard(tmp_path):
+    """Verifies the hook body avoids --staged and invokes the guard."""
     body = launcher.hook_body("/venv/bin/python")
     assert "--staged" not in body
     assert "diffimpactscout guard" in body
@@ -59,6 +60,7 @@ def test_hook_body_has_no_staged_and_calls_guard(tmp_path):
 
 
 def test_hook_body_missing_tool_exits_zero():
+    """Checks that a missing tool makes the hook exit zero with guidance."""
     body = launcher.hook_body("/venv/bin/python")
     assert "exit 0" in body
     assert "exit 1" not in body
@@ -66,6 +68,7 @@ def test_hook_body_missing_tool_exits_zero():
 
 
 def test_hook_body_probes_version_and_single_quotes_exec():
+    """Verifies the hook probes the version and single-quotes the exec path."""
     body = launcher.hook_body("/venv/bin/python")
     assert "command -v diffimpactscout >/dev/null 2>&1 && diffimpactscout --version >/dev/null 2>&1" in body
     assert "-x '/venv/bin/python'" in body
@@ -73,12 +76,14 @@ def test_hook_body_probes_version_and_single_quotes_exec():
 
 
 def test_hook_body_single_quotes_spaces_in_path():
+    """Checks that paths containing spaces are single-quoted in the hook."""
     body = launcher.hook_body("/tmp/venv with space/bin/python")
     assert "[ -x '/tmp/venv with space/bin/python' ]" in body
     assert "exec '/tmp/venv with space/bin/python' -m diffimpactscout guard" in body
 
 
 def test_hook_body_escapes_quote_in_executable():
+    """Verifies that quotes in the executable path are properly escaped."""
     body = launcher.hook_body("/venv'x/bin/python")
     assert "-x '/venv'\"'\"'x/bin/python'" in body
 
@@ -128,6 +133,7 @@ def _run_hook(tmp_path, stdin_data):
 
 
 def test_hook_forwards_env_for_single_real_push(tmp_path):
+    """Verifies the hook forwards refs for a single real push."""
     line = "refs/heads/master %s refs/heads/master %s\n" % (LOCAL_OID, REMOTE_OID)
     proc = _run_hook(tmp_path, line)
     assert proc.returncode == 0
@@ -136,6 +142,7 @@ def test_hook_forwards_env_for_single_real_push(tmp_path):
 
 
 def test_hook_skips_env_for_new_branch_zero_remote_oid(tmp_path):
+    """Checks that a new branch with a zero remote oid skips env forwarding."""
     line = "refs/heads/feat %s refs/heads/feat %s\n" % (LOCAL_OID, ZERO_OID)
     proc = _run_hook(tmp_path, line)
     assert proc.returncode == 0
@@ -144,6 +151,7 @@ def test_hook_skips_env_for_new_branch_zero_remote_oid(tmp_path):
 
 
 def test_hook_skips_env_for_deletion_zero_local_oid(tmp_path):
+    """Verifies that a deletion with a zero local oid skips env forwarding."""
     line = "refs/heads/del %s refs/heads/del %s\n" % (ZERO_OID, REMOTE_OID)
     proc = _run_hook(tmp_path, line)
     assert proc.returncode == 0
@@ -152,6 +160,7 @@ def test_hook_skips_env_for_deletion_zero_local_oid(tmp_path):
 
 
 def test_hook_skips_env_for_empty_stdin(tmp_path):
+    """Checks that empty stdin makes the hook skip env forwarding."""
     proc = _run_hook(tmp_path, "")
     assert proc.returncode == 0
     assert proc.stdout.strip() == "/"
@@ -159,6 +168,7 @@ def test_hook_skips_env_for_empty_stdin(tmp_path):
 
 
 def test_hook_skips_env_for_multi_line_push(tmp_path):
+    """Verifies that a multi-line push skips env forwarding."""
     lines = (
         "refs/heads/a %s refs/heads/a %s\n"
         "refs/heads/b %s refs/heads/b %s\n"
@@ -171,6 +181,7 @@ def test_hook_skips_env_for_multi_line_push(tmp_path):
 
 
 def test_install_hook_linked_worktree(tmp_path):
+    """Verifies hook install/remove works for a linked worktree."""
     main = _make_repo(tmp_path, "main")
     _commit(main)
     wt = str(tmp_path / "wt")
@@ -186,6 +197,7 @@ def test_install_hook_linked_worktree(tmp_path):
 
 
 def test_hooks_dir_honors_core_hooks_path_relative(tmp_path):
+    """Checks that a relative core.hooksPath is honored for hooks dir."""
     main = _make_repo(tmp_path)
     _commit(main)
     custom = os.path.join(main, "custom-hooks")
@@ -198,6 +210,7 @@ def test_hooks_dir_honors_core_hooks_path_relative(tmp_path):
 
 
 def test_hooks_dir_honors_core_hooks_path_absolute(tmp_path):
+    """Verifies that an absolute core.hooksPath is honored for hooks dir."""
     main = _make_repo(tmp_path)
     _commit(main)
     custom = str(tmp_path / "abs-hooks")
@@ -209,6 +222,7 @@ def test_hooks_dir_honors_core_hooks_path_absolute(tmp_path):
 
 
 def test_install_creates_hook_with_exec_bit_and_recorded_python(tmp_path):
+    """Checks that install creates an executable hook recording the python path."""
     root = str(tmp_path / "repo")
     os.makedirs(root)
     assert launcher.install_hook(root) is True
@@ -220,6 +234,7 @@ def test_install_creates_hook_with_exec_bit_and_recorded_python(tmp_path):
 
 
 def test_reinstall_over_own_hook_ok(tmp_path):
+    """Verifies that reinstalling over our own hook is allowed."""
     root = str(tmp_path / "repo")
     os.makedirs(root)
     assert launcher.install_hook(root) is True
@@ -227,6 +242,7 @@ def test_reinstall_over_own_hook_ok(tmp_path):
 
 
 def test_refuse_foreign_hook_without_force(tmp_path, capsys):
+    """Checks that install refuses a foreign hook without force."""
     root = str(tmp_path / "repo")
     os.makedirs(root)
     _write_foreign(root, "#!/bin/sh\necho not ours\n")
@@ -238,6 +254,7 @@ def test_refuse_foreign_hook_without_force(tmp_path, capsys):
 
 
 def test_force_overwrites_foreign_hook(tmp_path):
+    """Verifies that force overwrites an existing foreign hook."""
     root = str(tmp_path / "repo")
     os.makedirs(root)
     _write_foreign(root, "#!/bin/sh\necho not ours\n")
@@ -248,6 +265,7 @@ def test_force_overwrites_foreign_hook(tmp_path):
 
 
 def test_uninstall_removes_only_our_hook(tmp_path):
+    """Checks that uninstall only removes hooks installed by us."""
     root = str(tmp_path / "repo")
     os.makedirs(root)
     path = os.path.join(root, ".git", "hooks", "pre-push")
@@ -263,6 +281,7 @@ def test_uninstall_removes_only_our_hook(tmp_path):
 
 
 def test_hook_installed_true_and_false(tmp_path):
+    """Verifies hook_installed reports correctly for owned and foreign hooks."""
     root = str(tmp_path / "repo")
     os.makedirs(root)
     assert launcher.hook_installed(root) is False

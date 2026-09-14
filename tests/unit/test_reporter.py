@@ -74,6 +74,105 @@ def test_classify_severity_layers_as_list_works():
     assert reporter.classify_severity(["python"], False, {"a.py"}, "b.py") == "Medium"
 
 
+def test_severity_reason_deleted_renamed_is_high():
+    """Verifies that deleted or renamed symbols carry a deleted/renamed reason."""
+    reason = reporter.severity_reason({"python"}, True, {"a.py"}, "a.py")
+    assert "deleted or renamed" in reason
+    assert reporter.classify_severity({"python"}, True, {"a.py"}, "a.py") == "High"
+
+
+def test_severity_reason_multiple_layers_lists_layers():
+    """Verifies that multi-layer reasons list the layers involved."""
+    reason = reporter.severity_reason({"python", "template"}, False, {"a.py"}, "a.py")
+    assert "multiple layers" in reason
+    assert "python" in reason
+    assert "template" in reason
+    assert reporter.classify_severity({"python", "template"}, False, {"a.py"}, "a.py") == "High"
+
+
+def test_severity_reason_reference_inside_changed_file():
+    """Verifies that in-file references carry an inside-the-change-set reason."""
+    reason = reporter.severity_reason({"python"}, False, {"a.py"}, "a.py")
+    assert "inside the changed file" in reason
+    assert reporter.classify_severity({"python"}, False, {"a.py"}, "a.py") == "Low"
+
+
+def test_severity_reason_no_external_reference():
+    """Verifies that missing reference paths or empty change-sets carry a no-external reason."""
+    reason = reporter.severity_reason({"python"}, False, {"a.py"}, None)
+    assert "external reference" in reason
+    assert reporter.classify_severity({"python"}, False, {"a.py"}, None) == "Low"
+    reason = reporter.severity_reason({"python"}, False, [], "a.py")
+    assert "external reference" in reason
+    assert reporter.classify_severity({"python"}, False, [], "a.py") == "Low"
+
+
+def test_severity_reason_outside_changed_file():
+    """Verifies that outside-file references carry an outside-the-change-set reason."""
+    reason = reporter.severity_reason({"python"}, False, {"a.py"}, "b.py")
+    assert "outside the change-set" in reason
+    assert reporter.classify_severity({"python"}, False, {"a.py"}, "b.py") == "Medium"
+
+
+def test_severity_reason_layers_as_list_works():
+    """Verifies that severity reasons accept layers as a list."""
+    reason = reporter.severity_reason(["python", "template"], False, {"a.py"}, "a.py")
+    assert "multiple layers" in reason
+    assert reporter.severity_reason(["python"], False, {"a.py"}, "b.py") == (
+        "referenced from a file outside the change-set"
+    )
+
+
+def _rows_with_reason():
+    return [
+        {
+            "path": "apps/orders/views.py",
+            "module": "apps.orders",
+            "category": "python",
+            "ref": "OrderList (import at apps/orders/urls.py:6)",
+            "severity": "High",
+            "action": "verify dangling references",
+            "reason": "symbol was deleted or renamed in this change-set",
+        },
+        {
+            "path": "templates/orders.html",
+            "module": "orders",
+            "category": "template",
+            "ref": "order-list",
+            "severity": "Medium",
+            "action": "Verify template",
+            "reason": "referenced from a file outside the change-set",
+        },
+    ]
+
+
+def test_render_report_ascii_severity_rationale_section():
+    """Verifies that the ASCII report lists a per-row severity rationale."""
+    out = reporter.render_report(_rows_with_reason(), [], 2)
+    assert "Severity rationale" in out
+    assert "1. High - apps/orders/views.py -> OrderList" in out
+    assert "symbol was deleted or renamed in this change-set" in out
+    assert "2. Medium - templates/orders.html -> order-list" in out
+    assert "referenced from a file outside the change-set" in out
+
+
+def test_render_report_markdown_severity_rationale_section():
+    """Verifies that the markdown report includes a severity rationale section."""
+    out = reporter.render_report(_rows_with_reason(), [], 2, markdown=True)
+    assert "## Severity rationale" in out
+    assert "1. High - apps/orders/views.py -> OrderList" in out
+    assert "symbol was deleted or renamed in this change-set" in out
+    assert "2. Medium - templates/orders.html -> order-list" in out
+
+
+def test_render_report_rationale_omitted_without_reason():
+    """Verifies that the rationale section is omitted when rows carry no reason."""
+    out = reporter.render_report(ROWS, [], 2)
+    assert "Severity rationale" not in out
+    md = reporter.render_report(ROWS, [], 2, markdown=True)
+    assert "Severity rationale" not in md
+
+
 def test_render_report_header_exact():
     """Verifies that the rendered ASCII report includes the title banner."""
     out = reporter.render_report([], [], 0)

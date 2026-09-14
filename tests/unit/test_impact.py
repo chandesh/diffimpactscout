@@ -354,6 +354,8 @@ def test_run_impact_cross_layer_report(tmp_path, capsys):
     assert "frontend" in out
     assert "High" in out
     assert "1 changed file(s)" in out
+    assert "Severity rationale" in out
+    assert "multiple layers (frontend + python + template)" in out
 
 
 def test_run_impact_model_field_plain(tmp_path, capsys):
@@ -366,6 +368,7 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
     assert "status (attr at app/views.py:2)" in out
     assert "Medium" in out
     assert "verify" in out
+    assert "referenced from a file outside the change-set" in out
     assert "1 changed file(s)" in out
 
 
@@ -380,6 +383,8 @@ def test_run_impact_deleted_function(tmp_path, capsys):
     assert "legacy_helper (import at app/service.py:1)" in out
     assert "legacy_helper (name at app/service.py:4)" in out
     assert "High" in out
+    assert "Severity rationale" in out
+    assert "deleted or renamed" in out
 
 
 def test_run_impact_json_output(tmp_path, capsys):
@@ -392,6 +397,7 @@ def test_run_impact_json_output(tmp_path, capsys):
     data = json.loads(out)
     assert data["changed_count"] == 1
     assert data["rows"]
+    assert all("reason" in r for r in data["rows"])
     assert any(r["category"] == "template" for r in data["rows"])
     assert any(r["category"] == "frontend" for r in data["rows"])
     unresolved_paths = [u.get("path") for u in data["unresolved"]]
@@ -549,9 +555,15 @@ def test_run_impact_frontend_same_line_dedup(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert _count_category(out, "frontend") == 1
-    # Dedup verified at the row level: the ref appears in exactly one table
-    # row; there is no redundant Findings block.
-    assert out.count('http.get("/api/v1/orders/") at src/orders.service.ts:2') == 1
+    # Dedup verified at the row level: exactly one table row references the
+    # call; the severity rationale block repeats it, so only table rows count.
+    table_rows = [
+        line
+        for line in out.splitlines()
+        if re.match(r"^\s+\d+\s", line)
+        and 'http.get("/api/v1/orders/") at src/orders.service.ts:2' in line
+    ]
+    assert len(table_rows) == 1
 
 
 def test_run_impact_frontend_duplicate_calls_distinct_lines(tmp_path, capsys):
@@ -599,8 +611,14 @@ def test_run_impact_template_duplicate_tag_dedup(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert _count_category(out, "template") == 1
-    # Dedup verified at the row level: one table row, no redundant Findings.
-    assert out.count("{% url 'order-list' %}") == 1
+    # Dedup verified at the row level: exactly one table row carries the tag;
+    # the severity rationale block repeats it, so only table rows count.
+    table_rows = [
+        line
+        for line in out.splitlines()
+        if re.match(r"^\s+\d+\s", line) and "{% url 'order-list' %}" in line
+    ]
+    assert len(table_rows) == 1
 
 
 def test_run_impact_tty_accept_proceeds(tmp_path, monkeypatch, capsys):

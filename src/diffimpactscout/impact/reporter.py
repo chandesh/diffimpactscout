@@ -29,6 +29,19 @@ def classify_severity(layers, deleted_renamed, changed_paths, ref_path):
     return "Medium"
 
 
+def severity_reason(layers, deleted_renamed, changed_paths, ref_path):
+    if deleted_renamed:
+        return "symbol was deleted or renamed in this change-set"
+    layers = set(layers or ())
+    if len(layers) >= 2:
+        return "referenced from multiple layers (%s)" % " + ".join(sorted(layers))
+    if ref_path in (changed_paths or ()):
+        return "reference is inside the changed file itself"
+    if not ref_path or not changed_paths:
+        return "no external reference beyond the change-set"
+    return "referenced from a file outside the change-set"
+
+
 def _cell(row, key):
     if isinstance(row, dict):
         value = row.get(key)
@@ -62,6 +75,17 @@ def _summary_line(rows, changed_count):
     )
 
 
+def _rationale_lines(rows):
+    lines = []
+    for i, row in enumerate(rows or [], start=1):
+        reason = _cell(row, "reason")
+        if not reason:
+            continue
+        label = "%s -> %s" % (_cell(row, "path") or "-", _cell(row, "ref") or "-")
+        lines.append("    %d. %s - %s (%s)" % (i, _cell(row, "severity") or "?", label, reason))
+    return lines
+
+
 def _ascii_table(rows):
     values = [_row_values(row, i) for i, row in enumerate(rows or [], start=1)]
     widths = []
@@ -93,6 +117,11 @@ def _render_ascii(rows, unresolved, changed_count):
         lines.append("  Unresolved references (manual check required):")
         for ref in unresolved:
             lines.append("    - %s" % str(ref))
+    rationale = _rationale_lines(rows)
+    if rationale:
+        lines.append("")
+        lines.append("  Severity rationale:")
+        lines.extend(rationale)
     lines.append("")
     lines.append("-" * 70)
     lines.append("  " + _summary_line(rows, changed_count))
@@ -114,6 +143,12 @@ def _render_markdown(rows, unresolved, changed_count):
         lines.append("## Unresolved references (manual check required)")
         for ref in unresolved:
             lines.append("- %s" % str(ref))
+    rationale = _rationale_lines(rows)
+    if rationale:
+        lines.append("")
+        lines.append("## Severity rationale")
+        for line in rationale:
+            lines.append("- " + line.lstrip())
     lines.append("")
     lines.append(_summary_line(rows, changed_count))
     return "\n".join(lines) + "\n"

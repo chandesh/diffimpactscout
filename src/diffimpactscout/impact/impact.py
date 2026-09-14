@@ -176,6 +176,9 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
         row["severity"] = reporter.classify_severity(
             layers.get(name) or (), deleted, changed_paths, row.get("path")
         )
+        row["reason"] = reporter.severity_reason(
+            layers.get(name) or (), deleted, changed_paths, row.get("path")
+        )
         row["action"] = _action(row["severity"], deleted)
     return rows, unresolved
 

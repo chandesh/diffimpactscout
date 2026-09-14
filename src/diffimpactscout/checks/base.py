@@ -97,6 +97,8 @@ class ExternalCheck(Check):
                 output = (out or err).decode("utf-8", errors="replace").strip()
                 if not output:
                     output = "exit code %s" % proc.returncode
+                else:
+                    output = "%s (exit code %s)" % (output, proc.returncode)
                 issues.append(CheckIssue(".", None, None, self.id, output))
             return CheckResult(issues=issues, fixed=fixed, skipped=skipped, warned=warned)
         for path in files or []:
@@ -116,6 +118,8 @@ class ExternalCheck(Check):
                 output = (out or err).decode("utf-8", errors="replace").strip()
                 if not output:
                     output = "exit code %s" % proc.returncode
+                else:
+                    output = "%s (exit code %s)" % (output, proc.returncode)
                 issues.append(CheckIssue(path, None, None, self.id, output))
         return CheckResult(issues=issues, fixed=fixed, skipped=skipped, warned=warned)
 

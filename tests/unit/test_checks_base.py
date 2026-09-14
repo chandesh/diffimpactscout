@@ -297,6 +297,19 @@ def test_external_check_nonzero_rc_no_output_falls_back_to_exit_code(tmp_path):
     assert result.issues[0].message == "exit code 9"
 
 
+def test_external_check_surfaces_tool_exit_code_with_output(tmp_path):
+    """Checks that a failing tool with output surfaces its real exit code."""
+    root = str(tmp_path)
+    check = ExternalCheck(
+        {"id": "ext/boom", "command": ["sh", "-c", 'echo "boom"; exit 127', "sh", "{file}"]}
+    )
+    result = check.run(_ctx(root=root), ["a.txt"])
+    assert not result.ok()
+    assert len(result.issues) == 1
+    assert "boom" in result.issues[0].message
+    assert "(exit code 127)" in result.issues[0].message
+
+
 def test_external_check_empty_file_list_is_clean(tmp_path):
     """Checks that an external check with no files is clean."""
     root = str(tmp_path)
@@ -318,6 +331,7 @@ def test_external_check_path_with_spaces_stays_single_argv(tmp_path):
     assert not result.ok()
     assert len(result.issues) == 1
     assert "got=dir with space/a file.txt" in result.issues[0].message
+    assert "(exit code 4)" in result.issues[0].message
 
 
 def test_external_check_repo_scoped_runs_once_no_file(tmp_path):
@@ -336,6 +350,7 @@ def test_external_check_repo_scoped_runs_once_no_file(tmp_path):
     assert len(result.issues) == 1
     assert result.issues[0].path == "."
     assert "repo-check" in result.issues[0].message
+    assert "(exit code 5)" in result.issues[0].message
 
 
 def test_external_check_repo_scoped_zero_rc_is_clean(tmp_path):

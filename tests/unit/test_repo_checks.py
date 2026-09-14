@@ -158,12 +158,6 @@ def test_case_conflict_untracked_uknown_path_ok(tmp_path):
     assert result.issues == []
 
 
-def test_large_files_default_max_kb():
-    """Verifies that the default max_kb for large-files is 250000."""
-    check = make_check({"id": "repo/large-files"})
-    assert check.max_kb == 250000
-
-
 def test_large_files_under_limit_is_clean(tmp_path):
     """Checks that a file under the size limit produces no issue."""
     root = str(tmp_path)

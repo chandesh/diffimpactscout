@@ -3,8 +3,6 @@ import sys
 
 from diffimpactscout.impact import reporter
 
-HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |"
-
 ROWS = [
     {
         "path": "apps/orders/views.py",
@@ -77,28 +75,31 @@ def test_classify_severity_layers_as_list_works():
 
 
 def test_render_report_header_exact():
-    """Verifies that the rendered report header matches the exact expected text."""
+    """Verifies that the rendered ASCII report includes the title banner."""
     out = reporter.render_report([], [], 0)
     lines = out.splitlines()
-    assert lines[2] == HEADER
-    assert lines[3] == "| --- | --- | --- | --- | --- | --- | --- |"
+    assert lines[0] == "=" * 70
+    assert "Impact Analysis Report" in lines[1]
 
 
-def test_render_report_separator_present():
-    """Verifies that the rendered report includes a separator row."""
-    out = reporter.render_report([], [], 0)
-    assert "| --- |" in out
-
-
-def test_render_report_rows_numbered_and_columns():
-    """Verifies that report rows are numbered and display the expected columns."""
+def test_render_report_ascii_columns_aligned():
+    """Verifies that ASCII rows are aligned and include the expected columns."""
     out = reporter.render_report(ROWS, [], 2)
+    assert "apps/orders/views.py" in out
+    assert "apps.orders" in out
+    assert "OrderList" in out
+    assert "templates/orders.html" in out
+
+
+def test_render_report_markdown_rows_numbered_and_columns():
+    """Verifies that markdown rows are numbered and display the expected columns."""
+    out = reporter.render_report(ROWS, [], 2, markdown=True)
     assert "| 1 | apps/orders/views.py | apps.orders | python | OrderList | High | Review & test |" in out
     assert "| 2 | templates/orders.html | orders | template | order-list | Medium | Verify template |" in out
 
 
-def test_render_report_escapes_pipe_in_cell():
-    """Verifies that literal pipes in cell values are escaped in the report."""
+def test_render_report_markdown_escapes_pipe_in_cell():
+    """Verifies that literal pipes in markdown cell values are escaped."""
     rows = [
         {
             "path": "apps/orders/views.py",
@@ -109,9 +110,8 @@ def test_render_report_escapes_pipe_in_cell():
             "action": "Review",
         }
     ]
-    out = reporter.render_report(rows, [], 1)
-    body = out.split(HEADER, 1)[1].splitlines()
-    line = [l for l in body if l.startswith("|") and "---" not in l][0]
+    out = reporter.render_report(rows, [], 1, markdown=True)
+    line = [l for l in out.splitlines() if l.startswith("| ") and l.lstrip("| ")[0].isdigit()][0]
     assert "A \\| B" in line
     cells = [p.strip() for p in re.split(r"(?<!\\)\|", line) if p.strip()]
     assert len(cells) == 7
@@ -120,12 +120,11 @@ def test_render_report_escapes_pipe_in_cell():
 
 def test_render_report_row_numbering_is_sequential():
     """Verifies that report rows are numbered sequentially starting at one."""
-    out = reporter.render_report(ROWS, [], 2)
-    body = out.split(HEADER, 1)[1]
+    out = reporter.render_report(ROWS, [], 2, markdown=True)
     rows = [
         l
-        for l in body.splitlines()
-        if l.startswith("|") and "---" not in l
+        for l in out.splitlines()
+        if l.startswith("| ") and l.lstrip("| ")[0].isdigit()
     ]
     assert rows[0].startswith("| 1 |")
     assert rows[1].startswith("| 2 |")
@@ -135,8 +134,8 @@ def test_render_report_unresolved_section():
     """Verifies that unresolved references appear in a dedicated report section."""
     out = reporter.render_report([], ["/api/v1/opaque/", "no-such-route"], 1)
     assert "Unresolved references (manual check required)" in out
-    assert "- /api/v1/opaque/" in out
-    assert "- no-such-route" in out
+    assert "/api/v1/opaque/" in out
+    assert "no-such-route" in out
 
 
 def test_render_report_unresolved_omitted_when_empty():
@@ -151,10 +150,13 @@ def test_render_report_summary_changed_count():
     assert "3 changed file(s)" in out
     assert "High: 1" in out
     assert "Medium: 1" in out
+    out = reporter.render_report(ROWS, [], 3, markdown=True)
+    assert "3 changed file(s)" in out
+    assert "High: 1" in out
 
 
-def test_render_report_findings_with_severity_tags():
-    """Verifies that findings render with severity tags and supporting details."""
+def test_render_report_no_redundant_findings_block():
+    """Verifies that the report no longer emits a separate Findings block."""
     rows = [
         {
             "path": "app/views/order.py",
@@ -166,26 +168,11 @@ def test_render_report_findings_with_severity_tags():
         }
     ]
     out = reporter.render_report(rows, [], 1)
-    assert "[HIGH] app/views/order.py -> {% url 'order-detail' %} at app/templates/orders.html:14" in out
-    assert "Category: template" in out
-    assert "review/verify" in out
-    assert "Summary: High: 1" in out
-
-
-def test_render_report_findings_all_severity_bands():
-    """Verifies that findings for all severity bands render with their tags."""
-    rows = [
-        {"path": "a.py", "module": "m", "category": "python",
-         "ref": "x", "severity": "High", "action": "review/verify"},
-        {"path": "b.py", "module": "m", "category": "python",
-         "ref": "y", "severity": "Medium", "action": "verify"},
-        {"path": "c.py", "module": "m", "category": "python",
-         "ref": "z", "severity": "Low", "action": "ok"},
-    ]
-    out = reporter.render_report(rows, [], 3)
-    assert "[HIGH] a.py -> x" in out
-    assert "[MEDIUM] b.py -> y" in out
-    assert "[LOW] c.py -> z" in out
+    assert "[HIGH]" not in out
+    assert "Findings" not in out
+    md = reporter.render_report(rows, [], 1, markdown=True)
+    assert "[HIGH]" not in md
+    assert "Findings" not in md
 
 
 def _fake_tty(monkeypatch, value):

@@ -46,6 +46,11 @@ def _parser():
     p_impact.add_argument("--staged", action="store_true")
     p_impact.add_argument("--fast", action="store_true")
     p_impact.add_argument("--json", action="store_true")
+    p_impact.add_argument(
+        "--markdown",
+        action="store_true",
+        help="emit a Markdown table instead of the plain ASCII table",
+    )
     p_impact.set_defaults(func=_cmd_impact)
 
     p_check = sub.add_parser(
@@ -148,6 +153,7 @@ def _cmd_impact(args):
         staged=args.staged,
         fast=args.fast,
         json_out=args.json,
+        markdown=args.markdown,
     )
 
 

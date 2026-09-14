@@ -30,7 +30,7 @@ _ENTITY_KINDS = {
 _DEFAULT_KINDS = ("name",)
 
 
-def run_impact(root, cfg, staged=False, fast=False, json_out=False):
+def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -82,7 +82,9 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False):
             + "\n"
         )
     else:
-        sys.stdout.write(reporter.render_report(rows, unresolved, changed_count))
+        sys.stdout.write(
+            reporter.render_report(rows, unresolved, changed_count, markdown=markdown)
+        )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")
     tty = reporter.interactive_tty()
     block, reason = reporter.should_block(strict_env, tty)

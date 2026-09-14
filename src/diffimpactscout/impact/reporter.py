@@ -1,4 +1,8 @@
-"""Render the impact report table, classify severity, and decide whether a push should be blocked.
+"""Render the impact report, classify severity, and decide whether a push should be blocked.
+
+The terminal/stdout default is a plain aligned ASCII table that matches the
+guard report's visual style; a Markdown table is available via an explicit
+`--markdown` output mode for piping into PR comments or docs pages.
 
 Example: a changed view referenced from a template and a frontend service
 gets High severity, while a reference inside the changed file gets Low.
@@ -10,6 +14,7 @@ import diffimpactscout.env as env
 
 _HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |"
 _SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- |"
+_COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required")
 
 
 def classify_severity(layers, deleted_renamed, changed_paths, ref_path):
@@ -31,7 +36,11 @@ def _cell(row, key):
         value = getattr(row, key, None)
     if value is None:
         return ""
-    return str(value).replace("|", "\\|")
+    return str(value)
+
+
+def _row_values(row, index):
+    return [str(index)] + [_cell(row, k) for k in ("path", "module", "category", "ref", "severity", "action")]
 
 
 def _counts(rows):
@@ -43,51 +52,77 @@ def _counts(rows):
     return counts
 
 
-def render_report(rows, unresolved, changed_count):
+def _summary_line(rows, changed_count):
+    counts = _counts(rows or [])
+    return "Summary: High: %d, Medium: %d, Low: %d (%d changed file(s))" % (
+        counts["High"],
+        counts["Medium"],
+        counts["Low"],
+        changed_count,
+    )
+
+
+def _ascii_table(rows):
+    values = [_row_values(row, i) for i, row in enumerate(rows or [], start=1)]
+    widths = []
+    for i in range(len(_COLUMNS)):
+        width = len(_COLUMNS[i])
+        for vals in values:
+            width = max(width, len(vals[i]))
+        widths.append(width)
+    header = "  " + "  ".join(c.ljust(widths[i]) for i, c in enumerate(_COLUMNS))
+    body = []
+    for vals in values:
+        body.append("  " + "  ".join(v.ljust(widths[i]) for i, v in enumerate(vals)))
+    return header, body
+
+
+def _render_ascii(rows, unresolved, changed_count):
+    lines = []
+    lines.append("=" * 70)
+    lines.append("  Impact Analysis Report")
+    lines.append("  Blast radius: %d changed file(s)" % changed_count)
+    lines.append("=" * 70)
+    lines.append("")
+    header, body = _ascii_table(rows)
+    lines.append(header)
+    for line in body:
+        lines.append(line)
+    if unresolved:
+        lines.append("")
+        lines.append("  Unresolved references (manual check required):")
+        for ref in unresolved:
+            lines.append("    - %s" % str(ref))
+    lines.append("")
+    lines.append("-" * 70)
+    lines.append("  " + _summary_line(rows, changed_count))
+    lines.append("=" * 70)
+    return "\n".join(lines) + "\n"
+
+
+def _render_markdown(rows, unresolved, changed_count):
     lines = []
     lines.append("# Impact Analysis Report")
     lines.append("")
     lines.append(_HEADER)
     lines.append(_SEPARATOR)
     for i, row in enumerate(rows or [], start=1):
-        lines.append(
-            "| %d | %s | %s | %s | %s | %s | %s |"
-            % (
-                i,
-                _cell(row, "path"),
-                _cell(row, "module"),
-                _cell(row, "category"),
-                _cell(row, "ref"),
-                _cell(row, "severity"),
-                _cell(row, "action"),
-            )
-        )
-    lines.append("")
-    lines.append("## Findings")
-    for row in rows or []:
-        sev = _cell(row, "severity")
-        if not sev:
-            sev = "Unknown"
-        lines.append(
-            "[%s] %s -> %s"
-            % (sev.upper(), _cell(row, "path"), _cell(row, "ref"))
-        )
-        lines.append(
-            "    Category: %s | Module: %s | Action: %s"
-            % (_cell(row, "category"), _cell(row, "module"), _cell(row, "action"))
-        )
+        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
+        lines.append("| " + " | ".join(cells) + " |")
     if unresolved:
         lines.append("")
         lines.append("## Unresolved references (manual check required)")
         for ref in unresolved:
             lines.append("- %s" % str(ref))
     lines.append("")
-    counts = _counts(rows or [])
-    lines.append(
-        "Summary: High: %d, Medium: %d, Low: %d (%d changed file(s))"
-        % (counts["High"], counts["Medium"], counts["Low"], changed_count)
-    )
+    lines.append(_summary_line(rows, changed_count))
     return "\n".join(lines) + "\n"
+
+
+def render_report(rows, unresolved, changed_count, markdown=False):
+    if markdown:
+        return _render_markdown(rows, unresolved, changed_count)
+    return _render_ascii(rows, unresolved, changed_count)
 
 
 def interactive_tty():

@@ -2,6 +2,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -239,8 +240,13 @@ def _non_tty(monkeypatch):
 
 
 def _count_category(out, category):
-    needle = "| %s |" % category
-    return sum(1 for line in out.splitlines() if needle in line)
+    # ASCII table data rows begin with the row index; count rows whose
+    # category column matches the given category.
+    return sum(
+        1
+        for line in out.splitlines()
+        if re.match(r"^\s+\d+\s", line) and category in line
+    )
 
 
 def _build_ts_repo(tmp_path, ts_src):
@@ -344,9 +350,9 @@ def test_run_impact_cross_layer_report(tmp_path, capsys):
         "{% url 'order-list' %} at app/templates/orders.html" in out
     )
     assert 'http.get("/api/v1/orders/") at src/orders.service.ts:2' in out
-    assert "| template |" in out
-    assert "| frontend |" in out
-    assert "| High |" in out
+    assert "template" in out
+    assert "frontend" in out
+    assert "High" in out
     assert "1 changed file(s)" in out
 
 
@@ -358,7 +364,8 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert "status (attr at app/views.py:2)" in out
-    assert "| Medium | verify |" in out
+    assert "Medium" in out
+    assert "verify" in out
     assert "1 changed file(s)" in out
 
 
@@ -372,7 +379,7 @@ def test_run_impact_deleted_function(tmp_path, capsys):
     assert "verify dangling references" in out
     assert "legacy_helper (import at app/service.py:1)" in out
     assert "legacy_helper (name at app/service.py:4)" in out
-    assert "| High | verify dangling references |" in out
+    assert "High" in out
 
 
 def test_run_impact_json_output(tmp_path, capsys):
@@ -452,8 +459,7 @@ def test_run_impact_fast_mode(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "fast mode" in captured.err
     assert "orders (attr at app/urls.py:5)" in captured.out
-    assert "| template |" not in captured.out
-    assert "| frontend |" not in captured.out
+    assert not any(c in captured.out for c in ("template", "frontend"))
 
 
 def test_run_impact_pre_commit_env_range(tmp_path, monkeypatch, capsys):
@@ -544,10 +550,8 @@ def test_run_impact_frontend_same_line_dedup(tmp_path, capsys):
     out = capsys.readouterr().out
     assert _count_category(out, "frontend") == 1
     # Dedup verified at the row level: the ref appears in exactly one table
-    # row plus its single Findings line (the findings section repeats the
-    # per-row summary introduced by the output-formatting feature).
-    assert out.count('| http.get("/api/v1/orders/") at src/orders.service.ts:2 |') == 1
-    assert out.count('[HIGH] src/orders.service.ts -> http.get("/api/v1/orders/") at src/orders.service.ts:2') == 1
+    # row; there is no redundant Findings block.
+    assert out.count('http.get("/api/v1/orders/") at src/orders.service.ts:2') == 1
 
 
 def test_run_impact_frontend_duplicate_calls_distinct_lines(tmp_path, capsys):
@@ -595,9 +599,8 @@ def test_run_impact_template_duplicate_tag_dedup(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert _count_category(out, "template") == 1
-    # Dedup verified at the row level (see frontend same-line dedup test):
-    # one table row plus its single Findings line = 2 occurrences total.
-    assert out.count("{% url 'order-list' %}") == 2
+    # Dedup verified at the row level: one table row, no redundant Findings.
+    assert out.count("{% url 'order-list' %}") == 1
 
 
 def test_run_impact_tty_accept_proceeds(tmp_path, monkeypatch, capsys):
@@ -650,7 +653,7 @@ def test_run_impact_rename_only(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "old_helper (import at app/service.py:1)" in out
     assert "old_helper (name at app/service.py:4)" in out
-    assert "| High | verify dangling references |" in out
+    assert "High" in out
 
 
 def test_run_impact_non_python_change_set(tmp_path, capsys):

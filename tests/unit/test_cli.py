@@ -300,7 +300,7 @@ def test_impact_json_stdout(tmp_path, capsys, monkeypatch):
 
 
 def test_impact_dispatches_flags(tmp_path, monkeypatch):
-    """Checks that impact passes staged/fast/json flags to run_impact."""
+    """Checks that impact passes staged/fast/json/markdown flags to run_impact."""
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
@@ -311,10 +311,23 @@ def test_impact_dispatches_flags(tmp_path, monkeypatch):
         return 3
 
     monkeypatch.setattr(cli.impact_module, "run_impact", fake)
-    assert cli.main(["impact", "--staged", "--fast", "--json"]) == 3
+    assert cli.main(["impact", "--staged", "--fast", "--json", "--markdown"]) == 3
     assert seen["kwargs"]["staged"] is True
     assert seen["kwargs"]["fast"] is True
     assert seen["kwargs"]["json_out"] is True
+    assert seen["kwargs"]["markdown"] is True
+
+
+def test_impact_markdown_stdout(tmp_path, capsys, monkeypatch):
+    """Checks that impact emits a Markdown table when --markdown is passed."""
+    repo, base, _head = _build_django_repo(tmp_path)
+    _anchor(repo, base)
+    monkeypatch.chdir(repo)
+    assert cli.main(["impact", "--markdown"]) == 0
+    out = capsys.readouterr().out
+    assert "# Impact Analysis Report" in out
+    assert "| # | Impacted File Path |" in out
+    assert "| --- |" in out
 
 
 def test_check_bad_json_returns_one(tmp_path, capsys, monkeypatch):

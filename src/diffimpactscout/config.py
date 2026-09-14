@@ -32,6 +32,7 @@ DEFAULT_GUARD_CHECKS = [
     {"id": "syntax/merge-conflict"},
     {"id": "repo/large-files", "args": ["--maxkb=250000"]},
     {"id": "repo/private-key"},
+    {"id": "repo/case-conflict"},
 ]
 
 

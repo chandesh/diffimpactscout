@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 import pytest
 
@@ -8,6 +9,38 @@ from diffimpactscout.checks.base import (
     CheckResult,
     make_check,
 )
+
+
+def _git_env():
+    env = dict(os.environ)
+    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    return env
+
+
+def _git(*args, cwd):
+    return subprocess.check_call(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"] + list(args),
+        cwd=cwd,
+        env=_git_env(),
+    )
+
+
+def _repo(tmp_path):
+    root = str(tmp_path / "repo")
+    os.makedirs(root)
+    _git("init", cwd=root)
+    _git("symbolic-ref", "HEAD", "refs/heads/master", cwd=root)
+    _git("config", "user.name", "Test", cwd=root)
+    _git("config", "user.email", "test@example.com", cwd=root)
+    return root
+
+
+def _commit(root, name, content="content\n"):
+    with open(os.path.join(root, name), "w") as fh:
+        fh.write(content)
+    _git("add", name, cwd=root)
+    _git("commit", "-m", name, cwd=root)
 
 
 def _write(root, name, data):
@@ -42,6 +75,9 @@ def test_repo_checks_registered():
     assert REGISTRY["repo/private-key"].scoped == "files"
     assert REGISTRY["repo/private-key"].blocking is True
     assert REGISTRY["repo/private-key"].always_block is True
+    assert "repo/case-conflict" in REGISTRY
+    assert REGISTRY["repo/case-conflict"].scoped == "files"
+    assert REGISTRY["repo/case-conflict"].blocking is True
 
 
 def test_repo_checks_buildable_from_config():
@@ -52,6 +88,66 @@ def test_repo_checks_buildable_from_config():
     assert pk is not None
     assert pk.scoped == "files"
     assert pk.always_block is True
+    cc = make_check({"id": "repo/case-conflict"})
+    assert cc is not None
+    assert cc.scoped == "files"
+    assert cc.blocking is True
+
+
+def test_case_conflict_no_collision_when_single_file(tmp_path):
+    root = _repo(tmp_path)
+    _commit(root, "file.txt")
+    result = _cls("repo/case-conflict")().run(_ctx(root), ["file.txt"])
+    assert result.ok()
+    assert result.issues == []
+
+
+def test_case_conflict_flags_against_tracked_file(tmp_path):
+    root = _repo(tmp_path)
+    _commit(root, "file.txt")
+    result = _cls("repo/case-conflict")().run(_ctx(root), ["FILE.TXT"])
+    assert not result.ok()
+    assert len(result.issues) == 1
+    issue = result.issues[0]
+    assert issue.path == "FILE.TXT"
+    assert issue.code == "repo/case-conflict"
+    assert "file.txt" in issue.message
+    assert "case conflict" in issue.message
+
+
+def test_case_conflict_flags_colliding_side_of_changed_pair(tmp_path):
+    root = _repo(tmp_path)
+    _commit(root, "file.txt")
+    # Only the incoming name that diverges from the tracked sibling is
+    # flagged; the tracked file itself is not a collision.
+    result = _cls("repo/case-conflict")().run(_ctx(root), ["file.txt", "FILE.TXT"])
+    assert not result.ok()
+    assert [i.path for i in result.issues] == ["FILE.TXT"]
+
+
+def test_case_conflict_same_name_only_is_clean(tmp_path):
+    root = _repo(tmp_path)
+    _commit(root, "ReadMe.md")
+    result = _cls("repo/case-conflict")().run(_ctx(root), ["ReadMe.md"])
+    assert result.ok()
+    assert result.issues == []
+
+
+def test_case_conflict_empty_and_none_file_list(tmp_path):
+    root = _repo(tmp_path)
+    _commit(root, "file.txt")
+    for files in ([], None):
+        result = _cls("repo/case-conflict")().run(_ctx(root), files)
+        assert result.ok()
+        assert result.issues == []
+
+
+def test_case_conflict_untracked_uknown_path_ok(tmp_path):
+    root = _repo(tmp_path)
+    _commit(root, "file.txt")
+    result = _cls("repo/case-conflict")().run(_ctx(root), ["ghost.txt"])
+    assert result.ok()
+    assert result.issues == []
 
 
 def test_large_files_default_max_kb():

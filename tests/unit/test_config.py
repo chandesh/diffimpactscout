@@ -43,6 +43,7 @@ def test_load_config_defaults_when_no_file(tmp_path):
         "syntax/merge-conflict",
         "repo/large-files",
         "repo/private-key",
+        "repo/case-conflict",
     ]
     assert cfg["guard"]["checks"][6]["args"] == ["--maxkb=250000"]
 

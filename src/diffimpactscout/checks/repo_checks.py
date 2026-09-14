@@ -1,11 +1,14 @@
-"""Repo-wide checks for oversized files and leaked private keys.
+"""Repo-wide checks for oversized files, leaked private keys, and case-colliding file paths.
 
-Example: a 300 MB binary is flagged with a git-lfs hint, and any file
-containing a private key block always blocks the push.
+Example: a 300 MB binary is flagged with a git-lfs hint, any file
+containing a private key block always blocks the push, and a pushed
+`FILE.TXT` colliding with a tracked `file.txt` is flagged because the two
+names clobber each other on case-insensitive filesystems (macOS, Windows).
 """
 
 import os
 
+import diffimpactscout.gitrun as gitrun
 from diffimpactscout.checks.base import (
     Check,
     CheckIssue,
@@ -21,6 +24,33 @@ PRIVATE_KEY_MARKERS = (
     b"-----BEGIN DSA PRIVATE KEY-----",
     b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
 )
+
+
+@register
+class CaseConflictCheck(Check):
+    id = "repo/case-conflict"
+    scoped = "files"
+
+    def run(self, context, files):
+        tracked = gitrun.git_nul(["ls-files", "-z"], context.root)
+        by_lower = {}
+        for path in tracked:
+            by_lower.setdefault(path.lower(), []).append(path)
+        issues = []
+        for path in files or []:
+            for other in by_lower.get(path.lower(), ()):
+                if other != path:
+                    issues.append(
+                        CheckIssue(
+                            path,
+                            0,
+                            0,
+                            self.id,
+                            "case conflict detected with %s" % other,
+                        )
+                    )
+                    break
+        return CheckResult(issues=issues)
 
 
 @register

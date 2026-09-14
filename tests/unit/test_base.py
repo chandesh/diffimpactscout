@@ -4,6 +4,37 @@ import subprocess
 import diffimpactscout.base as base
 
 
+def test_default_limit_ignores_oldest_sprint(tmp_path):
+    repo = _make_repo(tmp_path)
+    master_sha = _commit(repo, "a.txt", "one\n", "m0", date="2023-01-01T00:00:00")
+    s3_sha = _commit(repo, "s3.txt", "s3\n", "s3", date="2026-03-01T00:00:00")
+    s4_sha = _commit(repo, "s4.txt", "s4\n", "s4", date="2026-04-01T00:00:00")
+    s5_sha = _commit(repo, "s5.txt", "s5\n", "s5", date="2026-05-01T00:00:00")
+    s6_sha = _commit(repo, "s6.txt", "s6\n", "s6", date="2026-06-01T00:00:00")
+    s2_sha = _commit(repo, "s2.txt", "s2\n", "s2", date="2026-02-01T00:00:00")
+    s1_sha = _commit(repo, "s1.txt", "s1\n", "s1", date="2026-01-01T00:00:00")
+
+    _git("update-ref", "refs/remotes/upstream/master", master_sha, cwd=repo)
+    for name, sha in (
+        ("s6", s6_sha),
+        ("s5", s5_sha),
+        ("s4", s4_sha),
+        ("s3", s3_sha),
+        ("s2", s2_sha),
+        ("s1", s1_sha),
+    ):
+        _git("update-ref", "refs/remotes/upstream/sprint/%s" % name, sha, cwd=repo)
+
+    # s1 is the oldest sprint and its tree is identical to HEAD (zero diff).
+    # With the default candidate limit it is dropped, so the closest remaining
+    # sprint (s2, one file short of HEAD) is chosen instead.
+    assert base.resolve_change_base(repo) == "refs/remotes/upstream/sprint/s2"
+    # An explicit limit large enough to include s1 makes it win via zero diff.
+    assert (
+        base.resolve_change_base(repo, limit=6) == "refs/remotes/upstream/sprint/s1"
+    )
+
+
 def _git_env(extra=None):
     env = dict(os.environ)
     env["GIT_CONFIG_GLOBAL"] = "/dev/null"

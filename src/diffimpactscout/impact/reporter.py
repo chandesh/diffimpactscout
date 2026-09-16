@@ -15,6 +15,7 @@ import diffimpactscout.env as env
 _HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |"
 _SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- |"
 _COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required")
+_COLUMN_WIDTHS = (2, 38, 20, 8, 38, 8, 26)
 
 
 def classify_severity(layers, deleted_renamed, changed_paths, ref_path):
@@ -86,18 +87,60 @@ def _rationale_lines(rows):
     return lines
 
 
+def _wrap(text, width):
+    """Wrap a cell value to a fixed width, breaking paths at slashes."""
+    text = "" if text is None else str(text)
+    if width <= 0 or not text:
+        return [text]
+    lines = []
+    cur = ""
+    for token in text.split(" "):
+        if not cur:
+            cur = token
+        elif len(cur) + 1 + len(token) <= width:
+            cur += " " + token
+        else:
+            lines.extend(_split_token(cur, width))
+            cur = token
+    if cur:
+        lines.extend(_split_token(cur, width))
+    return lines or [""]
+
+
+def _split_token(token, width):
+    if len(token) <= width:
+        return [token]
+    if "/" in token:
+        parts = token.split("/")
+        out = []
+        cur = ""
+        for part in parts:
+            candidate = part if not cur else cur + "/" + part
+            if len(candidate) <= width:
+                cur = candidate
+            else:
+                if cur:
+                    out.append(cur)
+                cur = part
+        if cur:
+            out.append(cur)
+        return out
+    return [token[i : i + width] for i in range(0, len(token), width)]
+
+
 def _ascii_table(rows):
-    values = [_row_values(row, i) for i, row in enumerate(rows or [], start=1)]
-    widths = []
-    for i in range(len(_COLUMNS)):
-        width = len(_COLUMNS[i])
-        for vals in values:
-            width = max(width, len(vals[i]))
-        widths.append(width)
+    widths = list(_COLUMN_WIDTHS)
     header = "  " + "  ".join(c.ljust(widths[i]) for i, c in enumerate(_COLUMNS))
     body = []
-    for vals in values:
-        body.append("  " + "  ".join(v.ljust(widths[i]) for i, v in enumerate(vals)))
+    for i, row in enumerate(rows or [], start=1):
+        cells = [_wrap(v, widths[j]) for j, v in enumerate(_row_values(row, i))]
+        height = max(len(c) for c in cells)
+        for line_idx in range(height):
+            parts = []
+            for j, cell_lines in enumerate(cells):
+                value = cell_lines[line_idx] if line_idx < len(cell_lines) else ""
+                parts.append(value.ljust(widths[j]))
+            body.append("  " + "  ".join(parts))
     return header, body
 
 

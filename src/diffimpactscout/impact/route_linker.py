@@ -46,6 +46,16 @@ _URL_ASSET_EXTS = (
     ".woff",
     ".woff2",
     ".map",
+    ".html",
+)
+_URL_MIME_PREFIXES = (
+    "application/",
+    "text/",
+    "image/",
+    "audio/",
+    "video/",
+    "multipart/",
+    "font/",
 )
 
 
@@ -55,7 +65,8 @@ def _is_url_like(value):
     Catches HTTP-call arguments as well as URL constants in ``ENDPOINTS`` /
     ``ACTIONS`` dictionaries, ``source:`` values, and static fragments of
     concatenated URLs, while rejecting module specifiers, assets, absolute
-    URLs, and prose/error strings.
+    URLs, MIME types, and prose/error strings. Endpoint paths are anchored:
+    they start with ``/`` or end with ``/``.
     """
     if not value or len(value) < 3 or len(value) > 500:
         return False
@@ -65,7 +76,13 @@ def _is_url_like(value):
         return False
     if value.startswith(("@", ".", "//", "http://", "https://", "www.")):
         return False
-    return not value.lower().endswith(_URL_ASSET_EXTS)
+    if not (value.startswith("/") or value.endswith("/")):
+        return False
+    lower = value.lower()
+    for prefix in _URL_MIME_PREFIXES:
+        if lower.startswith(prefix):
+            return False
+    return not lower.endswith(_URL_ASSET_EXTS)
 
 
 def _str_value(node):

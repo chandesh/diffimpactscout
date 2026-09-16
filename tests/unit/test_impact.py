@@ -387,6 +387,47 @@ def test_run_impact_deleted_function(tmp_path, capsys):
     assert "deleted or renamed" in out
 
 
+def test_run_impact_inline_edit_keeps_siblings(tmp_path, capsys):
+    """Verifies that editing one function does not flag unchanged siblings as deleted."""
+    repo = _make_repo(tmp_path)
+    _write(
+        repo,
+        "app/legacy.py",
+        "def target():\n"
+        "    return 1\n"
+        "\n"
+        "def sibling():\n"
+        "    return 2\n",
+    )
+    _write(
+        repo,
+        "app/service.py",
+        "from app.legacy import target\n"
+        "\n"
+        "def call_it():\n"
+        "    return target()\n",
+    )
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(
+        repo,
+        "app/legacy.py",
+        "def target():\n"
+        "    return 10\n"
+        "\n"
+        "def sibling():\n"
+        "    return 2\n",
+    )
+    _commit(repo, "edit target body")
+    _anchor(repo, base)
+    cfg = config.load_config(repo)
+    assert impact.run_impact(repo, cfg) == 0
+    out = capsys.readouterr().out
+    assert "target" in out
+    assert "sibling (deleted or renamed in this change-set)" not in out
+    assert "sibling" not in out
+
+
 def test_run_impact_json_output(tmp_path, capsys):
     """Verifies that JSON output contains the expected structured impact data."""
     repo, base, _head = _build_django_repo(tmp_path)

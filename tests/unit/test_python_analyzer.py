@@ -69,12 +69,12 @@ def test_analyze_source_usages():
     """Verifies that analyze_source extracts the expected symbol usages."""
     analysis = _analysis(SRC)
     assert analysis["usages"] == [
-        {"line": 1, "name": "helper", "kind": "import", "ctx_qname": "", "ctx_kind": "module"},
-        {"line": 2, "name": "widget", "kind": "import", "ctx_qname": "", "ctx_kind": "module"},
+        {"line": 1, "name": "helper", "kind": "import", "ctx_qname": "", "ctx_kind": "module", "module": "helper", "level": 0},
+        {"line": 2, "name": "widget", "kind": "import", "ctx_qname": "", "ctx_kind": "module", "module": "util", "level": 0},
         {"line": 5, "name": "widget", "kind": "name", "ctx_qname": "process", "ctx_kind": "function"},
         {"line": 7, "name": "object", "kind": "name", "ctx_qname": "Book", "ctx_kind": "class"},
-        {"line": 8, "name": "CharField", "kind": "attr", "ctx_qname": "Book", "ctx_kind": "class"},
-        {"line": 11, "name": "status", "kind": "attr", "ctx_qname": "Book.save", "ctx_kind": "method"},
+        {"line": 8, "name": "CharField", "kind": "attr", "ctx_qname": "Book", "ctx_kind": "class", "base": "models"},
+        {"line": 11, "name": "status", "kind": "attr", "ctx_qname": "Book.save", "ctx_kind": "method", "base": "self"},
         {"line": 13, "name": "process", "kind": "name", "ctx_qname": "", "ctx_kind": "module"},
     ]
 
@@ -279,6 +279,105 @@ def test_find_references_accepts_cache_entries():
     analyses = {"a.py": {"hash": analysis["hash"], "analysis": analysis}}
     hits = pa.find_references(analyses, ["widget"])
     assert [(h["path"], h["how"]) for h in hits] == [("a.py", "import")]
+
+
+def test_find_references_bound_module_import_matches_changed_entity():
+    """Verifies that 'from pkg import views' + views.create binds a changed entity.
+
+    Django urlconf style: a changed 'create' function in app.views is
+    imported into urls.py via 'from app import views'; the
+    views.create attribute load must resolve as an impacted reference even
+    though the import text names app, not the app.views module.
+    """
+    analyses = {
+        "app/views.py": _analysis(
+            "def create(request):\n    return None\n"
+        ),
+        "app/urls.py": _analysis(
+            "from app import views\n\n"
+            "urlpatterns = [path('orders/', views.create)]\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create"],
+        kinds={"name", "attr", "import"},
+        modules={"create": {"app.views"}},
+        changed_paths=["app/views.py"],
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("app/urls.py", 3, "attr"),
+    ]
+
+
+def test_find_references_aliased_import_matches_changed_entity():
+    """Verifies that 'from app import views as v' + v.create binds a changed entity."""
+    analyses = {
+        "app/views.py": _analysis(
+            "def create(request):\n    return None\n"
+        ),
+        "app/urls.py": _analysis(
+            "from app import views as v\n\nurlpatterns = [path('', v.create)]\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create"],
+        kinds={"name", "attr", "import"},
+        modules={"create": {"app.views"}},
+        changed_paths=["app/views.py"],
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("app/urls.py", 3, "attr"),
+    ]
+
+
+def test_find_references_aliased_module_import_matches_changed_entity():
+    """Verifies that 'import app.views as v' + v.create binds a changed entity."""
+    analyses = {
+        "app/views.py": _analysis(
+            "def create(request):\n    return None\n"
+        ),
+        "app/urls.py": _analysis(
+            "import app.views as v\n\nurlpatterns = [path('', v.create)]\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create"],
+        kinds={"name", "attr", "import"},
+        modules={"create": {"app.views"}},
+        changed_paths=["app/views.py"],
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("app/urls.py", 3, "attr"),
+    ]
+
+
+def test_find_references_import_from_unrelated_module_pruned():
+    """Verifies that a same-name import from an unrelated module is pruned.
+
+    An import that binds 'create' from a module outside the change-set must
+    not count as a reference to the changed entity, while a real import from
+    the changed module is kept.
+    """
+    analyses = {
+        "app/views.py": _analysis(
+            "def create(request):\n    return None\n"
+        ),
+        "consumer.py": _analysis("from app.views import create\n"),
+        "unrelated.py": _analysis("from other.thing import create\n"),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create"],
+        kinds={"name", "attr", "import"},
+        modules={"create": {"app.views"}},
+        changed_paths=["app/views.py"],
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("consumer.py", 1, "import"),
+    ]
 
 
 def test_analyze_path_analyzes_and_stores(tmp_path):

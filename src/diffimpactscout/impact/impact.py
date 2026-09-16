@@ -17,7 +17,12 @@ from diffimpactscout.impact import reporter
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
 from diffimpactscout.impact.cache import SymbolCache
-from diffimpactscout.impact.diff_parser import extract_entities, get_file_changes, read_path_at_ref
+from diffimpactscout.impact.diff_parser import (
+    extract_entities,
+    get_changed_lines,
+    get_file_changes,
+    read_path_at_ref,
+)
 
 _ENTITY_KINDS = {
     "class_field": ("attr",),
@@ -47,7 +52,9 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         old_ref = anchor
     else:
         old_ref = from_ref
-    entities = _changed_entities(changes, root, old_ref)
+    entities = _changed_entities(
+        changes, root, old_ref, anchor, from_ref, to_ref, staged
+    )
     cache_file = impact_cfg.get("cache_file") or ".impact_analysis_cache.json"
     if root and not os.path.isabs(cache_file):
         cache_file = os.path.join(root, cache_file)
@@ -100,7 +107,9 @@ def _skip_requested():
     return env.skip_requested()
 
 
-def _changed_entities(changes, root, old_ref):
+def _changed_entities(
+    changes, root, old_ref, anchor=None, from_ref=None, to_ref=None, staged=False
+):
     entities = {}
     for change in changes:
         if change.ext != "py":
@@ -110,29 +119,78 @@ def _changed_entities(changes, root, old_ref):
             old_path = change.path
         old_src = read_path_at_ref(root, old_path, old_ref) if old_ref else ""
         new_src = _read_disk(root, change.path)
-        old_map = _entity_map(old_src)
-        new_map = _entity_map(new_src)
-        for name, kind in new_map.items():
+        old_entities = extract_entities(old_src)
+        new_entities = extract_entities(new_src)
+        old_lines, new_lines = get_changed_lines(
+            root, change, anchor, from_ref, to_ref, staged
+        )
+        old_map = {e.name: e for e in old_entities}
+        new_map = {e.name: e for e in new_entities}
+        if new_lines is not None:
+            new_map = {
+                name: e
+                for name, e in new_map.items()
+                if _entity_overlaps_changed(e, new_lines)
+            }
+        if old_lines is not None:
+            old_map = {
+                name: e
+                for name, e in old_map.items()
+                if _entity_overlaps_changed(e, old_lines)
+            }
+        module = _module_of(change.path)
+        for name, ent in new_map.items():
             if name not in entities:
-                entities[name] = {"kind": kind, "deleted": False}
+                entities[name] = {"kind": ent.kind, "deleted": False, "modules": set()}
             elif entities[name].get("deleted"):
-                entities[name] = {"kind": kind, "deleted": False}
-        for name, kind in old_map.items():
+                entities[name] = {"kind": ent.kind, "deleted": False, "modules": set()}
+            entities[name]["modules"].add(module)
+        old_module = _module_of(old_path)
+        for name, ent in old_map.items():
             if name not in new_map:
-                entities[name] = {"kind": kind, "deleted": True}
+                if name not in entities:
+                    entities[name] = {"kind": ent.kind, "deleted": True, "modules": set()}
+                entities[name]["modules"].add(old_module)
     return entities
 
 
-def _entity_map(source):
-    return {e.name: e.kind for e in extract_entities(source)}
+def _module_of(path):
+    if not path:
+        return ""
+    stem = path[:-3] if path.endswith(".py") else path
+    if stem.endswith("/__init__"):
+        stem = stem[: -len("/__init__")]
+    return stem.replace("/", ".")
+
+
+def _entity_overlaps_changed(entity, changed_lines):
+    if not changed_lines:
+        return False
+    start = getattr(entity, "line", 0)
+    end = getattr(entity, "end_line", None) or start
+    for line_num in range(start, end + 1):
+        if line_num in changed_lines:
+            return True
+    return False
 
 
 def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, fast):
     rows = []
     layers = {}
+    modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
+    weak_attr = [
+        name for name, ent in entities.items() if ent.get("kind") == "class_field"
+    ]
     for name, ent in entities.items():
         kinds = _ENTITY_KINDS.get(ent["kind"], _DEFAULT_KINDS)
-        hits = pa.find_references(analyses, [name], kinds=kinds)
+        hits = pa.find_references(
+            analyses,
+            [name],
+            kinds=kinds,
+            modules=modules,
+            changed_paths=changed_paths,
+            weak_attr=weak_attr,
+        )
         layers.setdefault(name, set())
         for hit in hits:
             layers[name].add("python")

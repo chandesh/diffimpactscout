@@ -117,6 +117,24 @@ def test_extract_entities_fixture():
     ]
 
 
+def test_extract_entities_assignment_spans_multiple_lines():
+    """Verifies that multi-line assignments record an end line."""
+    source = (
+        "CONFIG = {\n"
+        "    'a': 1,\n"
+        "    'b': 2,\n"
+        "}\n"
+        "class Book:\n"
+        "    FIELDS = [\n"
+        "        'title',\n"
+        "    ]\n"
+    )
+    entities = dp.extract_entities(source)
+    by_name = {e.name: e for e in entities}
+    assert by_name["CONFIG"].end_line == 4
+    assert by_name["FIELDS"].end_line == 8
+
+
 def test_extract_entities_skips_locals_and_nested():
     """Checks that local and nested definitions are excluded from entities."""
     source = (
@@ -277,6 +295,34 @@ def test_get_file_changes_heuristic_union_dedup(tmp_path):
         ("plain.py", "M", None, "py"),
         ("staged.py", "A", None, "py"),
     ]
+
+
+def test_get_changed_lines_staged_uses_index(tmp_path):
+    """Verifies that staged line hunks come from the index, not the worktree."""
+    repo = _make_repo(tmp_path)
+    _write(repo, "views.py", "def create(request):\n    return None\n")
+    _commit(repo, "base")
+    _write(
+        repo, "views.py", "def create(request):\n    # staged change\n    return None\n"
+    )
+    _git("add", "views.py", cwd=repo)
+    _git("restore", "--source=HEAD", "views.py", cwd=repo)
+    changes = dp.get_file_changes(repo, staged=True)
+    old_lines, new_lines = dp.get_changed_lines(repo, changes[0], staged=True)
+    assert old_lines == set()
+    assert new_lines == {2}
+
+
+def test_get_changed_lines_empty_diff_means_all_lines(tmp_path):
+    """Verifies that a modified file with no line hunks keeps all lines."""
+    repo = _make_repo(tmp_path)
+    _write(repo, "run.sh", "#!/bin/sh\n")
+    _commit(repo, "base")
+    os.chmod(os.path.join(repo, "run.sh"), 0o755)
+    changes = dp.get_file_changes(repo)
+    old_lines, new_lines = dp.get_changed_lines(repo, changes[0])
+    assert old_lines is None
+    assert new_lines is None
 
 
 def test_read_path_at_ref_deleted_file(tmp_path):

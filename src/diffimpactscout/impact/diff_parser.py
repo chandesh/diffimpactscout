@@ -12,11 +12,12 @@ import diffimpactscout.gitrun as gitrun
 
 
 class Entity(object):
-    def __init__(self, name, kind, line, qualname):
+    def __init__(self, name, kind, line, qualname, end_line=None):
         self.name = name
         self.kind = kind
         self.line = line
         self.qualname = qualname
+        self.end_line = end_line
 
 
 class FileChange(object):
@@ -28,6 +29,7 @@ class FileChange(object):
 
 
 _STATUS_RE = re.compile(r"^[AMDCTR]\d*$")
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -104,6 +106,51 @@ def read_path_at_ref(root, path, ref):
     return result.out_
 
 
+def get_changed_lines(root, change, anchor=None, from_ref=None, to_ref=None, staged=False):
+    """Return the (old, new) line spans touched by a change.
+
+    Each side is a set of 1-indexed line numbers in that version of the file,
+    or None to signal that the file did not exist / all lines count (added or
+    deleted wholesale, renamed, or a modified file with no line hunks such as
+    a mode-only change). Scoping both maps prevents unchanged sibling symbols
+    in the old version from being misreported as deleted.
+    """
+    status = change.status[0]
+    if status == "A":
+        return set(), None
+    if status == "D":
+        return None, set()
+    if status == "R":
+        return None, None
+    args = ["diff", "-U0", "--find-renames"]
+    if staged:
+        args.append("--cached")
+    elif anchor:
+        args.extend([anchor, "HEAD"])
+    elif from_ref and to_ref:
+        args.extend([from_ref, to_ref])
+    else:
+        args.append("HEAD")
+    args.extend(["--", change.path])
+    output = gitrun.git(args, root).out_
+    old_lines = set()
+    new_lines = set()
+    for text_line in output.splitlines():
+        m = _HUNK_RE.match(text_line)
+        if m:
+            old_start = int(m.group(1))
+            old_count = int(m.group(2)) if m.group(2) is not None else 1
+            new_start = int(m.group(3))
+            new_count = int(m.group(4)) if m.group(4) is not None else 1
+            for i in range(old_start, old_start + old_count):
+                old_lines.add(i)
+            for i in range(new_start, new_start + new_count):
+                new_lines.add(i)
+    if not old_lines and not new_lines:
+        return None, None
+    return old_lines, new_lines
+
+
 def extract_entities(source):
     try:
         tree = ast.parse(source)
@@ -123,6 +170,7 @@ def _walk(node, scope, entities):
                     "class",
                     getattr(child, "lineno", 0),
                     _qualname(scope, child.name),
+                    _end_line(child),
                 )
             )
             _walk(child, scope + [("class", child.name)], entities)
@@ -139,6 +187,7 @@ def _walk(node, scope, entities):
                         kind,
                         getattr(child, "lineno", 0),
                         _qualname(scope, child.name),
+                        _end_line(child),
                     )
                 )
             _walk(child, scope + [("function", child.name)], entities)
@@ -146,7 +195,13 @@ def _walk(node, scope, entities):
             for target in _assign_targets(child):
                 if not scope:
                     entities.append(
-                        Entity(target, "module_field", getattr(child, "lineno", 0), target)
+                        Entity(
+                            target,
+                            "module_field",
+                            getattr(child, "lineno", 0),
+                            target,
+                            _end_line(child),
+                        )
                     )
                 elif scope[-1][0] == "class":
                     entities.append(
@@ -155,6 +210,7 @@ def _walk(node, scope, entities):
                             "class_field",
                             getattr(child, "lineno", 0),
                             _qualname(scope, target),
+                            _end_line(child),
                         )
                     )
             _walk(child, scope, entities)
@@ -179,3 +235,15 @@ def _qualname(scope, name):
     parts = [n for _kind, n in scope]
     parts.append(name)
     return ".".join(parts)
+
+
+def _end_line(node):
+    end = getattr(node, "end_lineno", None)
+    if end is not None:
+        return end
+    best = getattr(node, "lineno", 0)
+    for child in ast.walk(node):
+        line = getattr(child, "lineno", None)
+        if line is not None and line > best:
+            best = line
+    return best

@@ -9,6 +9,7 @@ import os
 import re
 
 import diffimpactscout.gitrun as gitrun
+from diffimpactscout.impact._parse import parse_quiet
 
 
 class Entity(object):
@@ -153,7 +154,7 @@ def get_changed_lines(root, change, anchor=None, from_ref=None, to_ref=None, sta
 
 def extract_entities(source):
     try:
-        tree = ast.parse(source)
+        tree = parse_quiet(source)
     except SyntaxError:
         return []
     entities = []

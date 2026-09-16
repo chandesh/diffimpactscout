@@ -1,5 +1,6 @@
 import os
 import subprocess
+import warnings
 
 import diffimpactscout.impact.diff_parser as dp
 from diffimpactscout.impact.diff_parser import Entity, FileChange
@@ -133,6 +134,16 @@ def test_extract_entities_assignment_spans_multiple_lines():
     by_name = {e.name: e for e in entities}
     assert by_name["CONFIG"].end_line == 4
     assert by_name["FIELDS"].end_line == 8
+
+
+def test_extract_entities_invalid_escape_emits_no_syntax_warning():
+    """Verifies that invalid escapes in analyzed source stay quiet."""
+    source = "SQL = '^(.*?)\\.SO'\n"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        entities = dp.extract_entities(source)
+    assert [(e.name, e.kind) for e in entities] == [("SQL", "module_field")]
+    assert not [w for w in caught if issubclass(w.category, SyntaxWarning)]
 
 
 def test_extract_entities_skips_locals_and_nested():

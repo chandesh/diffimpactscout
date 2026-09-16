@@ -8,6 +8,8 @@ import ast
 import hashlib
 import os
 
+from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
+
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -365,7 +367,7 @@ def _is_load(node):
 
 def _parse(src):
     try:
-        return ast.parse(src)
+        return _parse_quiet(src)
     except (SyntaxError, ValueError, TypeError):
         return None
 

@@ -16,6 +16,7 @@ from diffimpactscout.config import is_excluded
 from diffimpactscout.impact import reporter
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
+from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
 from diffimpactscout.impact.cache import SymbolCache
 from diffimpactscout.impact.diff_parser import (
     extract_entities,
@@ -378,7 +379,7 @@ def _analysis_imports(analysis):
 
 def _import_names(source):
     try:
-        tree = ast.parse(source)
+        tree = _parse_quiet(source)
     except (SyntaxError, ValueError, TypeError):
         return set()
     names = set()

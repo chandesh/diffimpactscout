@@ -9,6 +9,7 @@ import os
 import re
 
 from diffimpactscout.config import _matches_glob
+from diffimpactscout.impact._parse import parse_quiet
 
 
 class Route(object):
@@ -68,7 +69,7 @@ def _parse_file(full):
     if text is None:
         return None
     try:
-        return ast.parse(text)
+        return parse_quiet(text)
     except (SyntaxError, ValueError, TypeError):
         return None
 

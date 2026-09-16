@@ -1,6 +1,7 @@
 import ast
 import hashlib
 import os
+import warnings
 
 import diffimpactscout.impact.python_analyzer as pa
 from diffimpactscout.impact.cache import SymbolCache
@@ -378,6 +379,16 @@ def test_find_references_import_from_unrelated_module_pruned():
     assert [(h["path"], h["line"], h["how"]) for h in hits] == [
         ("consumer.py", 1, "import"),
     ]
+
+
+def test_analyze_source_invalid_escape_emits_no_syntax_warning():
+    """Verifies that third-party source with invalid escapes parses quietly."""
+    source = "SQL = '^(.*?)\\.SO'\n"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        analysis = _analysis(source)
+    assert analysis is not None
+    assert not [w for w in caught if issubclass(w.category, SyntaxWarning)]
 
 
 def test_analyze_path_analyzes_and_stores(tmp_path):

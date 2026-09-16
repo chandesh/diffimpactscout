@@ -179,6 +179,7 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
     rows = []
     layers = {}
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
+    deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
         name for name, ent in entities.items() if ent.get("kind") == "class_field"
     ]
@@ -191,6 +192,7 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
             modules=modules,
             changed_paths=changed_paths,
             weak_attr=weak_attr,
+            deleted=deleted,
         )
         layers.setdefault(name, set())
         for hit in hits:

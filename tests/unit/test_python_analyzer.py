@@ -391,6 +391,53 @@ def test_analyze_source_invalid_escape_emits_no_syntax_warning():
     assert not [w for w in caught if issubclass(w.category, SyntaxWarning)]
 
 
+def test_find_references_deleted_entity_prunes_foreign_base_attr():
+    """Verifies that a deleted symbol's same-name attr on a foreign base is pruned.
+
+    Mirrors a renamed Django view: the changed file still calls
+    ``svc.create_object_group`` (a service method bound from another module),
+    which shares the deleted view's name but is not a reference to it.
+    """
+    analyses = {
+        "app/views.py": _analysis(
+            "from app import services as svc\n"
+            "\n"
+            "def caller(request):\n"
+            "    return svc.create_object_group(request)\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create_object_group"],
+        kinds={"name", "attr", "import"},
+        modules={"create_object_group": {"app.views"}},
+        changed_paths=["app/views.py"],
+        deleted={"create_object_group"},
+    )
+    assert hits == []
+
+
+def test_find_references_deleted_entity_keeps_same_module_name_usage():
+    """Verifies that a deleted symbol's same-module name usage is kept."""
+    analyses = {
+        "app/views.py": _analysis(
+            "def create_object_group(request):\n    return request\n\n"
+            "def caller():\n    return create_object_group(None)\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create_object_group"],
+        kinds={"name", "attr", "import"},
+        modules={"create_object_group": {"app.views"}},
+        changed_paths=["app/views.py"],
+        deleted={"create_object_group"},
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("app/views.py", 5, "name"),
+    ]
+
+
 def test_analyze_path_analyzes_and_stores(tmp_path):
     """Verifies that analyze_path analyzes a file and stores the result in the cache."""
     _write(str(tmp_path / "mod.py"), "import widget\n")

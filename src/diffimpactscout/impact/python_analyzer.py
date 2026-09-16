@@ -81,7 +81,15 @@ def analyze_path(path, root, cache):
     return analysis
 
 
-def find_references(analyses, names, kinds=None, modules=None, changed_paths=None, weak_attr=()):
+def find_references(
+    analyses,
+    names,
+    kinds=None,
+    modules=None,
+    changed_paths=None,
+    weak_attr=(),
+    deleted=(),
+):
     """Return reference hits for the given entity names, optionally by kind.
 
     analyses maps a repo-root-relative path to either a cache entry
@@ -103,7 +111,11 @@ def find_references(analyses, names, kinds=None, modules=None, changed_paths=Non
     verified through their base chain (``views.orders`` resolves when the
     file imports ``views`` from the changed module); attributes inside
     weak_attr names (typically class fields accessed through arbitrary
-    object variables) bypass the import check.
+    object variables) bypass the import check. deleted, when given, names
+    entities removed or renamed in the change-set; their hits are bound to
+    the defining modules even inside changed files so a same-name reference
+    on a foreign object (e.g. ``service.create`` when ``create`` was a
+    deleted function) is pruned.
 
     Caller contract:
       changed class_field    -> kinds={"attr"}
@@ -116,6 +128,7 @@ def find_references(analyses, names, kinds=None, modules=None, changed_paths=Non
     mods = modules or {}
     changed = set(changed_paths or ())
     weak = set(weak_attr or ())
+    gone = set(deleted or ())
     hits = []
     for path, entry in (analyses or {}).items():
         analysis = entry
@@ -134,7 +147,7 @@ def find_references(analyses, names, kinds=None, modules=None, changed_paths=Non
             if kinds is not None and how not in kinds:
                 continue
             if changed and name in mods:
-                if path not in changed and not _usage_resolves(
+                if (name in gone or path not in changed) and not _usage_resolves(
                     analysis, usage, name, mods.get(name) or set(), path, weak
                 ):
                     continue
@@ -156,6 +169,8 @@ def _usage_resolves(analysis, usage, name, entity_mods, path, weak):
     if not entity_mods:
         return True
     if usage.get("kind") != "attr":
+        if _module_of(path) in entity_mods:
+            return True
         return _imports_from(analysis, name, entity_mods, path)
     if name in weak:
         return True
@@ -163,6 +178,15 @@ def _usage_resolves(analysis, usage, name, entity_mods, path, weak):
     if not base:
         return True
     return _imports_from(analysis, base.split(".")[0], entity_mods, path)
+
+
+def _module_of(path):
+    if not path:
+        return ""
+    stem = path[:-3] if path.endswith(".py") else path
+    if stem.endswith("/__init__"):
+        stem = stem[: -len("/__init__")]
+    return stem.replace("/", ".")
 
 
 def _imports_from(analysis, name, entity_mods, path):

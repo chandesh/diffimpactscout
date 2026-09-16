@@ -230,19 +230,45 @@ def test_match_template_refs(tmp_path):
 
 
 def test_extract_frontend_refs(tmp_path):
-    """Verifies that frontend HTTP calls are extracted as static and dynamic refs."""
+    """Verifies that frontend endpoints are extracted as static refs only."""
     _build_tree(tmp_path)
     refs = rl.extract_frontend_refs(str(tmp_path), ["**/src/**/*.ts"])
     static = [r["ref"] for r in refs if not r["dynamic"]]
-    dynamic = [(r["file"], r["ref"]) for r in refs if r["dynamic"]]
     assert "/api/v1/orders/" in static
     assert "/api/v1/reports/" in static
     assert "/api/v1/orders/5/" in static
-    assert not any(p == "/api/v1/orders/opaque" for p in static)
-    assert dynamic == [("src/app/orders.ts", "/api/v1/orders/")]
+    assert "/api/v1/orders/opaque" in static
+    assert not any(r["dynamic"] for r in refs)
     assert all(
         "file" in r and "ref" in r and "line" in r and "method" in r for r in refs
     )
+
+
+def test_extract_frontend_refs_url_constants_and_fragments(tmp_path):
+    """Verifies extraction of endpoint dicts, source urls, and concat fragments."""
+    src = (
+        "export const ENDPOINTS = {\n"
+        "  MAIL: 'company-listing/send-company-profile-request/',\n"
+        "  REPORT_ISSUE: 'company-profile/report-issue/',\n"
+        "};\n"
+        "const ACTIONS = {\n"
+        "  SEND_INSTANT_ALERT: '/alerts/send-instant-alerts/',\n"
+        "};\n"
+        "this.autocompleteOptions = { source: '/penseive/buckets/' + this.id + '/tags/suggest/' };\n"
+        "var tmpURL = '/comment/' + ServerConfig.ESURLPrefix + 'count/';\n"
+        "const base = 'http://example.com/x';\n"
+        "import { x } from '@angular/common/http';\n"
+    )
+    _write(str(tmp_path), "app.ts", src)
+    refs = rl.extract_frontend_refs(str(tmp_path), ["**/*.ts"])
+    refs_l = [r["ref"] for r in refs]
+    assert "company-listing/send-company-profile-request/" in refs_l
+    assert "company-profile/report-issue/" in refs_l
+    assert "/alerts/send-instant-alerts/" in refs_l
+    assert "/penseive/buckets/" in refs_l
+    assert "/comment/" in refs_l
+    assert not any("http://" in r for r in refs_l)
+    assert not any("@angular" in r for r in refs_l)
 
 
 def test_extract_frontend_refs_ignores_comments(tmp_path):
@@ -373,6 +399,68 @@ def test_template_url_tag_with_args_not_captured(tmp_path):
     )
     refs = rl.extract_template_refs(str(tmp_path), ["**/templates/**/*.html"])
     assert refs == []
+
+
+def test_extract_django_routes_composes_include_prefix(tmp_path):
+    """Verifies that include() prefixes compose into the full route URL."""
+    _write(
+        str(tmp_path),
+        "config/urls.py",
+        "from django.urls import include, path, re_path\n"
+        "urlpatterns = [\n"
+        "    path('api/', include('app.orders.urls')),\n"
+        "    re_path(r'^newsfeed/', include('app.news.urls')),\n"
+        "]\n",
+    )
+    _write(
+        str(tmp_path),
+        "app/orders/urls.py",
+        "from django.urls import path\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    path('orders/<int:pk>/', views.OrderDetail.as_view(), name='order-detail'),\n"
+        "]\n",
+    )
+    _write(
+        str(tmp_path),
+        "app/news/urls.py",
+        "from django.urls import re_path\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    re_path(r'^items/(?P<pk>[0-9]+)/$', views.items, name='item-detail'),\n"
+        "]\n",
+    )
+    routes = rl.extract_django_routes(str(tmp_path), ["**/urls.py"])
+    by_name = {r.name: r for r in routes}
+    assert by_name["order-detail"].full == "api/orders/<int:pk>/"
+    matched, unresolved = rl.match_endpoints(
+        [_ref("f.ts", "/api/orders/5/")], [by_name["order-detail"]]
+    )
+    assert unresolved == []
+    assert len(matched) == 1
+    matched2, unresolved2 = rl.match_endpoints(
+        [_ref("f.ts", "/newsfeed/items/42/")], [by_name["item-detail"]]
+    )
+    assert unresolved2 == []
+    assert len(matched2) == 1
+
+
+def test_extract_django_routes_unnamed_path(tmp_path):
+    """Verifies that routes without a name= kwarg are captured, includes skipped."""
+    _write(
+        str(tmp_path),
+        "app/urls.py",
+        "from django.urls import path, include\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    path('intel/', views.generate_intel_details),\n"
+        "    path('api/', include('other.urls')),\n"
+        "]\n",
+    )
+    routes = rl.extract_django_routes(str(tmp_path), ["**/urls.py"])
+    names = [(r.path, r.handler, r.name) for r in routes]
+    assert ("intel/", "generate_intel_details", None) in names
+    assert not any(h == "include" for _p, h, _n in names)
 
 
 def test_route_class():

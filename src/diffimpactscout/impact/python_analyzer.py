@@ -8,6 +8,8 @@ import ast
 import hashlib
 import os
 
+from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
+
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -27,9 +29,11 @@ def analyze_source(src):
     (obj.status -> name "status", kind "attr"); the base object name is
     not recorded so a field search matches obj.status exactly once.
     Imports record the imported names, with dotted module names reduced
-    to their top-level part. ctx_qname is the dotted enclosing scope ("" at
-    module level) and ctx_kind is one of "module", "function", "class" or
-    "method".
+    to their top-level part, plus the raw module string ("module") and
+    relative-import level ("level") so a lookup can resolve whether a
+    file actually binds a name from a given module. ctx_qname is the
+    dotted enclosing scope ("" at module level) and ctx_kind is one of
+    "module", "function", "class" or "method".
     """
     if isinstance(src, bytes):
         src = src.decode("utf-8", "replace")
@@ -77,7 +81,15 @@ def analyze_path(path, root, cache):
     return analysis
 
 
-def find_references(analyses, names, kinds=None):
+def find_references(
+    analyses,
+    names,
+    kinds=None,
+    modules=None,
+    changed_paths=None,
+    weak_attr=(),
+    deleted=(),
+):
     """Return reference hits for the given entity names, optionally by kind.
 
     analyses maps a repo-root-relative path to either a cache entry
@@ -89,6 +101,22 @@ def find_references(analyses, names, kinds=None):
     "ctx_qname", "ctx_kind"} sorted deterministically by (path, line, name,
     how). Empty when nothing matches.
 
+    modules, when given, maps each entity name to the set of dotted module
+    paths where that entity was defined in the change-set. changed_paths,
+    when given, is the iterable of repo-root-relative paths in the
+    change-set. When both are supplied a hit that is not itself in a
+    changed file is kept only when its file actually binds the entity name
+    from one of those modules, pruning same-name false positives across
+    unrelated files (e.g. a generic 'create' method). Attribute loads are
+    verified through their base chain (``views.orders`` resolves when the
+    file imports ``views`` from the changed module); attributes inside
+    weak_attr names (typically class fields accessed through arbitrary
+    object variables) bypass the import check. deleted, when given, names
+    entities removed or renamed in the change-set; their hits are bound to
+    the defining modules even inside changed files so a same-name reference
+    on a foreign object (e.g. ``service.create`` when ``create`` was a
+    deleted function) is pruned.
+
     Caller contract:
       changed class_field    -> kinds={"attr"}
       changed function/module_field -> kinds={"name","attr","import"}
@@ -97,6 +125,10 @@ def find_references(analyses, names, kinds=None):
     """
     wanted = set(names)
     kinds = None if kinds is None else set(kinds)
+    mods = modules or {}
+    changed = set(changed_paths or ())
+    weak = set(weak_attr or ())
+    gone = set(deleted or ())
     hits = []
     for path, entry in (analyses or {}).items():
         analysis = entry
@@ -109,22 +141,104 @@ def find_references(analyses, names, kinds=None):
             continue
         for usage in usages:
             name = usage.get("name")
-            if name in wanted:
-                how = usage.get("kind", "name")
-                if kinds is not None and how not in kinds:
+            if name not in wanted:
+                continue
+            how = usage.get("kind", "name")
+            if kinds is not None and how not in kinds:
+                continue
+            if changed and name in mods:
+                if (name in gone or path not in changed) and not _usage_resolves(
+                    analysis, usage, name, mods.get(name) or set(), path, weak
+                ):
                     continue
-                hits.append(
-                    {
-                        "name": name,
-                        "path": path,
-                        "line": usage.get("line", 0),
-                        "how": how,
-                        "ctx_qname": usage.get("ctx_qname", ""),
-                        "ctx_kind": usage.get("ctx_kind", "module"),
-                    }
-                )
+            hits.append(
+                {
+                    "name": name,
+                    "path": path,
+                    "line": usage.get("line", 0),
+                    "how": how,
+                    "ctx_qname": usage.get("ctx_qname", ""),
+                    "ctx_kind": usage.get("ctx_kind", "module"),
+                }
+            )
     hits.sort(key=lambda h: (h["path"], h["line"], h["name"], h["how"]))
     return hits
+
+
+def _usage_resolves(analysis, usage, name, entity_mods, path, weak):
+    if not entity_mods:
+        return True
+    if usage.get("kind") != "attr":
+        if _module_of(path) in entity_mods:
+            return True
+        return _imports_from(analysis, name, entity_mods, path)
+    if name in weak:
+        return True
+    base = usage.get("base") or ""
+    if not base:
+        return True
+    return _imports_from(analysis, base.split(".")[0], entity_mods, path)
+
+
+def _module_of(path):
+    if not path:
+        return ""
+    stem = path[:-3] if path.endswith(".py") else path
+    if stem.endswith("/__init__"):
+        stem = stem[: -len("/__init__")]
+    return stem.replace("/", ".")
+
+
+def _imports_from(analysis, name, entity_mods, path):
+    """Return True when the file imports ``name`` from any of ``entity_mods``.
+
+    Resolves relative ImportFrom levels against the file's own package so
+    ``from . import views`` inside ``app/service.py`` resolves to the
+    ``app.views`` module.
+    """
+    if not entity_mods:
+        return True
+    usages = (analysis or {}).get("usages")
+    if not isinstance(usages, list):
+        return False
+    for usage in usages:
+        if usage.get("kind") != "import":
+            continue
+        imported = usage.get("name")
+        if imported != name and usage.get("alias") != name:
+            continue
+        module = _import_module(usage, path)
+        if module in entity_mods:
+            return True
+        if imported and ".".join([module, imported]) in entity_mods:
+            return True
+    return False
+
+
+def _import_module(usage, path):
+    """Resolve an import usage to the dotted module path it binds or loads.
+
+    Absolute imports (``from app.views import orders``) resolve to the raw
+    module. Relative imports resolve against the importing file's own
+    package; ``from . import views`` inside ``app/urls.py`` binds the name
+    ``views`` to the submodule ``app.views``.
+    """
+    module = usage.get("module") or ""
+    level = int(usage.get("level") or 0)
+    name = usage.get("name") or ""
+    if level == 0:
+        return module
+    parts = (path or "").split("/")
+    depth = max(len(parts) - 1, 0)
+    if parts and parts[-1] == "__init__.py":
+        depth -= 1
+    pkg_depth = depth - (level - 1)
+    pkg = ".".join(parts[:pkg_depth]) if pkg_depth > 0 else ""
+    if module:
+        return ".".join([pkg, module]) if pkg else module
+    if name:
+        return ".".join([pkg, name]) if pkg else name
+    return pkg
 
 
 def _walk(node, scope, defs, usages):
@@ -138,10 +252,20 @@ def _walk(node, scope, defs, usages):
             _visit_assign(child, scope, defs, usages)
         elif isinstance(child, ast.Import):
             for alias in child.names:
-                usages.append(_usage(child, alias.name.split(".")[0], "import", scope))
+                u = _usage(child, alias.name.split(".")[0], "import", scope)
+                u["module"] = alias.name
+                u["level"] = 0
+                if alias.asname:
+                    u["alias"] = alias.asname
+                usages.append(u)
         elif isinstance(child, ast.ImportFrom):
             for alias in child.names:
-                usages.append(_usage(child, alias.name, "import", scope))
+                u = _usage(child, alias.name, "import", scope)
+                u["module"] = child.module or ""
+                u["level"] = getattr(child, "level", 0) or 0
+                if alias.asname:
+                    u["alias"] = alias.asname
+                usages.append(u)
         elif isinstance(child, ast.Attribute):
             _visit_attribute(child, scope, defs, usages)
         elif isinstance(child, ast.Name):
@@ -164,7 +288,9 @@ def _visit_func(child, scope, defs, usages):
 
 def _visit_attribute(node, scope, defs, usages):
     if _is_load(node):
-        usages.append(_usage(node, node.attr, "attr", scope))
+        u = _usage(node, node.attr, "attr", scope)
+        u["base"] = _attr_base(node)
+        usages.append(u)
     value = node.value
     if isinstance(value, ast.Name):
         return
@@ -172,6 +298,18 @@ def _visit_attribute(node, scope, defs, usages):
         _visit_attribute(value, scope, defs, usages)
     else:
         _walk(value, scope, defs, usages)
+
+
+def _attr_base(node):
+    """Return the dotted base chain of an attribute load, e.g. ``views.orders`` -> ``views``."""
+    parts = []
+    current = node.value
+    while isinstance(current, ast.Attribute) and _is_load(current):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return ".".join(reversed(parts))
 
 
 def _visit_assign(child, scope, defs, usages):
@@ -253,7 +391,7 @@ def _is_load(node):
 
 def _parse(src):
     try:
-        return ast.parse(src)
+        return _parse_quiet(src)
     except (SyntaxError, ValueError, TypeError):
         return None
 

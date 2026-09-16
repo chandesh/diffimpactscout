@@ -1,4 +1,5 @@
 import os
+import warnings
 
 import diffimpactscout.checks.syntax as syntax
 from diffimpactscout.checks.base import (
@@ -132,6 +133,17 @@ def test_ast_valid_is_clean(tmp_path):
     result = _cls("syntax/ast-syntax")().run(_ctx(root), ["good.py"])
     assert result.ok()
     assert result.issues == []
+
+
+def test_ast_invalid_escape_emits_no_syntax_warning(tmp_path):
+    """Verifies that the AST check does not leak SyntaxWarnings from analyzed code."""
+    root = str(tmp_path)
+    _write(root, "esc.py", "SQL = '^(.*?)\\.SO'\n")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = _cls("syntax/ast-syntax")().run(_ctx(root), ["esc.py"])
+    assert result.ok()
+    assert not [w for w in caught if issubclass(w.category, SyntaxWarning)]
 
 
 def test_ast_invalid_reports_issue_with_line(tmp_path):

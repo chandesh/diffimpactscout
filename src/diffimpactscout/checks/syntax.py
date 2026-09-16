@@ -7,6 +7,7 @@ merge conflict, and a dev-added invalid JSON file is flagged.
 import ast
 import json
 import os
+import warnings
 
 from diffimpactscout.checks.base import (
     Check,
@@ -64,7 +65,9 @@ class AstSyntaxCheck(Check):
             except OSError:
                 continue
             try:
-                ast.parse(data.decode("utf-8-sig"), filename=path)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    ast.parse(data.decode("utf-8-sig"), filename=path)
             except SyntaxError as exc:
                 issues.append(
                     CheckIssue(

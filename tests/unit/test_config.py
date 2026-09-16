@@ -26,7 +26,7 @@ def _make_repo(tmp_path):
 def test_load_config_defaults_when_no_file(tmp_path):
     """Verifies that default config values are used when no config file exists."""
     cfg = config.load_config(str(tmp_path))
-    assert cfg["mode"] == config.MODE_PRE_PUSH
+    assert cfg["mode"] == config.MODE_GUARD_AND_IMPACT
     assert cfg["impact"]["profile"] == config.DEFAULT_PROFILE
     assert cfg["guard"]["blocking"] == "warn"
     assert cfg["impact"]["cache_file"] == ".impact_analysis_cache.json"

@@ -275,7 +275,7 @@ def test_impact_non_tty_returns_zero(tmp_path, capsys, monkeypatch):
     assert cli.main(["impact"]) == 0
     out = capsys.readouterr().out
     assert "Impact Analysis Report" in out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
 
 
 def test_impact_strict_returns_one(tmp_path, capsys, monkeypatch):
@@ -328,6 +328,90 @@ def test_impact_markdown_stdout(tmp_path, capsys, monkeypatch):
     assert "# Impact Analysis Report" in out
     assert "| # | Impacted File Path |" in out
     assert "| --- |" in out
+
+
+def test_guard_and_impact_check_runs_impact_after_guard(tmp_path, capsys, monkeypatch):
+    """Checks that guard-and-impact-check runs impact after a clean guard."""
+    repo, base, _head = _build_django_repo(tmp_path)
+    _anchor(repo, base)
+    monkeypatch.chdir(repo)
+    assert cli.main(["guard-and-impact-check"]) == 0
+    out = capsys.readouterr().out
+    assert "Impact Analysis Report" in out
+    assert "orders (attr at 5)" in out
+
+
+def test_guard_and_impact_check_still_reports_impact_when_guard_fails(tmp_path, capsys, monkeypatch):
+    """Verifies that a failing guard still shows the impact report but blocks."""
+    repo = _json_repo(tmp_path)
+    monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
+    monkeypatch.chdir(repo)
+    assert cli.main(["guard-and-impact-check"]) == 1
+    assert "Impact Analysis Report" in capsys.readouterr().out
+
+
+def test_guard_and_impact_check_dispatches_flags(tmp_path, monkeypatch):
+    """Checks that guard-and-impact-check forwards flags to guard and impact."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    seen = {}
+
+    def fake_guard(root, cfg, **kwargs):
+        seen["guard_kwargs"] = kwargs
+        return 0
+
+    def fake_impact(root, cfg, **kwargs):
+        seen["impact_kwargs"] = kwargs
+        return 6
+
+    monkeypatch.setattr(cli.guard, "run_guard", fake_guard)
+    monkeypatch.setattr(cli.impact_module, "run_impact", fake_impact)
+    assert cli.main(["guard-and-impact-check", "--staged", "--fast", "--json"]) == 6
+    assert seen["guard_kwargs"]["staged"] is True
+    assert seen["impact_kwargs"]["staged"] is True
+    assert seen["impact_kwargs"]["fast"] is True
+    assert seen["impact_kwargs"]["json_out"] is True
+
+
+def test_dependency_check_command_missing_returns_one(tmp_path, capsys, monkeypatch):
+    """Checks that the dependency-check command flags a missing referenced tool."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump(
+            {
+                "impact": {"profile": "python"},
+                "guard": {"checks": [{"id": "ruff"}]},
+            },
+            fh,
+        )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(cli.dependency_check, "_resolve", lambda *a: None)
+    assert cli.main(["dependency-check"]) == 1
+    captured = capsys.readouterr()
+    assert "ruff" in captured.out
+    assert "pip install ruff" in captured.err
+
+
+def test_dependency_check_command_all_found_returns_zero(tmp_path, capsys, monkeypatch):
+    """Checks that the dependency-check command succeeds when tools exist."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "py/x.py", "x = 1\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump(
+            {
+                "impact": {"profile": "python"},
+                "guard": {"checks": [{"id": "ruff"}]},
+            },
+            fh,
+        )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(cli.dependency_check, "_resolve", lambda *a: "/usr/bin/ruff")
+    assert cli.main(["dependency-check"]) == 0
+    assert "All referenced tools are available." in capsys.readouterr().out
 
 
 def test_check_bad_json_returns_one(tmp_path, capsys, monkeypatch):
@@ -586,6 +670,36 @@ def test_install_hooks_blocking_flag(tmp_path, monkeypatch):
     assert _read_cfg(repo)["guard"]["blocking"] == "strict"
 
 
+def test_install_hooks_writes_guard_and_impact_hook_by_default(tmp_path, monkeypatch):
+    """Checks that the default mode installs the guard-and-impact hook."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    assert _install(repo) == 0
+    assert _read_cfg(repo)["mode"] == cli.config.MODE_GUARD_AND_IMPACT
+    with open(os.path.join(repo, ".git", "hooks", "pre-push")) as fh:
+        body = fh.read()
+    assert "diffimpactscout guard-and-impact-check" in body
+    assert "diffimpactscout guard\n" not in body
+
+
+def test_install_hooks_existing_pre_push_mode_uses_guard_hook(
+    tmp_path, monkeypatch
+):
+    """Checks that an existing pre-push mode installs the guard-only hook."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    cfg_path = os.path.join(repo, ".diffimpactscout.json")
+    with open(cfg_path, "w") as fh:
+        json.dump({"mode": "pre-push", "impact": {"profile": "generic"}}, fh)
+    monkeypatch.chdir(repo)
+    assert _install(repo) == 0
+    with open(os.path.join(repo, ".git", "hooks", "pre-push")) as fh:
+        body = fh.read()
+    assert "diffimpactscout guard-and-impact-check" not in body
+    assert "diffimpactscout guard\n" in body
+
+
 def test_interactive_confirm_yes_defaults_strict(tmp_path, monkeypatch, capsys):
     """Checks that confirming interactively defaults blocking to strict."""
     repo = _make_repo(tmp_path)
@@ -602,7 +716,7 @@ def test_interactive_override_blocking_defaults_strict(tmp_path, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "", "", "y", "y"]
+    answers = ["n", "", "", "y", "", "y"]
     assert _install_answers(repo, answers) == 0
     assert _read_cfg(repo)["guard"]["blocking"] == "strict"
 
@@ -612,7 +726,7 @@ def test_interactive_override_blocking_prompt_selects_warn(tmp_path, monkeypatch
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "", "warn", "y", "y"]
+    answers = ["n", "", "warn", "y", "", "y"]
     assert _install_answers(repo, answers) == 0
     assert _read_cfg(repo)["guard"]["blocking"] == "warn"
 
@@ -666,7 +780,7 @@ def test_interactive_override_profile(tmp_path, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "frontend", "", "y", "y", "y"]
+    answers = ["n", "frontend", "", "y", "y", "", "y"]
     assert _install_answers(repo, answers) == 0
     cfg = _read_cfg(repo)
     assert cfg["impact"]["profile"] == "frontend"
@@ -678,7 +792,7 @@ def test_interactive_override_keep_lint_no(tmp_path, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "python", "", "n", "y", "y"]
+    answers = ["n", "python", "", "n", "y", "", "y"]
     assert _install_answers(repo, answers) == 0
     cfg = _read_cfg(repo)
     assert {"id": "ruff"} not in cfg["guard"]["checks"]
@@ -723,7 +837,7 @@ def test_interactive_decline_aborts_install(tmp_path, capsys, monkeypatch):
     repo = _make_repo(tmp_path)
     _commit(repo, "base.txt", "base\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "", "", "", "n"]
+    answers = ["n", "", "", "", "", "n"]
     assert _install_answers(repo, answers) == 0
     captured = capsys.readouterr()
     assert "setup skipped" in captured.out
@@ -739,12 +853,27 @@ def test_interactive_override_shows_new_profile_in_preview(
     repo = _make_repo(tmp_path)
     _commit(repo, "py/x.py", "x = 1\n", "base")
     monkeypatch.chdir(repo)
-    answers = ["n", "frontend", "", "y", "y", "y"]
+    answers = ["n", "frontend", "", "y", "y", "", "y"]
     assert _install_answers(repo, answers) == 0
     captured = capsys.readouterr()
     assert "profile   : frontend" in captured.out
     assert "detected framework: frontend" not in captured.out
     assert _read_cfg(repo)["impact"]["profile"] == "frontend"
+
+
+def test_interactive_mode_prompt_selects_pre_push(tmp_path, capsys, monkeypatch):
+    """Checks that the mode prompt can select the guard-only pre-push scope."""
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    monkeypatch.chdir(repo)
+    answers = ["n", "", "", "y", "p", "y"]
+    assert _install_answers(repo, answers) == 0
+    captured = capsys.readouterr()
+    assert "mode      : pre-push" in captured.out
+    assert "runs `diffimpactscout guard`" in captured.out
+    assert _read_cfg(repo)["mode"] == "pre-push"
+    with open(os.path.join(repo, ".git", "hooks", "pre-push")) as fh:
+        assert "diffimpactscout guard\n" in fh.read()
 
 
 def test_check_missing_file_returns_one(tmp_path, capsys, monkeypatch):

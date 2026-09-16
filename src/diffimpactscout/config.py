@@ -11,6 +11,8 @@ CFG_NAME = ".diffimpactscout.json"
 DEFAULT_PROFILE = "generic"
 PROFILE_CHOICES = ("generic", "django", "fastapi", "python", "frontend")
 MODE_PRE_PUSH = "pre-push"
+MODE_GUARD_AND_IMPACT = "guard-and-impact-check"
+DEFAULT_MODE = MODE_GUARD_AND_IMPACT
 
 DEFAULT_IGNORE_PATHS = [
     "**/node_modules/**",
@@ -40,7 +42,7 @@ DEFAULT_GUARD_CHECKS = [
 def _defaults():
     return {
         "version": 1,
-        "mode": MODE_PRE_PUSH,
+        "mode": DEFAULT_MODE,
         "ignore_paths": list(DEFAULT_IGNORE_PATHS),
         "use_gitignore": False,
         "guard": {

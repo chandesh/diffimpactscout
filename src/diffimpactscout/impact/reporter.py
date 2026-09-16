@@ -15,6 +15,7 @@ import diffimpactscout.env as env
 _HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |"
 _SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- |"
 _COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required")
+_COLUMN_WIDTHS = (2, 38, 20, 8, 38, 8, 26)
 
 
 def classify_severity(layers, deleted_renamed, changed_paths, ref_path):
@@ -86,22 +87,82 @@ def _rationale_lines(rows):
     return lines
 
 
+def _wrap(text, width):
+    """Wrap a cell value to a fixed width, breaking paths at slashes."""
+    text = "" if text is None else str(text)
+    if width <= 0 or not text:
+        return [text]
+    lines = []
+    cur = ""
+    for token in text.split(" "):
+        if not cur:
+            cur = token
+        elif len(cur) + 1 + len(token) <= width:
+            cur += " " + token
+        else:
+            lines.extend(_split_token(cur, width))
+            cur = token
+    if cur:
+        lines.extend(_split_token(cur, width))
+    return lines or [""]
+
+
+def _split_token(token, width):
+    if len(token) <= width:
+        return [token]
+    if "/" in token:
+        parts = token.split("/")
+        out = []
+        cur = ""
+        for part in parts:
+            candidate = part if not cur else cur + "/" + part
+            if len(candidate) <= width:
+                cur = candidate
+            else:
+                if cur:
+                    out.append(cur)
+                cur = part
+        if cur:
+            out.append(cur)
+        result = []
+        for i, line in enumerate(out):
+            if i < len(out) - 1 and "/" in line and len(line) < width:
+                line = line + "/"
+            result.extend([line[j : j + width] for j in range(0, len(line), width)])
+        return result
+    return [token[i : i + width] for i in range(0, len(token), width)]
+
+
 def _ascii_table(rows):
-    values = [_row_values(row, i) for i, row in enumerate(rows or [], start=1)]
-    widths = []
-    for i in range(len(_COLUMNS)):
-        width = len(_COLUMNS[i])
-        for vals in values:
-            width = max(width, len(vals[i]))
-        widths.append(width)
+    widths = list(_COLUMN_WIDTHS)
     header = "  " + "  ".join(c.ljust(widths[i]) for i, c in enumerate(_COLUMNS))
     body = []
-    for vals in values:
-        body.append("  " + "  ".join(v.ljust(widths[i]) for i, v in enumerate(vals)))
+    for i, row in enumerate(rows or [], start=1):
+        cells = [_wrap(v, widths[j]) for j, v in enumerate(_row_values(row, i))]
+        height = max(len(c) for c in cells)
+        for line_idx in range(height):
+            parts = []
+            for j, cell_lines in enumerate(cells):
+                value = cell_lines[line_idx] if line_idx < len(cell_lines) else ""
+                parts.append(value.ljust(widths[j]))
+            body.append("  " + "  ".join(parts))
     return header, body
 
 
-def _render_ascii(rows, unresolved, changed_count):
+def _endpoint_lines(endpoints):
+    lines = []
+    for i, ep in enumerate(endpoints or [], start=1):
+        url = ep.get("url") or ""
+        handler = ep.get("handler") or ""
+        name = ep.get("name") or ""
+        label = handler
+        if name:
+            label = "%s (%s)" % (handler, name)
+        lines.append("  %2d  %-55s %s" % (i, url, label))
+    return lines
+
+
+def _render_ascii(rows, endpoints, unresolved, changed_count):
     lines = []
     lines.append("=" * 70)
     lines.append("  Impact Analysis Report")
@@ -112,6 +173,10 @@ def _render_ascii(rows, unresolved, changed_count):
     lines.append(header)
     for line in body:
         lines.append(line)
+    if endpoints:
+        lines.append("")
+        lines.append("  Affected WebURL/API-URL endpoints:")
+        lines.extend(_endpoint_lines(endpoints))
     if unresolved:
         lines.append("")
         lines.append("  Unresolved references (manual check required):")
@@ -129,7 +194,7 @@ def _render_ascii(rows, unresolved, changed_count):
     return "\n".join(lines) + "\n"
 
 
-def _render_markdown(rows, unresolved, changed_count):
+def _render_markdown(rows, endpoints, unresolved, changed_count):
     lines = []
     lines.append("# Impact Analysis Report")
     lines.append("")
@@ -138,6 +203,13 @@ def _render_markdown(rows, unresolved, changed_count):
     for i, row in enumerate(rows or [], start=1):
         cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
         lines.append("| " + " | ".join(cells) + " |")
+    if endpoints:
+        lines.append("")
+        lines.append("## Affected WebURL/API-URL endpoints")
+        for ep in endpoints or []:
+            lines.append(
+                "- `%s` -> %s (%s)" % (ep.get("url") or "", ep.get("handler") or "", ep.get("name") or "")
+            )
     if unresolved:
         lines.append("")
         lines.append("## Unresolved references (manual check required)")
@@ -154,10 +226,10 @@ def _render_markdown(rows, unresolved, changed_count):
     return "\n".join(lines) + "\n"
 
 
-def render_report(rows, unresolved, changed_count, markdown=False):
+def render_report(rows, endpoints, unresolved, changed_count, markdown=False):
     if markdown:
-        return _render_markdown(rows, unresolved, changed_count)
-    return _render_ascii(rows, unresolved, changed_count)
+        return _render_markdown(rows, endpoints, unresolved, changed_count)
+    return _render_ascii(rows, endpoints, unresolved, changed_count)
 
 
 def interactive_tty():

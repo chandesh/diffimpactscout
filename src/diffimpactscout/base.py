@@ -34,7 +34,8 @@ the `HEAD` tree. Consequences:
 
 Sprint branch resolution:
 
-In sprint-based development models (e.g. Contify) work is branched from active
+In sprint-based development models (e.g. custom in-house platforms) work is
+branched from active
 sprint branches such as `refs/remotes/upstream/sprint/33.1` rather than from
 `master`. The resolver inspects `refs/remotes/upstream/master` plus the top
 `DEFAULT_MAX_SPRINT_CANDIDATES` (5) most recent sprint branches sorted by

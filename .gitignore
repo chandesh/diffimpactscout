@@ -10,5 +10,6 @@ dist/
 .idea/
 .vscode/
 .ruff_cache/
+.planning/
 *.md
 !README.md

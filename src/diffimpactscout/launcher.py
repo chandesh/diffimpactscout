@@ -44,7 +44,7 @@ def _hook_path(root):
 _ZERO_OID = "0000000000000000000000000000000000000000"
 
 
-def hook_body(executable):
+def hook_body(executable, command="guard"):
     quoted = _sh_single_quote(executable)
     return (
         "#!/bin/sh\n"
@@ -59,14 +59,14 @@ def hook_body(executable):
         + "  fi\n"
         + "fi\n"
         + "if command -v diffimpactscout >/dev/null 2>&1 && diffimpactscout --version >/dev/null 2>&1; then\n"
-        + "  exec diffimpactscout guard\n"
+        + "  exec diffimpactscout %s\n"
         + "elif [ -x %s ]; then\n"
-        + "  exec %s -m diffimpactscout guard\n"
+        + "  exec %s -m diffimpactscout %s\n"
         + "else\n"
-        + "  echo \"diffimpactscout: pre-push guard skipped (tool not found; install via 'pip install diffimpactscout' or activate your venv).\" >&2\n"
+        + "  echo \"diffimpactscout: pre-push check skipped (tool not found; install via 'pip install diffimpactscout' or activate your venv).\" >&2\n"
         + "  exit 0\n"
         + "fi\n"
-    ) % (_ZERO_OID, _ZERO_OID, quoted, quoted)
+    ) % (_ZERO_OID, _ZERO_OID, command, quoted, quoted, command)
 
 
 def hook_installed(root):
@@ -77,7 +77,7 @@ def hook_installed(root):
         return MARKER in fh.read()
 
 
-def install_hook(root, force=False):
+def install_hook(root, force=False, command=None):
     directory = _hooks_dir(root)
     path = os.path.join(directory, HOOK_NAME)
     if os.path.isfile(path):
@@ -90,8 +90,10 @@ def install_hook(root, force=False):
             return False
     if not os.path.isdir(directory):
         os.makedirs(directory)
+    if command is None:
+        command = "guard"
     with open(path, "w") as fh:
-        fh.write(hook_body(sys.executable))
+        fh.write(hook_body(sys.executable, command))
     os.chmod(path, 0o755)
     return True
 

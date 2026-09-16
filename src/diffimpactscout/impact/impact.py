@@ -278,6 +278,8 @@ def _usage_index(analyses):
 def _hop_callers(index, name, mods, weak):
     callers = {}
     for path, analysis, u in index.get(name, []):
+        if u.get("kind") == "attr" and not u.get("base"):
+            continue
         if not pa._usage_resolves(analysis, u, name, mods, path, weak):
             continue
         ctx = u.get("ctx_qname") or ""

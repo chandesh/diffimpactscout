@@ -49,11 +49,11 @@ diffimpactscout guard
 # 3. Analyze the blast radius of your change
 diffimpactscout impact
 
-# 4. Run the guard automatically on every push
+# 4. Install the pre-push hook (guard + impact report by default)
 diffimpactscout install-hooks
 ```
 
-`init` accepts `--profile generic|django|fastapi|python|frontend` to seed profile-appropriate settings. `install-hooks` detects the stack automatically (see [Supported setups](#supported-setups)).
+`init` accepts `--profile generic|django|fastapi|python|frontend` to seed profile-appropriate settings. `install-hooks` detects the stack automatically (see [Supported setups](#supported-setups)) and, unless the config's `mode` says otherwise, the hook runs both the guard and the impact report on every push.
 
 ## Supported setups
 
@@ -103,15 +103,29 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 | `--fast` | Skip template and frontend scanning; limit Python scanning to the changed files plus import-linked files. |
 | `--json` | Emit the report as JSON (`{changed_count, rows, unresolved}`) instead of a markdown table. |
 
+### `diffimpactscout guard-and-impact-check`
+
+Runs the `guard` checks first; when they pass cleanly, falls through to the `impact` blast-radius report. This is the default pre-push hook scope, so one push runs the whole workflow. When shift guards are in strict mode and fail, the command stops before impact analysis.
+
+| Flag | Description |
+| --- | --- |
+| `--staged` | Restrict both the guard and the impact analysis to staged files. |
+| `--fast` | Passes through to `impact` (skip template/frontend scanning). |
+| `--json` | Passes through to `impact` (emit the report as JSON). |
+
+### `diffimpactscout dependency-check`
+
+Verifies that every external tool referenced by the configured guard checks is on `PATH` (`ruff`, `eslint`, `prettier`). Missing tools print an install hint and exit `1`; a clean run prints an OK banner and exits `0`. `install-hooks` also runs a non-blocking version of this check after installing a hook, warning about missing tools only when stdin is a terminal.
+
 ### `diffimpactscout check CHECK_ID [files...]`
 
 Runs a single check by id (see [Checks reference](#checks-reference)). With no file arguments it runs against the change-set.
 
 ### `diffimpactscout install-hooks`
 
-Installs a `pre-push` git hook that runs `diffimpactscout guard` on push.
+Installs a `pre-push` git hook that runs the configured hook scope on push: `diffimpactscout guard-and-impact-check` by default (guard checks then the impact blast-radius report), or `diffimpactscout guard` when `mode` is `pre-push`.
 
-On first run the command detects the stack, prints a preview of the `.diffimpactscout.json` it would write, and (when stdin is a terminal) asks for confirmation. Answer `n` to override profile, blocking mode, extra checks, and impact. Use `--yes` in CI to skip prompts, `--profile` and `--blocking` to pre-select settings, and `--reconfigure` to rewrite an existing config. Without `--reconfigure` an existing config is left untouched.
+On first run the command detects the stack, prints a preview of the `.diffimpactscout.json` it would write, and (when stdin is a terminal) asks for confirmation. Answer `n` to override profile, blocking mode, extra checks, impact, and the hook scope (mode). Use `--yes` in CI to skip prompts, `--profile` and `--blocking` to pre-select settings, and `--reconfigure` to rewrite an existing config. Without `--reconfigure` an existing config is left untouched (and its mode is reused for the hook).
 
 | Flag | Description |
 | --- | --- |
@@ -121,6 +135,8 @@ On first run the command detects the stack, prints a preview of the `.diffimpact
 | `--reconfigure` | Rewrite an existing `.diffimpactscout.json`. |
 | `--force` | Overwrite an existing `pre-push` hook that DiffImpactScout did not install. |
 | `--uninstall` | Remove the DiffImpactScout `pre-push` hook. |
+
+After a hook is installed a non-blocking dependency check runs: tools referenced by the guard checks (`ruff`, `eslint`, `prettier`) that are missing on `PATH` are reported with install hints, so e.g. a first-time `ruff` install is prompted instead of silently degrading the checks.
 
 ### `diffimpactscout --version`
 
@@ -133,7 +149,7 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
 ```json
 {
   "version": 1,
-  "mode": "pre-push",
+  "mode": "guard-and-impact-check",
   "ignore_paths": [
     "**/node_modules/**",
     "**/venv/**",
@@ -172,6 +188,7 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
 
 | Section | Key | Meaning |
 | --- | --- | --- |
+| top-level | `mode` | Hook scope: `guard-and-impact-check` (default, runs the guard then the impact report on every push) or `pre-push` (guard only). |
 | top-level | `ignore_paths` | Glob patterns (matching any path suffix) excluded from all checks and from impact scanning. |
 | top-level | `use_gitignore` | When `true`, also excludes paths ignored by `git check-ignore`. |
 | `guard` | `checks` | Ordered list of check entries; each `{"id": ...}` may add `args`, `blocking`, and `always_block` overrides. |
@@ -209,12 +226,12 @@ External checks run `command` (each `{file}` placeholder is replaced with the fi
 
 ## Pre-push hook
 
-`diffimpactscout install-hooks` writes a `pre-push` hook that runs `diffimpactscout guard` on every push.
+`diffimpactscout install-hooks` writes a `pre-push` hook that runs the configured hook scope on every push — `guard-and-impact-check` by default (guard checks plus the impact report), `guard` only when `mode` is `pre-push`.
 
 - The hook directory is resolved from `git rev-parse --git-common-dir` and honors `core.hooksPath`.
 - The hook script is marked with `# diffimpactscout pre-push hook`. On `--uninstall` (or a re-install with `--force`), only a hook carrying this marker is touched.
 - If a `pre-push` hook already exists without the marker, installation refuses with a `use --force to overwrite` message.
-- The hook runs `diffimpactscout guard`; if the tool is not found, it prints a notice and exits `0`, so pushes are never blocked by a missing install.
+- If the tool is not found, the hook prints a notice and exits `0`, so pushes are never blocked by a missing install.
 - Because the guard is warn-by-default, an installed hook reports issues without blocking the push unless you enable strict mode.
 
 ### Environment variables
@@ -231,7 +248,7 @@ External checks run `command` (each `{file}` placeholder is replaced with the fi
 The `impact` command answers: if I push these changes, what else could break?
 
 1. It parses the change-set (`git diff --find-renames`) and extracts the Python entities you added, removed, or renamed: classes, functions, methods, module fields, and class fields.
-2. It builds an AST symbol map of every tracked Python file in the repo (skipping excluded paths), cached in `impact.cache_file`, and finds every reference to the changed symbols. Lookup kind follows the entity: class fields match attribute loads, methods match name and attribute loads, functions/classes also match imports.
+2. It builds an AST symbol map of every tracked Python file in the repo (skipping excluded paths), cached in `impact.cache_file`, and finds every reference to the changed symbols. Lookup kind follows the entity: class fields match attribute loads, methods match name and attribute loads, functions/classes also match imports. To keep the blast radius honest, entities are scoped to the diff hunks that actually changed (a one-line tweak inside a large function does not report the whole function), and same-name references in other files are only reported when the file imports the name from the changed module (`views.orders` counts, a bare `orders` in an unrelated file does not).
 3. Depending on the profile it extracts routes:
    - `django`: `path()`/`re_path()`/`url()` entries in `urls_globs` that carry a `name=`.
    - `fastapi`: `get`/`post`/`put`/`delete`/`patch`/`options` decorators on `router`/`app`-style objects in `urls_globs`.

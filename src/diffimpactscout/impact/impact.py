@@ -207,26 +207,21 @@ def _compose_rows(
     routes = _routes(root, impact_cfg, profile, cfg)
     affected = _affected_routes(routes, analyses, entities, weak) if not fast else []
     template_refs, frontend_refs = _scoped_refs(root, impact_cfg, cfg, affected, fast)
-    template_matched, template_unresolved = route_linker.match_template_refs(
+    template_matched, _template_unresolved = route_linker.match_template_refs(
         template_refs, affected
     )
-    frontend_matched, frontend_unresolved = route_linker.match_endpoints(
+    frontend_matched, _frontend_unresolved = route_linker.match_endpoints(
         frontend_refs, affected
     )
-    unresolved = list(template_unresolved)
-    unresolved.extend(frontend_unresolved)
+    unresolved = []
     for hit in template_matched:
-        name = _handler_entity(hit.get("route"), entities)
-        if name is None:
-            continue
-        layers.setdefault(name, set()).add("template")
-        rows.append(_template_row(hit, name, entities[name]))
+        row = _linked_row(hit, entities, layers, "template", changed_paths)
+        if row is not None:
+            rows.append(row)
     for hit in frontend_matched:
-        name = _handler_entity(hit.get("route"), entities)
-        if name is None:
-            continue
-        layers.setdefault(name, set()).add("frontend")
-        rows.append(_frontend_row(hit, name, entities[name]))
+        row = _linked_row(hit, entities, layers, "frontend", changed_paths)
+        if row is not None:
+            rows.append(row)
     rows = _dedup_rows(rows)
     rows.sort(key=_row_key)
     for row in rows:
@@ -449,6 +444,29 @@ def _handler_entity(route, entities):
     if base in entities:
         return base
     return None
+
+
+def _linked_row(hit, entities, layers, category, changed_paths):
+    """Build a template/frontend row for a matched affected route.
+
+    Attributes the row to the route's handler (a changed entity or a function
+    reached through the caller closure) so consumers of transitively-affected
+    endpoints are surfaced, not silently dropped.
+    """
+    route = hit.get("route")
+    name = _handler_entity(route, entities)
+    if name is None:
+        handler = _handler_leaf(route.handler) if route else None
+        if not handler:
+            return None
+        name = handler
+        ent = {"kind": "function", "deleted": False}
+    else:
+        ent = entities[name]
+    layers.setdefault(name, set()).add(category)
+    if category == "template":
+        return _template_row(hit, name, ent)
+    return _frontend_row(hit, name, ent)
 
 
 def _routes(root, impact_cfg, profile, cfg=None):

@@ -441,8 +441,7 @@ def test_run_impact_json_output(tmp_path, capsys):
     assert all("reason" in r for r in data["rows"])
     assert any(r["category"] == "template" for r in data["rows"])
     assert any(r["category"] == "frontend" for r in data["rows"])
-    unresolved_paths = [u.get("path") for u in data["unresolved"]]
-    assert "/api/v1/dynamic/" in unresolved_paths
+    assert data["unresolved"] == []
 
 
 def test_run_impact_strict_blocks(tmp_path, monkeypatch, capsys):
@@ -468,16 +467,15 @@ def test_run_impact_skip_env_returns_zero_no_output(tmp_path, monkeypatch, capsy
     assert captured.err == ""
 
 
-def test_run_impact_unresolved_dynamic_not_false_matched(tmp_path, capsys):
-    """Verifies that unresolved dynamic references are reported without false matches."""
+def test_run_impact_dynamic_refs_not_reported(tmp_path, capsys):
+    """Verifies that dynamic refs are dropped and unresolved stays noise-free."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "Unresolved references (manual check required)" in out
-    assert "/api/v1/dynamic/" in out
-    assert 'http.get("/api/v1/dynamic/")' not in out
+    assert "Unresolved references (manual check required)" not in out
+    assert "http.get(\"/api/v1/dynamic/\")" not in out
 
 
 def test_run_impact_cache_skips_reparse_on_second_run(tmp_path, monkeypatch):

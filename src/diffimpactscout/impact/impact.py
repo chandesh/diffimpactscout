@@ -368,7 +368,7 @@ def _scoped_refs(root, impact_cfg, cfg, affected, fast):
         return [], []
     names = {r.name for r in affected if r.name}
     template_refs = route_linker.extract_template_refs(
-        root, impact_cfg.get("template_globs"), cfg=cfg, names=names or None
+        root, impact_cfg.get("template_globs"), cfg=cfg, names=names
     )
     needles = [_norm_needle(r.full or r.path) for r in affected]
     needles = [n for n in needles if n]

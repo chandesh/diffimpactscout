@@ -339,13 +339,13 @@ def extract_django_routes(root, urls_globs, cfg=None):
             func = node.func
             if not isinstance(func, ast.Name) or func.id not in ("path", "re_path", "url"):
                 continue
-            if not _call_has_kwarg(node, "name"):
-                continue
             path_val = _str_value(node.args[0]) if node.args else None
             if path_val is None:
                 continue
-            name_val = _str_value(_call_kwarg_value(node, "name"))
             handler = _handler_name(node)
+            if handler is None or handler == "include":
+                continue
+            name_val = _str_value(_call_kwarg_value(node, "name"))
             if func.id == "path":
                 composed = ppath + path_val
                 routes.append(

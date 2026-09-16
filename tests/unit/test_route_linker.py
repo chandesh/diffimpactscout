@@ -445,6 +445,24 @@ def test_extract_django_routes_composes_include_prefix(tmp_path):
     assert len(matched2) == 1
 
 
+def test_extract_django_routes_unnamed_path(tmp_path):
+    """Verifies that routes without a name= kwarg are captured, includes skipped."""
+    _write(
+        str(tmp_path),
+        "app/urls.py",
+        "from django.urls import path, include\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    path('intel/', views.generate_intel_details),\n"
+        "    path('api/', include('other.urls')),\n"
+        "]\n",
+    )
+    routes = rl.extract_django_routes(str(tmp_path), ["**/urls.py"])
+    names = [(r.path, r.handler, r.name) for r in routes]
+    assert ("intel/", "generate_intel_details", None) in names
+    assert not any(h == "include" for _p, h, _n in names)
+
+
 def test_route_class():
     """Verifies that the Route class stores name, path, handler, and module."""
     r = Route("order-list", "orders/", "OrderList.as_view", "urls.py")

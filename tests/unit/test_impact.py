@@ -345,11 +345,11 @@ def test_run_impact_cross_layer_report(tmp_path, capsys):
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
     assert (
-        "{% url 'order-list' %} at app/templates/orders.html" in out
+        "{% url 'order-list' %}" in out
     )
-    assert 'http.get("/api/v1/orders/") at src/orders.service.ts:2' in out
+    assert 'http.get("/api/v1/orders/") at 2' in out
     assert "template" in out
     assert "frontend" in out
     assert "High" in out
@@ -365,7 +365,7 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "status (attr at app/views.py:2)" in out
+    assert "status (attr at 2)" in out
     assert "Medium" in out
     assert "verify" in out
     assert "referenced from a file outside the change-set" in out
@@ -380,8 +380,8 @@ def test_run_impact_deleted_function(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert "verify dangling references" in out
-    assert "legacy_helper (import at app/service.py:1)" in out
-    assert "legacy_helper (name at app/service.py:4)" in out
+    assert "legacy_helper (import at 1)" in out
+    assert "legacy_helper (name at 4)" in out
     assert "High" in out
     assert "Severity rationale" in out
     assert "deleted or renamed" in out
@@ -503,7 +503,7 @@ def test_run_impact_fast_mode(tmp_path, capsys):
     assert impact.run_impact(repo, cfg, fast=True) == 0
     captured = capsys.readouterr()
     assert "fast mode" in captured.err
-    assert "orders (attr at app/urls.py:5)" in captured.out
+    assert "orders (attr at 5)" in captured.out
     assert not any(c in captured.out for c in ("template", "frontend"))
 
 
@@ -515,7 +515,7 @@ def test_run_impact_pre_commit_env_range(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("PRE_COMMIT_TO_REF", head)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
 
 
 def test_run_impact_env_refs_yield_to_resolved_anchor(tmp_path, monkeypatch, capsys):
@@ -542,7 +542,7 @@ def test_run_impact_env_refs_yield_to_resolved_anchor(tmp_path, monkeypatch, cap
     monkeypatch.setenv("PRE_COMMIT_TO_REF", head)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
     assert "2 changed file(s)" in out
 
 
@@ -561,7 +561,7 @@ def test_run_impact_staged(tmp_path, capsys):
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg, staged=True) == 0
     out = capsys.readouterr().out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
     assert "{% url 'order-list' %}" in out
 
 
@@ -581,7 +581,7 @@ def test_run_impact_django_cbv_linked(tmp_path, capsys):
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "{% url 'order-list' %} at app/templates/orders.html" in out
+    assert "{% url 'order-list' %}" in out
     assert _count_category(out, "template") == 1
     assert "OrderList" in out
 
@@ -600,7 +600,7 @@ def test_run_impact_frontend_same_line_dedup(tmp_path, capsys):
         line
         for line in out.splitlines()
         if re.match(r"^\s+\d+\s", line)
-        and 'http.get("/api/v1/orders/") at src/orders.service.ts:2' in line
+        and 'http.get("/api/v1/orders/") at 2' in line
     ]
     assert len(table_rows) == 1
 
@@ -613,8 +613,8 @@ def test_run_impact_frontend_duplicate_calls_distinct_lines(tmp_path, capsys):
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
     assert _count_category(out, "frontend") == 2
-    assert 'http.get("/api/v1/orders/") at src/orders.service.ts:2' in out
-    assert 'http.get("/api/v1/orders/") at src/orders.service.ts:4' in out
+    assert 'http.get("/api/v1/orders/") at 2' in out
+    assert 'http.get("/api/v1/orders/") at 4' in out
 
 
 def test_run_impact_frontend_rows_monotonic(tmp_path, capsys):
@@ -630,7 +630,7 @@ def test_run_impact_frontend_rows_monotonic(tmp_path, capsys):
     after_out = capsys.readouterr().out
     after = _count_category(after_out, "frontend")
     assert after == before + 1
-    assert 'http.get("/api/v1/orders/") at src/orders.service.ts:3' in after_out
+    assert 'http.get("/api/v1/orders/") at 3' in after_out
 
 
 def test_run_impact_template_duplicate_tag_dedup(tmp_path, capsys):
@@ -708,8 +708,8 @@ def test_run_impact_rename_only(tmp_path, capsys):
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "old_helper (import at app/service.py:1)" in out
-    assert "old_helper (name at app/service.py:4)" in out
+    assert "old_helper (import at 1)" in out
+    assert "old_helper (name at 4)" in out
     assert "High" in out
 
 

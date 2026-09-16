@@ -400,7 +400,7 @@ def _python_row(hit, name, ent):
         "path": path,
         "module": ctx if ctx else _dir_of(path),
         "category": "python",
-        "ref": "%s (%s at %s:%d)" % (hit.get("name"), hit.get("how"), path, hit.get("line", 0)),
+        "ref": "%s (%s at %d)" % (hit.get("name"), hit.get("how"), hit.get("line", 0)),
         "_entity": name,
         "_deleted": bool(ent.get("deleted")),
     }
@@ -412,7 +412,7 @@ def _template_row(hit, name, ent):
         "path": path,
         "module": _dir_of(path),
         "category": "template",
-        "ref": "{%% url '%s' %%} at %s" % (hit.get("ref"), path),
+        "ref": "{%% url '%s' %%}" % (hit.get("ref"),),
         "_entity": name,
         "_deleted": bool(ent.get("deleted")),
     }
@@ -426,7 +426,7 @@ def _frontend_row(hit, name, ent):
         "path": path,
         "module": _dir_of(path),
         "category": "frontend",
-        "ref": 'http.%s("%s") at %s:%d' % (method, hit.get("ref"), path, line),
+        "ref": 'http.%s("%s") at %d' % (method, hit.get("ref"), line),
         "_entity": name,
         "_deleted": bool(ent.get("deleted")),
     }

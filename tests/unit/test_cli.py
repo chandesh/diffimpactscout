@@ -275,7 +275,7 @@ def test_impact_non_tty_returns_zero(tmp_path, capsys, monkeypatch):
     assert cli.main(["impact"]) == 0
     out = capsys.readouterr().out
     assert "Impact Analysis Report" in out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
 
 
 def test_impact_strict_returns_one(tmp_path, capsys, monkeypatch):
@@ -338,7 +338,7 @@ def test_guard_and_impact_check_runs_impact_after_guard(tmp_path, capsys, monkey
     assert cli.main(["guard-and-impact-check"]) == 0
     out = capsys.readouterr().out
     assert "Impact Analysis Report" in out
-    assert "orders (attr at app/urls.py:5)" in out
+    assert "orders (attr at 5)" in out
 
 
 def test_guard_and_impact_check_still_reports_impact_when_guard_fails(tmp_path, capsys, monkeypatch):

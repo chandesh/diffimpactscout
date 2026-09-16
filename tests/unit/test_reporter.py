@@ -129,7 +129,7 @@ def _rows_with_reason():
             "path": "apps/orders/views.py",
             "module": "apps.orders",
             "category": "python",
-            "ref": "OrderList (import at apps/orders/urls.py:6)",
+            "ref": "OrderList (import at 6)",
             "severity": "High",
             "action": "verify dangling references",
             "reason": "symbol was deleted or renamed in this change-set",
@@ -261,7 +261,7 @@ def test_render_report_no_redundant_findings_block():
             "path": "app/views/order.py",
             "module": "app/views",
             "category": "template",
-            "ref": "{% url 'order-detail' %} at app/templates/orders.html:14",
+            "ref": "{% url 'order-detail' %} at 14",
             "severity": "High",
             "action": "review/verify",
         }

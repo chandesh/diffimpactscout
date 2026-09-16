@@ -6,6 +6,7 @@ import os
 import sys
 
 import diffimpactscout.config as config
+import diffimpactscout.dependency_check as dependency_check
 import diffimpactscout.detect as detect
 import diffimpactscout.env as env
 import diffimpactscout.gitrun as gitrun
@@ -53,6 +54,20 @@ def _parser():
     )
     p_impact.set_defaults(func=_cmd_impact)
 
+    p_guard_impact = sub.add_parser(
+        "guard-and-impact-check",
+        help="run guard checks then the impact blast-radius report (full pre-push pipeline)",
+    )
+    p_guard_impact.add_argument("--staged", action="store_true")
+    p_guard_impact.add_argument("--fast", action="store_true")
+    p_guard_impact.add_argument("--json", action="store_true")
+    p_guard_impact.add_argument(
+        "--markdown",
+        action="store_true",
+        help="emit a Markdown table instead of the plain ASCII table",
+    )
+    p_guard_impact.set_defaults(func=_cmd_guard_and_analyse_impact)
+
     p_check = sub.add_parser(
         "check", help="run a single check by id against files or the change-set"
     )
@@ -92,6 +107,12 @@ def _parser():
         help="rewrite an existing .diffimpactscout.json",
     )
     p_hooks.set_defaults(func=_cmd_install_hooks)
+
+    p_dep = sub.add_parser(
+        "dependency-check",
+        help="verify the external tools referenced by the config are installed",
+    )
+    p_dep.set_defaults(func=_cmd_dependency_check)
 
     return parser
 
@@ -155,6 +176,36 @@ def _cmd_impact(args):
         json_out=args.json,
         markdown=args.markdown,
     )
+
+
+def _cmd_guard_and_analyse_impact(args):
+    root = _require_repo()
+    if root is None:
+        return 1
+    cfg = config.load_config(root)
+    guard_rc = guard.run_guard(
+        root,
+        cfg,
+        staged=args.staged,
+    )
+    if guard_rc != 0:
+        return guard_rc
+    return impact_module.run_impact(
+        root,
+        cfg,
+        staged=args.staged,
+        fast=args.fast,
+        json_out=args.json,
+        markdown=args.markdown,
+    )
+
+
+def _cmd_dependency_check(args):
+    root = _require_repo()
+    if root is None:
+        return 1
+    cfg = config.load_config(root)
+    return dependency_check.run_dependency_check(root, cfg)
 
 
 def _cmd_check(args):
@@ -263,6 +314,21 @@ def _prompt_blocking(default):
     return default
 
 
+def _prompt_mode(default):
+    sys.stdout.write(
+        "Push hook scope: guard-and-impact-check (recommended: guard checks + "
+        "impact blast-radius report) or pre-push (guard checks only)? "
+        "[guard-and-impact-check/Pre-push] (default: %s): " % default
+    )
+    sys.stdout.flush()
+    answer = _read_answer()
+    if answer in ("guard-and-impact-check", "g"):
+        return config.MODE_GUARD_AND_IMPACT
+    if answer in ("pre-push", "p"):
+        return config.MODE_PRE_PUSH
+    return default
+
+
 def _check_id(entry):
     if isinstance(entry, dict):
         return entry.get("id", "?")
@@ -284,6 +350,14 @@ def _render_preview(detected, cfg):
     checks = cfg["guard"]["checks"]
     impact_on = profile != config.DEFAULT_PROFILE
     blocking = cfg["guard"].get("blocking", "warn")
+    mode = cfg.get("mode") or config.DEFAULT_MODE
+    if mode not in (config.MODE_PRE_PUSH, config.MODE_GUARD_AND_IMPACT):
+        mode = config.DEFAULT_MODE
+    hook_command = (
+        config.MODE_GUARD_AND_IMPACT
+        if mode == config.MODE_GUARD_AND_IMPACT
+        else "guard"
+    )
     lines = []
     if detected == profile:
         lines.append("detected framework: %s" % detected)
@@ -291,13 +365,15 @@ def _render_preview(detected, cfg):
     lines.append("diffimpactscout will write .diffimpactscout.json")
     lines.append("  profile   : %s" % profile)
     lines.append("  blocking  : %s" % blocking)
+    lines.append("  mode      : %s" % mode)
     lines.append("  impact    : %s" % ("on" if impact_on else "off"))
     lines.append("  checks    : %d" % len(checks))
     for entry in checks:
         lines.append("    - %s" % _check_id(entry))
     lines.append("")
     lines.append(
-        "  then installs the pre-push hook -> runs `diffimpactscout guard` on each push."
+        "  then installs the pre-push hook -> runs `diffimpactscout %s` on each push."
+        % hook_command
     )
     lines.append("")
     return "\n".join(lines)
@@ -321,6 +397,7 @@ def _build_config_data(profile, args):
     data = config._deep_merge(data, config.load_profile(profile))
     if args.blocking:
         data["guard"]["blocking"] = args.blocking
+    data["mode"] = data.get("mode") or config.DEFAULT_MODE
     return data
 
 
@@ -371,6 +448,7 @@ def _ask_overrides(data, args):
             config._defaults(), config.load_profile("generic")
         )
         data["impact"] = generic["impact"]
+    data["mode"] = _prompt_mode(data.get("mode") or config.DEFAULT_MODE)
 
 
 def _cmd_install_hooks(args):
@@ -390,6 +468,7 @@ def _cmd_install_hooks(args):
         else:
             print("nothing to remove")
         return 0
+    data = None
     cfg_path = os.path.join(root, config.CFG_NAME)
     has_config = os.path.exists(cfg_path)
     proceed = True
@@ -422,8 +501,20 @@ def _cmd_install_hooks(args):
     if not proceed:
         print("diffimpactscout: setup skipped; no changes made")
         return 0
+    mode = None
+    if has_config and not args.reconfigure:
+        existing = config._read_user(root)
+        if existing and isinstance(existing.get("mode"), str):
+            mode = existing["mode"]
+    if mode is None:
+        mode = (data or {}).get("mode") or config.DEFAULT_MODE
+    command = (
+        config.MODE_GUARD_AND_IMPACT
+        if mode == config.MODE_GUARD_AND_IMPACT
+        else "guard"
+    )
     try:
-        installed = launcher.install_hook(root, force=args.force)
+        installed = launcher.install_hook(root, force=args.force, command=command)
     except OSError as exc:
         sys.stderr.write(
             "diffimpactscout: cannot install pre-push hook: %s\n" % exc
@@ -432,4 +523,6 @@ def _cmd_install_hooks(args):
     if not installed:
         return 1
     print("pre-push hook installed")
+    effective = config.load_config(root)
+    dependency_check.report_missing(effective)
     return 0

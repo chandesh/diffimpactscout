@@ -88,6 +88,14 @@ def test_hook_body_escapes_quote_in_executable():
     assert "-x '/venv'\"'\"'x/bin/python'" in body
 
 
+def test_hook_body_custom_command():
+    """Checks that the hook body invokes a custom subcommand when given."""
+    body = launcher.hook_body("/venv/bin/python", command="guard-and-impact-check")
+    assert "diffimpactscout guard-and-impact-check" in body
+    assert "exec '/venv/bin/python' -m diffimpactscout guard-and-impact-check" in body
+    assert "diffimpactscout guard\n" not in body
+
+
 LOCAL_OID = "1111111111111111111111111111111111111111"
 REMOTE_OID = "2222222222222222222222222222222222222222"
 ZERO_OID = "0" * 40
@@ -231,6 +239,16 @@ def test_install_creates_hook_with_exec_bit_and_recorded_python(tmp_path):
     assert sys.executable in body
     path = os.path.join(root, ".git", "hooks", "pre-push")
     assert os.stat(path).st_mode & stat.S_IXUSR
+
+
+def test_install_hook_custom_command(tmp_path):
+    """Verifies that install writes the hook with a custom subcommand."""
+    root = str(tmp_path / "repo")
+    os.makedirs(root)
+    assert launcher.install_hook(root, command="guard-and-impact-check") is True
+    body = _read_hook(root)
+    assert "diffimpactscout guard-and-impact-check" in body
+    assert "exec '%s' -m diffimpactscout guard-and-impact-check" % sys.executable in body
 
 
 def test_reinstall_over_own_hook_ok(tmp_path):

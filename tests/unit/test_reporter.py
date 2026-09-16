@@ -23,6 +23,15 @@ ROWS = [
 ]
 
 
+def test_split_token_keeps_slash_on_wrapped_path_lines():
+    """Verifies wrapped path lines keep a trailing slash so the path reads continuous."""
+    token = "apps/orders/cart/checkout/views.py"
+    lines = reporter._split_token(token, 18)
+    assert lines == ["apps/orders/cart/", "checkout/views.py"]
+    assert all(len(l) <= 18 for l in lines)
+    assert all(l.endswith("/") for l in lines[:-1])
+
+
 def test_classify_severity_cross_layer_is_high():
     """Verifies that references spanning multiple layers are classified High."""
     assert (

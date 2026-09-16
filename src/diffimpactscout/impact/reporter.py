@@ -124,7 +124,12 @@ def _split_token(token, width):
                 cur = part
         if cur:
             out.append(cur)
-        return out
+        result = []
+        for i, line in enumerate(out):
+            if i < len(out) - 1 and "/" in line and len(line) < width:
+                line = line + "/"
+            result.extend([line[j : j + width] for j in range(0, len(line), width)])
+        return result
     return [token[i : i + width] for i in range(0, len(token), width)]
 
 

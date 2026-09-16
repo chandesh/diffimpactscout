@@ -105,7 +105,7 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 
 ### `diffimpactscout guard-and-impact-check`
 
-Runs the `guard` checks first; when they pass cleanly, falls through to the `impact` blast-radius report. This is the default pre-push hook scope, so one push runs the whole workflow. When shift guards are in strict mode and fail, the command stops before impact analysis.
+Runs the `guard` checks first, then always falls through to the `impact` blast-radius report so the developer sees the guard verdict and the affected areas together. This is the default pre-push hook scope, so one push runs the whole workflow. The command exits non-zero when the guard blocks in strict mode (or when impact is set to block), so a failing guard still surfaces the impact report but the push is rejected.
 
 | Flag | Description |
 | --- | --- |

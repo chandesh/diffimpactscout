@@ -341,13 +341,13 @@ def test_guard_and_impact_check_runs_impact_after_guard(tmp_path, capsys, monkey
     assert "orders (attr at app/urls.py:5)" in out
 
 
-def test_guard_and_impact_check_stops_when_guard_fails(tmp_path, capsys, monkeypatch):
-    """Verifies that a failing guard aborts before impact analysis runs."""
+def test_guard_and_impact_check_still_reports_impact_when_guard_fails(tmp_path, capsys, monkeypatch):
+    """Verifies that a failing guard still shows the impact report but blocks."""
     repo = _json_repo(tmp_path)
     monkeypatch.setenv("IMPACT_CHECK_STRICT", "1")
     monkeypatch.chdir(repo)
     assert cli.main(["guard-and-impact-check"]) == 1
-    assert "Impact Analysis Report" not in capsys.readouterr().out
+    assert "Impact Analysis Report" in capsys.readouterr().out
 
 
 def test_guard_and_impact_check_dispatches_flags(tmp_path, monkeypatch):

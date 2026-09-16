@@ -188,9 +188,7 @@ def _cmd_guard_and_analyse_impact(args):
         cfg,
         staged=args.staged,
     )
-    if guard_rc != 0:
-        return guard_rc
-    return impact_module.run_impact(
+    impact_rc = impact_module.run_impact(
         root,
         cfg,
         staged=args.staged,
@@ -198,6 +196,7 @@ def _cmd_guard_and_analyse_impact(args):
         json_out=args.json,
         markdown=args.markdown,
     )
+    return guard_rc if guard_rc != 0 else impact_rc
 
 
 def _cmd_dependency_check(args):

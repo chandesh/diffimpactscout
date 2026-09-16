@@ -74,8 +74,8 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     cache.prune(py_files)
     cache.save(cache.load())
     analyses = cache.load()
-    rows, unresolved = _compose_rows(
-        root, impact_cfg, profile, entities, analyses, changed_paths, fast
+    rows, endpoints, unresolved = _compose_rows(
+        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg
     )
     changed_count = len(changes)
     if json_out:
@@ -84,6 +84,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
                 {
                     "changed_count": changed_count,
                     "rows": rows,
+                    "endpoints": endpoints,
                     "unresolved": unresolved,
                 }
             )
@@ -91,7 +92,9 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         )
     else:
         sys.stdout.write(
-            reporter.render_report(rows, unresolved, changed_count, markdown=markdown)
+            reporter.render_report(
+                rows, endpoints, unresolved, changed_count, markdown=markdown
+            )
         )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")
     tty = reporter.interactive_tty()
@@ -175,7 +178,9 @@ def _entity_overlaps_changed(entity, changed_lines):
     return False
 
 
-def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, fast):
+def _compose_rows(
+    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None
+):
     rows = []
     layers = {}
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
@@ -183,6 +188,7 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
     weak_attr = [
         name for name, ent in entities.items() if ent.get("kind") == "class_field"
     ]
+    weak = set(weak_attr)
     for name, ent in entities.items():
         kinds = _ENTITY_KINDS.get(ent["kind"], _DEFAULT_KINDS)
         hits = pa.find_references(
@@ -198,22 +204,14 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
         for hit in hits:
             layers[name].add("python")
             rows.append(_python_row(hit, name, ent))
-    routes = _routes(root, impact_cfg, profile)
-    if fast:
-        template_refs = []
-        frontend_refs = []
-    else:
-        template_refs = route_linker.extract_template_refs(
-            root, impact_cfg.get("template_globs")
-        )
-        frontend_refs = route_linker.extract_frontend_refs(
-            root, impact_cfg.get("frontend_globs")
-        )
+    routes = _routes(root, impact_cfg, profile, cfg)
+    affected = _affected_routes(routes, analyses, entities, weak) if not fast else []
+    template_refs, frontend_refs = _scoped_refs(root, impact_cfg, cfg, affected, fast)
     template_matched, template_unresolved = route_linker.match_template_refs(
-        template_refs, routes
+        template_refs, affected
     )
     frontend_matched, frontend_unresolved = route_linker.match_endpoints(
-        frontend_refs, routes
+        frontend_refs, affected
     )
     unresolved = list(template_unresolved)
     unresolved.extend(frontend_unresolved)
@@ -233,15 +231,153 @@ def _compose_rows(root, impact_cfg, profile, entities, analyses, changed_paths, 
     rows.sort(key=_row_key)
     for row in rows:
         name = row.pop("_entity")
-        deleted = row.pop("_deleted")
+        delrow = row.pop("_deleted")
         row["severity"] = reporter.classify_severity(
-            layers.get(name) or (), deleted, changed_paths, row.get("path")
+            layers.get(name) or (), delrow, changed_paths, row.get("path")
         )
         row["reason"] = reporter.severity_reason(
-            layers.get(name) or (), deleted, changed_paths, row.get("path")
+            layers.get(name) or (), delrow, changed_paths, row.get("path")
         )
-        row["action"] = _action(row["severity"], deleted)
-    return rows, unresolved
+        row["action"] = _action(row["severity"], delrow)
+    endpoints = _endpoint_rows(affected)
+    return rows, endpoints, unresolved
+
+
+def _endpoint_rows(routes):
+    seen = set()
+    out = []
+    for r in routes:
+        key = r.full or r.path
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "url": r.full or r.path,
+                "handler": r.handler or "",
+                "name": r.name or "",
+                "module": r.module or "",
+            }
+        )
+    return out
+
+
+def _usage_index(analyses):
+    index = {}
+    for path, entry in (analyses or {}).items():
+        analysis = _peel(entry)
+        if not isinstance(analysis, dict):
+            continue
+        for u in analysis.get("usages") or []:
+            name = u.get("name")
+            if name:
+                index.setdefault(name, []).append((path, analysis, u))
+    return index
+
+
+def _hop_callers(index, name, mods, weak):
+    callers = {}
+    for path, analysis, u in index.get(name, []):
+        if not pa._usage_resolves(analysis, u, name, mods, path, weak):
+            continue
+        ctx = u.get("ctx_qname") or ""
+        if not ctx:
+            continue
+        fn = ctx.rsplit(".", 1)[-1]
+        callers.setdefault(fn, set()).add(_module_of(path))
+    return callers
+
+
+def _handler_leaf(handler):
+    if not handler:
+        return None
+    h = handler
+    if h.endswith("()"):
+        h = h[:-2]
+    if h.endswith(".as_view"):
+        h = h[: -len(".as_view")]
+    return h.rsplit(".", 1)[-1]
+
+
+def _route_binds_handler(urls_entry, handler, mods, path, weak):
+    if not mods:
+        return True
+    analysis = _peel(urls_entry)
+    if not isinstance(analysis, dict):
+        return True
+    for u in analysis.get("usages") or []:
+        if u.get("name") != handler:
+            continue
+        if pa._usage_resolves(analysis, u, handler, mods, path, weak):
+            return True
+    return False
+
+
+def _affected_routes(routes, analyses, entities, weak):
+    """Routes reachable from the change via a backward caller closure."""
+    if not routes:
+        return []
+    index = _usage_index(analyses)
+    reached = set(entities.keys())
+    func_mods = {name: ent.get("modules") or set() for name, ent in entities.items()}
+    queue = list(entities.keys())
+    max_nodes = 500
+    hops = 0
+    while queue and hops < 5 and len(reached) < max_nodes:
+        hops += 1
+        nxt = []
+        for name in queue:
+            mods = func_mods.get(name) or set()
+            if not mods:
+                continue
+            for caller, fmods in _hop_callers(index, name, mods, weak).items():
+                if caller in reached:
+                    continue
+                reached.add(caller)
+                func_mods.setdefault(caller, set()).update(fmods)
+                nxt.append(caller)
+        queue = nxt
+    affected = []
+    for route in routes:
+        handler = _handler_leaf(route.handler)
+        if not handler or handler not in func_mods:
+            continue
+        urls = analyses.get(route.module)
+        if _route_binds_handler(urls, handler, func_mods[handler], route.module, weak):
+            affected.append(route)
+    return affected
+
+
+def _norm_needle(full):
+    if not full:
+        return None
+    s = full.lstrip("^")
+    for marker in ("<", "{", "(?"):
+        idx = s.find(marker)
+        if idx != -1:
+            s = s[:idx]
+            break
+    s = s.lstrip("/").rstrip("$")
+    return s or None
+
+
+def _scoped_refs(root, impact_cfg, cfg, affected, fast):
+    if fast:
+        return [], []
+    names = {r.name for r in affected if r.name}
+    template_refs = route_linker.extract_template_refs(
+        root, impact_cfg.get("template_globs"), cfg=cfg, names=names or None
+    )
+    needles = [_norm_needle(r.full or r.path) for r in affected]
+    needles = [n for n in needles if n]
+    frontend_refs = route_linker.extract_frontend_refs(
+        root,
+        impact_cfg.get("frontend_globs"),
+        cfg=cfg,
+        vendor=True,
+        needles=needles or None,
+    )
+    return template_refs, frontend_refs
 
 
 def _dedup_rows(rows):
@@ -313,11 +449,15 @@ def _handler_entity(route, entities):
     return None
 
 
-def _routes(root, impact_cfg, profile):
+def _routes(root, impact_cfg, profile, cfg=None):
     if profile == "django":
-        return route_linker.extract_django_routes(root, impact_cfg.get("urls_globs"))
+        return route_linker.extract_django_routes(
+            root, impact_cfg.get("urls_globs"), cfg=cfg
+        )
     if profile == "fastapi":
-        return route_linker.extract_fastapi_routes(root, impact_cfg.get("urls_globs"))
+        return route_linker.extract_fastapi_routes(
+            root, impact_cfg.get("urls_globs"), cfg=cfg
+        )
     return []
 
 

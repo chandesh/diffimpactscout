@@ -101,7 +101,20 @@ def _ascii_table(rows):
     return header, body
 
 
-def _render_ascii(rows, unresolved, changed_count):
+def _endpoint_lines(endpoints):
+    lines = []
+    for i, ep in enumerate(endpoints or [], start=1):
+        url = ep.get("url") or ""
+        handler = ep.get("handler") or ""
+        name = ep.get("name") or ""
+        label = handler
+        if name:
+            label = "%s (%s)" % (handler, name)
+        lines.append("  %2d  %-55s %s" % (i, url, label))
+    return lines
+
+
+def _render_ascii(rows, endpoints, unresolved, changed_count):
     lines = []
     lines.append("=" * 70)
     lines.append("  Impact Analysis Report")
@@ -112,6 +125,10 @@ def _render_ascii(rows, unresolved, changed_count):
     lines.append(header)
     for line in body:
         lines.append(line)
+    if endpoints:
+        lines.append("")
+        lines.append("  Affected WebURL/API-URL endpoints:")
+        lines.extend(_endpoint_lines(endpoints))
     if unresolved:
         lines.append("")
         lines.append("  Unresolved references (manual check required):")
@@ -129,7 +146,7 @@ def _render_ascii(rows, unresolved, changed_count):
     return "\n".join(lines) + "\n"
 
 
-def _render_markdown(rows, unresolved, changed_count):
+def _render_markdown(rows, endpoints, unresolved, changed_count):
     lines = []
     lines.append("# Impact Analysis Report")
     lines.append("")
@@ -138,6 +155,13 @@ def _render_markdown(rows, unresolved, changed_count):
     for i, row in enumerate(rows or [], start=1):
         cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
         lines.append("| " + " | ".join(cells) + " |")
+    if endpoints:
+        lines.append("")
+        lines.append("## Affected WebURL/API-URL endpoints")
+        for ep in endpoints or []:
+            lines.append(
+                "- `%s` -> %s (%s)" % (ep.get("url") or "", ep.get("handler") or "", ep.get("name") or "")
+            )
     if unresolved:
         lines.append("")
         lines.append("## Unresolved references (manual check required)")
@@ -154,10 +178,10 @@ def _render_markdown(rows, unresolved, changed_count):
     return "\n".join(lines) + "\n"
 
 
-def render_report(rows, unresolved, changed_count, markdown=False):
+def render_report(rows, endpoints, unresolved, changed_count, markdown=False):
     if markdown:
-        return _render_markdown(rows, unresolved, changed_count)
-    return _render_ascii(rows, unresolved, changed_count)
+        return _render_markdown(rows, endpoints, unresolved, changed_count)
+    return _render_ascii(rows, endpoints, unresolved, changed_count)
 
 
 def interactive_tty():

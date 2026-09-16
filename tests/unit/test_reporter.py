@@ -148,7 +148,7 @@ def _rows_with_reason():
 
 def test_render_report_ascii_severity_rationale_section():
     """Verifies that the ASCII report lists a per-row severity rationale."""
-    out = reporter.render_report(_rows_with_reason(), [], 2)
+    out = reporter.render_report(_rows_with_reason(), [], [], 2)
     assert "Severity rationale" in out
     assert "1. High - apps/orders/views.py -> OrderList" in out
     assert "symbol was deleted or renamed in this change-set" in out
@@ -158,7 +158,7 @@ def test_render_report_ascii_severity_rationale_section():
 
 def test_render_report_markdown_severity_rationale_section():
     """Verifies that the markdown report includes a severity rationale section."""
-    out = reporter.render_report(_rows_with_reason(), [], 2, markdown=True)
+    out = reporter.render_report(_rows_with_reason(), [], [], 2, markdown=True)
     assert "## Severity rationale" in out
     assert "1. High - apps/orders/views.py -> OrderList" in out
     assert "symbol was deleted or renamed in this change-set" in out
@@ -167,15 +167,15 @@ def test_render_report_markdown_severity_rationale_section():
 
 def test_render_report_rationale_omitted_without_reason():
     """Verifies that the rationale section is omitted when rows carry no reason."""
-    out = reporter.render_report(ROWS, [], 2)
+    out = reporter.render_report(ROWS, [], [], 2)
     assert "Severity rationale" not in out
-    md = reporter.render_report(ROWS, [], 2, markdown=True)
+    md = reporter.render_report(ROWS, [], [], 2, markdown=True)
     assert "Severity rationale" not in md
 
 
 def test_render_report_header_exact():
     """Verifies that the rendered ASCII report includes the title banner."""
-    out = reporter.render_report([], [], 0)
+    out = reporter.render_report([], [], [], 0)
     lines = out.splitlines()
     assert lines[0] == "=" * 70
     assert "Impact Analysis Report" in lines[1]
@@ -183,7 +183,7 @@ def test_render_report_header_exact():
 
 def test_render_report_ascii_columns_aligned():
     """Verifies that ASCII rows are aligned and include the expected columns."""
-    out = reporter.render_report(ROWS, [], 2)
+    out = reporter.render_report(ROWS, [], [], 2)
     assert "apps/orders/views.py" in out
     assert "apps.orders" in out
     assert "OrderList" in out
@@ -192,7 +192,7 @@ def test_render_report_ascii_columns_aligned():
 
 def test_render_report_markdown_rows_numbered_and_columns():
     """Verifies that markdown rows are numbered and display the expected columns."""
-    out = reporter.render_report(ROWS, [], 2, markdown=True)
+    out = reporter.render_report(ROWS, [], [], 2, markdown=True)
     assert "| 1 | apps/orders/views.py | apps.orders | python | OrderList | High | Review & test |" in out
     assert "| 2 | templates/orders.html | orders | template | order-list | Medium | Verify template |" in out
 
@@ -209,7 +209,7 @@ def test_render_report_markdown_escapes_pipe_in_cell():
             "action": "Review",
         }
     ]
-    out = reporter.render_report(rows, [], 1, markdown=True)
+    out = reporter.render_report(rows, [], [], 1, markdown=True)
     line = [l for l in out.splitlines() if l.startswith("| ") and l.lstrip("| ")[0].isdigit()][0]
     assert "A \\| B" in line
     cells = [p.strip() for p in re.split(r"(?<!\\)\|", line) if p.strip()]
@@ -219,7 +219,7 @@ def test_render_report_markdown_escapes_pipe_in_cell():
 
 def test_render_report_row_numbering_is_sequential():
     """Verifies that report rows are numbered sequentially starting at one."""
-    out = reporter.render_report(ROWS, [], 2, markdown=True)
+    out = reporter.render_report(ROWS, [], [], 2, markdown=True)
     rows = [
         l
         for l in out.splitlines()
@@ -231,7 +231,7 @@ def test_render_report_row_numbering_is_sequential():
 
 def test_render_report_unresolved_section():
     """Verifies that unresolved references appear in a dedicated report section."""
-    out = reporter.render_report([], ["/api/v1/opaque/", "no-such-route"], 1)
+    out = reporter.render_report([], [], ["/api/v1/opaque/", "no-such-route"], 1)
     assert "Unresolved references (manual check required)" in out
     assert "/api/v1/opaque/" in out
     assert "no-such-route" in out
@@ -239,17 +239,17 @@ def test_render_report_unresolved_section():
 
 def test_render_report_unresolved_omitted_when_empty():
     """Verifies that the unresolved section is omitted when there are none."""
-    out = reporter.render_report([], [], 0)
+    out = reporter.render_report([], [], [], 0)
     assert "Unresolved references" not in out
 
 
 def test_render_report_summary_changed_count():
     """Verifies that the report summary shows the changed file count and severities."""
-    out = reporter.render_report(ROWS, [], 3)
+    out = reporter.render_report(ROWS, [], [], 3)
     assert "3 changed file(s)" in out
     assert "High: 1" in out
     assert "Medium: 1" in out
-    out = reporter.render_report(ROWS, [], 3, markdown=True)
+    out = reporter.render_report(ROWS, [], [], 3, markdown=True)
     assert "3 changed file(s)" in out
     assert "High: 1" in out
 
@@ -266,10 +266,10 @@ def test_render_report_no_redundant_findings_block():
             "action": "review/verify",
         }
     ]
-    out = reporter.render_report(rows, [], 1)
+    out = reporter.render_report(rows, [], [], 1)
     assert "[HIGH]" not in out
     assert "Findings" not in out
-    md = reporter.render_report(rows, [], 1, markdown=True)
+    md = reporter.render_report(rows, [], [], 1, markdown=True)
     assert "[HIGH]" not in md
     assert "Findings" not in md
 

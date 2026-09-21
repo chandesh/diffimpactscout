@@ -299,6 +299,8 @@ def _handler_leaf(handler):
 def _route_binds_handler(urls_entry, handler, mods, path, weak):
     if not mods:
         return True
+    if _module_of(path) in mods:
+        return True
     analysis = _peel(urls_entry)
     if not isinstance(analysis, dict):
         return True

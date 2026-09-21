@@ -320,7 +320,13 @@ def compose_url_prefixes(root, urls_globs, cfg=None):
         prefix_map[module] = (ppath, pregex)
         for inc_path, inc_regex, target in includes.get(module, []):
             if target in files and target not in prefix_map:
-                queue.append((target, ppath + (inc_path or ""), _concat_regex(pregex, inc_regex)))
+                if inc_path is not None:
+                    child_path = ppath + inc_path
+                    child_regex = _concat_regex(pregex, _route_regex_source(inc_path))
+                else:
+                    child_path = ppath + _literal_from_regex(inc_regex)
+                    child_regex = _concat_regex(pregex, inc_regex)
+                queue.append((target, child_path, child_regex))
     return prefix_map
 
 
@@ -347,27 +353,29 @@ def extract_django_routes(root, urls_globs, cfg=None):
                 continue
             name_val = _str_value(_call_kwarg_value(node, "name"))
             if func.id == "path":
-                composed = ppath + path_val
+                composed_path = ppath + path_val
+                composed_regex = _concat_regex(pregex, _route_regex_source(path_val))
                 routes.append(
                     Route(
                         name_val,
                         path_val,
                         handler,
                         posix,
-                        full=composed,
-                        regex=_route_regex(composed),
+                        full=composed_path,
+                        regex=_anchored_regex(composed_regex),
                     )
                 )
             else:
-                composed = _concat_regex(pregex, path_val)
+                composed_path = ppath + _literal_from_regex(path_val)
+                composed_regex = _concat_regex(pregex, path_val)
                 routes.append(
                     Route(
                         name_val,
                         path_val,
                         handler,
                         posix,
-                        full=composed,
-                        regex=_anchored_regex(composed),
+                        full=composed_path,
+                        regex=_anchored_regex(composed_regex),
                     )
                 )
     return routes
@@ -487,7 +495,7 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
     return refs
 
 
-def _route_regex(route_path):
+def _route_regex_source(route_path):
     parts = []
     i = 0
     n = len(route_path)
@@ -510,7 +518,27 @@ def _route_regex(route_path):
         else:
             parts.append(re.escape(ch))
             i += 1
-    return re.compile("^" + "".join(parts) + "$")
+    return "".join(parts)
+
+
+def _route_regex(route_path):
+    return re.compile("^" + _route_regex_source(route_path) + "$")
+
+
+def _literal_from_regex(source):
+    """Best-effort literal path for a regex prefix/route (strips ``^`` and ``$``).
+
+    Used to compose the human-readable ``full`` URL when a path prefix and a
+    regex prefix are mixed in the include chain; matching still uses ``regex``.
+    """
+    if not source:
+        return ""
+    s = source
+    if s.startswith("^"):
+        s = s[1:]
+    if s.endswith("$"):
+        s = s[:-1]
+    return s
 
 
 def _is_path_prefix(ref, route_path):

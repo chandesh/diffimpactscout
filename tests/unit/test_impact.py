@@ -11,6 +11,8 @@ import pytest
 import diffimpactscout.config as config
 import diffimpactscout.scope as scope
 from diffimpactscout.impact import impact
+from diffimpactscout.impact import python_analyzer as pa
+from diffimpactscout.impact import route_linker
 
 URLS = (
     "from django.urls import path\n"
@@ -173,6 +175,38 @@ DJANGO_CFG = {
     }
 }
 
+FASTAPI_CFG = {
+    "impact": {
+        "profile": "fastapi",
+        "urls_globs": ["**/*.py"],
+        "template_globs": [],
+        "frontend_globs": ["**/src/**/*.ts"],
+    }
+}
+
+FASTAPI_MAIN_BASE = (
+    "from fastapi import FastAPI\n"
+    "app = FastAPI()\n"
+    "\n"
+    "@app.get('/api/v1/orders/')\n"
+    "def read_orders():\n"
+    "    return []\n"
+)
+
+FASTAPI_MAIN_HEAD = (
+    "from fastapi import FastAPI\n"
+    "app = FastAPI()\n"
+    "\n"
+    "@app.get('/api/v1/orders/')\n"
+    "def read_orders():\n"
+    "    return ['orders']\n"
+)
+
+FASTAPI_TS = (
+    "import { HttpClient } from '@angular/common/http';\n"
+    "this.http.get('/api/v1/orders/');\n"
+)
+
 
 def _git_env(extra=None):
     env = dict(os.environ)
@@ -278,6 +312,19 @@ def _build_django_repo(tmp_path):
     base = _sha(repo)
     _write(repo, "app/views.py", VIEWS_HEAD)
     _commit(repo, "change views")
+    head = _sha(repo)
+    return repo, base, head
+
+
+def _build_fastapi_repo(tmp_path):
+    repo = _make_repo(tmp_path)
+    _write(repo, ".diffimpactscout.json", json.dumps(FASTAPI_CFG))
+    _write(repo, "main.py", FASTAPI_MAIN_BASE)
+    _write(repo, "src/orders.service.ts", FASTAPI_TS)
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(repo, "main.py", FASTAPI_MAIN_HEAD)
+    _commit(repo, "change handler")
     head = _sha(repo)
     return repo, base, head
 
@@ -775,3 +822,33 @@ def test_run_impact_fast_mode_excludes_unrelated(tmp_path, capsys):
         data = json.load(fh)
     assert "app/unrelated.py" not in data
     assert "node_modules/pkg/gadget.py" not in data
+
+def test_affected_routes_binds_fastapi_handler_by_decorator():
+    """Verifies a FastAPI handler bound only by its decorator marks its route affected.
+
+    FastAPI binds ``read_orders`` to ``@app.get(...)`` in the handler's own
+    module; the binding must not require a same-named usage, or ``affected``
+    (and its endpoints/template/frontend rows) is silently empty.
+    """
+    analysis = pa.analyze_source(FASTAPI_MAIN_BASE)
+    route = route_linker.Route(None, "/api/v1/orders/", "read_orders", "main.py")
+    analyses = {"main.py": analysis}
+    entities = {
+        "read_orders": {"kind": "function", "deleted": False, "modules": {"main"}}
+    }
+    affected = impact._affected_routes([route], analyses, entities, set())
+    assert [r.path for r in affected] == ["/api/v1/orders/"]
+
+
+def test_run_impact_fastapi_links_frontend_to_decorated_route(tmp_path, capsys):
+    """Verifies a changed FastAPI handler surfaces its frontend consumers."""
+    repo, base, _head = _build_fastapi_repo(tmp_path)
+    _anchor(repo, base)
+    cfg = config.load_config(repo)
+    assert impact.run_impact(repo, cfg, json_out=True) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [ep["url"] for ep in data["endpoints"]] == ["/api/v1/orders/"]
+    frontend_rows = [r for r in data["rows"] if r["category"] == "frontend"]
+    assert len(frontend_rows) == 1
+    assert frontend_rows[0]["path"] == "src/orders.service.ts"
+    assert "/api/v1/orders/" in frontend_rows[0]["ref"]

@@ -438,6 +438,62 @@ def test_find_references_deleted_entity_keeps_same_module_name_usage():
     ]
 
 
+def test_find_references_deleted_entity_keeps_same_module_attr_usage():
+    """Verifies that a deleted method's same-module attribute call is kept.
+
+    Companion to ``test_find_references_deleted_entity_prunes_foreign_base_attr``:
+    ``self.create()`` in the module that defines the deleted ``create`` method
+    is a genuine dangling reference and must be reported, while the foreign
+    imported base (``svc.create_object_group``) is still pruned.
+    """
+    analyses = {
+        "app/views.py": _analysis(
+            "class Service:\n"
+            "    def create(self):\n"
+            "        return None\n"
+            "\n"
+            "    def caller(self):\n"
+            "        return self.create()\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create"],
+        kinds={"name", "attr", "import"},
+        modules={"create": {"app.views"}},
+        changed_paths=["app/views.py"],
+        deleted={"create"},
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("app/views.py", 6, "attr"),
+    ]
+
+
+def test_find_references_deleted_entity_keeps_same_module_class_attr_usage():
+    """Verifies that a same-module class-qualified call to a deleted method is kept."""
+    analyses = {
+        "app/views.py": _analysis(
+            "class Service:\n"
+            "    def create(self):\n"
+            "        return None\n"
+            "\n"
+            "def caller():\n"
+            "    return Service.create()\n"
+        ),
+    }
+    hits = pa.find_references(
+        analyses,
+        ["create"],
+        kinds={"name", "attr", "import"},
+        modules={"create": {"app.views"}},
+        changed_paths=["app/views.py"],
+        deleted={"create"},
+    )
+    assert [(h["path"], h["line"], h["how"]) for h in hits] == [
+        ("app/views.py", 6, "attr"),
+    ]
+
+
 def test_analyze_path_analyzes_and_stores(tmp_path):
     """Verifies that analyze_path analyzes a file and stores the result in the cache."""
     _write(str(tmp_path / "mod.py"), "import widget\n")

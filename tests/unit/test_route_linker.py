@@ -445,6 +445,47 @@ def test_extract_django_routes_composes_include_prefix(tmp_path):
     assert len(matched2) == 1
 
 
+def test_extract_django_routes_composes_across_mixed_include_styles(tmp_path):
+    """Verifies include prefixes compose even when path() and re_path() are mixed.
+
+    A ``path()`` include prefix onto a ``re_path()`` leaf (and the reverse) must
+    keep the other style's prefix instead of dropping it.
+    """
+    _write(
+        str(tmp_path),
+        "config/urls.py",
+        "from django.urls import include, path, re_path\n"
+        "urlpatterns = [\n"
+        "    path('api/', include('app.orders.urls')),\n"
+        "    re_path(r'^newsfeed/', include('app.news.urls')),\n"
+        "]\n",
+    )
+    _write(
+        str(tmp_path),
+        "app/orders/urls.py",
+        "from django.urls import re_path\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    re_path(r'^orders/$', views.orders, name='order-list'),\n"
+        "]\n",
+    )
+    _write(
+        str(tmp_path),
+        "app/news/urls.py",
+        "from django.urls import path\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    path('items/', views.items, name='item-list'),\n"
+        "]\n",
+    )
+    routes = rl.extract_django_routes(str(tmp_path), ["**/urls.py"])
+    by_name = {r.name: r for r in routes}
+    assert by_name["order-list"].full == "api/orders/"
+    assert by_name["order-list"].regex.match("api/orders/")
+    assert by_name["item-list"].full == "newsfeed/items/"
+    assert by_name["item-list"].regex.match("newsfeed/items/")
+
+
 def test_extract_django_routes_unnamed_path(tmp_path):
     """Verifies that routes without a name= kwarg are captured, includes skipped."""
     _write(

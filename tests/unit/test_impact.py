@@ -848,4 +848,7 @@ def test_run_impact_fastapi_links_frontend_to_decorated_route(tmp_path, capsys):
     assert impact.run_impact(repo, cfg, json_out=True) == 0
     data = json.loads(capsys.readouterr().out)
     assert [ep["url"] for ep in data["endpoints"]] == ["/api/v1/orders/"]
-    assert any(r["category"] == "frontend" for r in data["rows"])
+    frontend_rows = [r for r in data["rows"] if r["category"] == "frontend"]
+    assert len(frontend_rows) == 1
+    assert frontend_rows[0]["path"] == "src/orders.service.ts"
+    assert "/api/v1/orders/" in frontend_rows[0]["ref"]

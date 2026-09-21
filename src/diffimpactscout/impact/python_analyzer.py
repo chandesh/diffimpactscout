@@ -177,7 +177,25 @@ def _usage_resolves(analysis, usage, name, entity_mods, path, weak):
     base = usage.get("base") or ""
     if not base:
         return True
-    return _imports_from(analysis, base.split(".")[0], entity_mods, path)
+    head = base.split(".")[0]
+    if _imports_from(analysis, head, entity_mods, path):
+        return True
+    if _is_imported(analysis, head):
+        return False
+    return _module_of(path) in entity_mods
+
+
+def _is_imported(analysis, name):
+    """Return True when the file binds ``name`` through any import (name or alias)."""
+    usages = (analysis or {}).get("usages")
+    if not isinstance(usages, list):
+        return False
+    for usage in usages:
+        if usage.get("kind") != "import":
+            continue
+        if usage.get("name") == name or usage.get("alias") == name:
+            return True
+    return False
 
 
 def _module_of(path):

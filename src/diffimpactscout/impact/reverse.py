@@ -439,11 +439,11 @@ _LITERAL_REGION_RE = re.compile(
 
 # Matches the prefix immediately before a quoted literal region; a region
 # survives only when this matches, i.e. it sits in an operand position or
-# names a quoted export inside an EXPORT brace list. The brace branch is
-# anchored on the "export" keyword (not a bare "{") AND excludes quote
-# characters from its free-text span, so object-literal keys, "as" type
-# assertions, and a blanked literal that merely CONTAINS "export {" cannot
-# keep a later literal alive.
+# names a quoted export inside an EXPORT brace list. It is tested against
+# the FULLY-blanked text (every region replaced by spaces), so a literal
+# that merely CONTAINS "export {" cannot make a later literal look like an
+# operand. The brace branch is anchored on the "export" keyword (not a bare
+# "{") so object-literal keys and "as" type assertions are blanked.
 #   Matches:  "import x from "  (from operand:  from './b')
 #             "import("         (dynamic import operand: import('./b'))
 #             "require ("       (require operand: require('./b'))
@@ -458,10 +458,8 @@ _LITERAL_REGION_RE = re.compile(
 #                                 only an "export {" list is kept)
 #             "value as "        (type assertion -> region is blanked; "as"
 #                                 only counts inside an export brace list)
-#             'x = "export { "' (the span stops at the quote, so the next
-#                                 literal is not mistaken for an operand)
 #             "bellyrequire("    (no word boundary before "require")
-_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|\bexport\s*\{[^}'\"`]*\Z")
+_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|\bexport\s*\{[^}]*\Z")
 
 _VENDOR_SUFFIXES = (".min.js", ".bundle.js")
 
@@ -481,6 +479,11 @@ def _is_graph_file(path):
 _OPERAND_WINDOW = 512
 
 
+def _blank_region(region):
+    """Replace a literal region with spaces, keeping "\\n"/"\\r" for line numbers."""
+    return "".join(ch if ch in "\r\n" else " " for ch in region)
+
+
 def _blank_literals(text):
     """Blank quoted literal regions that are not import/require operands.
 
@@ -490,18 +493,30 @@ def _blank_literals(text):
     so line numbers never shift. Operand regions (from/import/require
     operand quotes and quoted export names inside braces) are copied
     through unchanged; every other region is blanked, including regions
-    that follow an operand region.
+    that follow an operand region. Operand detection runs against a copy of
+    the text in which ALL regions are already blanked, so a literal whose
+    contents look like an operand prefix cannot keep a later literal alive.
     """
+    regions = list(_LITERAL_REGION_RE.finditer(text))
+    if not regions:
+        return text
+    pieces = []
+    pos = 0
+    for match in regions:
+        pieces.append(text[pos:match.start()])
+        pieces.append(_blank_region(match.group(0)))
+        pos = match.end()
+    pieces.append(text[pos:])
+    blanked = "".join(pieces)
     out = []
     pos = 0
-    for match in _LITERAL_REGION_RE.finditer(text):
-        region = match.group(0)
+    for match in regions:
         window = max(0, match.start() - _OPERAND_WINDOW)
-        if _LITERAL_OPERAND_RE.search(text, window, match.start()):
+        if _LITERAL_OPERAND_RE.search(blanked, window, match.start()):
             out.append(text[pos:match.end()])
         else:
             out.append(text[pos:match.start()])
-            out.append("".join(ch if ch in "\r\n" else " " for ch in region))
+            out.append(_blank_region(match.group(0)))
         pos = match.end()
     out.append(text[pos:])
     return "".join(out)

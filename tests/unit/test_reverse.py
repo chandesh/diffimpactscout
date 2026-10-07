@@ -576,6 +576,18 @@ def test_quoted_export_names_survive_literal_blank(tmp_path):
     assert graph["imports"] == []
 
 
+def test_consecutive_and_aliased_quoted_export_names_survive(tmp_path):
+    """Quoted export names in consecutive/aliased positions are all kept."""
+    src = (
+        "export { \"a\", \"b\" };\n"
+        "export { \"c\" as \"d\" };\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["exports"] == ["a", "b", "d"]
+    assert graph["imports"] == []
+
+
 def test_require_with_space_before_paren_captures(tmp_path):
     """Doc claim: require ( './sp' ) (space before paren) is an operand."""
     root = _repo(tmp_path, {"media/a.ts": "const sp = require ( './sp' );\n"})

@@ -1054,17 +1054,70 @@ def test_endpoint_chain_rows(tmp_path):
     assert not any("route" in (u.get("reason") or "") for u in unresolved)
 
 
-def test_experimental_off_produces_no_endpoint_rows():
-    """Verifies the experimental gate keeps endpoint rows out by default."""
-    from diffimpactscout.impact.diff_parser import FileChange
+def test_experimental_gate_controls_endpoint_rows(tmp_path):
+    """The endpoint leg runs only with experimental=True."""
+    root = _repo(tmp_path, {
+        "shop/urls.py": "from django.urls import path\nimport shop.views as v\nurlpatterns = [path('shop/direct/', v.product_view)]\n",
+        "media/shop/src/app/api.ts": "export function go() { return http.get('/shop/direct/'); }\n",
+    })
+    import subprocess
 
-    changes = [FileChange("media/shop/src/app/api.ts", "M", None, "ts")]
-    out = rev.frontend_chain(
-        "/nonexistent-root", {"ignore_paths": []},
-        {"reverse": True, "urls_globs": [], "frontend_globs": []},
-        changes, {}, {}, None, None, False, None, None,
-        experimental=False,
-    )
-    assert out[1] == []
-    assert not any("route" in (u.get("reason") or "") for u in out[3])
+    for args in (["init", "-q"], ["config", "user.name", "T"], ["config", "user.email", "t@e.co"],
+                 ["add", "-A"], ["commit", "-q", "-m", "m0"], ["remote", "add", "upstream", "."],
+                 ["push", "-q", "upstream", "master"]):
+        subprocess.check_call(["git"] + args, cwd=root)
+    with open(os.path.join(root, "media/shop/src/app/api.ts"), "a") as fh:
+        fh.write("// touch\n")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "m1"]):
+        subprocess.check_call(["git", "-C", root] + args)
+    from diffimpactscout.impact.diff_parser import get_file_changes
+
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "urls_globs": ["**/urls.py"], "frontend_globs": []}}
+    anchor = "refs/remotes/upstream/master"
+    off = rev.frontend_chain(root, cfg, cfg["impact"], changes, {}, {}, None,
+                             anchor, False, None, None, experimental=False)
+    assert not any(str(r["_entity"]).startswith(("endpoint:", "js-fn:")) for r in off[1])
+    on = rev.frontend_chain(root, cfg, cfg["impact"], changes, {}, {}, None,
+                            anchor, False, None, None, experimental=True)
+    assert any(str(r["_entity"]).startswith("endpoint:") for r in on[1])
+
+
+def test_endpoint_handler_root_uses_urls_binding():
+    """Two same-named views: the urls module binding selects the right root."""
+    analyses = {
+        "shop/urls.py": {
+            "analysis": {
+                "defs": {},
+                "usages": [
+                    {"line": 1, "name": "v", "kind": "import", "module": "shop.views", "level": 0},
+                    {"line": 2, "name": "product_view", "kind": "attr", "base": "v", "ctx_qname": "", "ctx_kind": "module"},
+                ],
+            }
+        },
+        "shop/views.py": {
+            "analysis": {
+                "defs": {"product_view": {"kind": "function", "line": 4, "end_line": 8, "qname": "product_view"}},
+                "usages": [],
+            }
+        },
+        "billing/views.py": {
+            "analysis": {
+                "defs": {"product_view": {"kind": "function", "line": 4, "end_line": 8, "qname": "product_view"}},
+                "usages": [],
+            }
+        },
+    }
+
+    class _Route(object):
+        module = "shop/urls.py"
+        handler = "product_view"
+
+    assert rev._handler_roots(analyses, _Route(), "product_view") == ["shop/views.py"]
+
+
+def test_path_for_module_resolves_package_init():
+    analyses = {"shop/__init__.py": {"analysis": {}}}
+    assert rev._path_for_module(analyses, "shop") == "shop/__init__.py"
 

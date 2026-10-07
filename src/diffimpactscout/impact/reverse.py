@@ -979,6 +979,49 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
     return extra_entities, rows, layers, unresolved
 
 
+def _handler_roots(analyses, route, handler):
+    """Return analysis paths defining ``handler`` that the urls module binds.
+
+    A unique defining path needs no disambiguation. When several modules
+    define the same handler name, the urls module's import binding (via
+    python_analyzer._usage_resolves) selects the right one; if the urls
+    analysis is missing or none binds, the result is empty (fail-closed) so
+    an arbitrary same-name view is never walked.
+    """
+    defining = sorted(
+        path for path, entry in (analyses or {}).items()
+        if handler in ((_peel_analysis(entry) or {}).get("defs") or {})
+    )
+    if len(defining) <= 1:
+        return defining
+    urls_analysis = _peel_analysis((analyses or {}).get(route.module))
+    if not urls_analysis:
+        return []
+    import diffimpactscout.impact.python_analyzer as pa
+
+    roots = []
+    for path in defining:
+        mods = {_module_of(path)}
+        if _module_of(route.module) in mods:
+            roots.append(path)
+            continue
+        for u in urls_analysis.get("usages") or []:
+            if u.get("name") != handler or u.get("kind") == "str":
+                continue
+            if pa._usage_resolves(urls_analysis, u, handler, mods, route.module, set()):
+                roots.append(path)
+                break
+    return roots
+
+
+def _path_for_module(analyses, module):
+    """Return the analysis path whose module is ``module``, or None."""
+    for path in (analyses or {}):
+        if _module_of(path) == module:
+            return path
+    return None
+
+
 def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
     """Chain E: changed js/ts http literals -> routes -> handler -> callees."""
     from diffimpactscout.impact.route_linker import extract_django_routes, match_endpoints
@@ -1013,21 +1056,17 @@ def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
             make_row(hit["file"], _dir_of(hit["file"]), "frontend",
                      "http %s '%s' -> %s" % (hit.get("method") or "get", hit["ref"], route.full), pseudo)
         )
-        for path, entry in (analyses or {}).items():
-            analysis = _peel_analysis(entry)
-            if not analysis or handler not in (analysis.get("defs") or {}):
-                continue
+        for path in _handler_roots(analyses, route, handler):
             callees = callee_closure(analyses, handler, path)
             for callee, mods in callees.items():
                 for module in sorted(mods):
-                    def_path = module.replace(".", "/") + ".py"
+                    def_path = _path_for_module(analyses, module) or (module.replace(".", "/") + ".py")
                     pseudo_c = "js-fn:%s" % callee
                     layers.setdefault(pseudo_c, set()).add("python")
                     rows.append(
                         make_row(def_path, module, "python",
                                  "%s() called from %s (via %s)" % (callee, handler, hit["ref"]), pseudo_c)
                     )
-            break
     return rows, layers, unresolved
 
 

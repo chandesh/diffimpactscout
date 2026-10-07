@@ -860,3 +860,22 @@ def test_custom_asset_prefix_stripped_and_cache_invalidated(tmp_path):
     )
     assert graph2["assets"] == []
 
+
+def test_endpoint_chain_literal_and_const_prop(tmp_path):
+    """Verifies endpoint rows for static literals and one-level constants."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/api.ts": (
+            "const API = '/shop/';\n"
+            "const LIST = API + 'items/';\n"
+            "const DYNAMIC = API + variable;\n"
+            "export class Api {\n"
+            "  list() { return http.get(LIST); }\n"
+            "  direct() { return http.get('/shop/direct/'); }\n"
+            "  dynamic() { return http.get(DYNAMIC); }\n"
+            "}\n"
+        ),
+    })
+    refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"], {"media/shop/src/app/api.ts"})
+    values = sorted(r["ref"] for r in refs)
+    assert values == ["/shop/direct/", "/shop/items/"]
+

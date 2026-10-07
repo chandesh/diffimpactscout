@@ -10,6 +10,13 @@ import re
 
 import diffimpactscout.gitrun as gitrun
 from diffimpactscout.config import is_excluded, _matches_glob
+from diffimpactscout.impact.route_linker import (
+    HTTP_CALL_RE,
+    QUOTED_LITERAL_RE,
+    _is_url_like,
+    _strip_comments,
+    _read_text,
+)
 
 # Matches Django {% extends %} tags with a STATIC template name.
 #   Matches:  {% extends 'common/base.html' %}   -> captures "common/base.html"
@@ -923,3 +930,77 @@ def _has_dynamic_include(root, path):
     except (OSError, ValueError):
         return False
     return bool(_DYNAMIC_INCLUDE_RE.search(_strip_html_comments(text)))
+
+
+# Matches native fetch() calls (second transport besides the $http/HttpClient
+# families in route_linker.HTTP_CALL_RE).
+#   Matches:  fetch('/shop/items/')  -> scan continues after "(" for the arg
+#   Skips:    fetch(variableUrl)     (unquoted arg; only quoted literals or
+#                                     known constants resolve)
+_FETCH_RE = re.compile(r"\bfetch\s*\(")
+
+# Matches string-constant ASSIGNMENTS used for one-level constant propagation.
+#   Matches:  const API = '/shop/';                       -> API -> "/shop/"
+#             static readonly LIST: string = '/shop/l/';  -> LIST -> "/shop/l/"
+#   Skips:    const API = buildUrl();          (non-literal RHS)
+_CONST_ASSIGN_RE = re.compile(
+    r"""(?:const|let|var|readonly|static\s+readonly|public\s+readonly)\s+(\w+)[^=\n]*=\s*['"`]([^'"`\n]{1,300})['"`]"""
+)
+
+# Matches PREFIX-CONCATENATION assignments so one-level propagation resolves them.
+#   Matches:  const LIST = API + 'items/';   -> LIST -> consts["API"] + "items/"
+#   Skips:    const X = A + B;               (no string literal part)
+_CONST_CONCAT_RE = re.compile(
+    r"""(?:const|let|var|readonly|static\s+readonly)\s+(\w+)[^=\n]*=\s*(\w+)\s*\+\s*['"`]([^'"`\n]+)['"`]"""
+)
+
+
+def _http_refs_for_files(root, paths, tracked=None):
+    """Extract HTTP endpoint refs from the given js/ts files.
+
+    One-level constant propagation: string const assignments (including
+    prefix concatenation via an earlier const) are substituted into call
+    arguments. Runtime-built URLs are not resolved (dropped).
+    """
+    refs = []
+    for path in paths:
+        text = _read_text(os.path.join(root, path) if root else path)
+        if not text:
+            continue
+        clean = _strip_comments(text)
+        consts = {}
+        for m in _CONST_ASSIGN_RE.finditer(clean):
+            consts[m.group(1)] = m.group(2)
+        for m in _CONST_CONCAT_RE.finditer(clean):
+            base = consts.get(m.group(2))
+            if base:
+                consts[m.group(1)] = base + m.group(3)
+        for regex, has_method in ((HTTP_CALL_RE, True), (_FETCH_RE, False)):
+            for m in regex.finditer(clean):
+                value = _arg_value_after(clean, m.end(), consts)
+                if value and _is_url_like(value):
+                    line = clean[: m.start()].count("\n") + 1
+                    refs.append(
+                        {
+                            "file": path,
+                            "ref": value,
+                            "dynamic": False,
+                            "line": line,
+                            "method": m.group(2) if has_method else None,
+                        }
+                    )
+    return refs
+
+
+def _arg_value_after(text, offset, consts):
+    """Return the endpoint string at a call site: quoted literal or known constant."""
+    window = text[offset: offset + 300]
+    stripped = window.lstrip()
+    if stripped[:1] in ("'", '"'):
+        lit = QUOTED_LITERAL_RE.match(stripped)
+        if lit:
+            return lit.group(2)
+    name_match = re.match(r"(\w+)", stripped)
+    if name_match and name_match.group(1) in consts:
+        return consts[name_match.group(1)]
+    return None

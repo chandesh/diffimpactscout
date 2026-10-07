@@ -270,3 +270,43 @@ def test_asset_chain_rows(tmp_path):
     ]
     assert layers.get("asset:media/shop/app.js") == {"template"}
     assert extra_entities.get("base_view", {}).get("modules") == {"shop.views"}
+
+
+def test_extract_imports_exports_static_only(tmp_path):
+    """Verifies static import/export extraction with vendor + alias filtering."""
+    src = (
+        "import { Component } from '@angular/core';\n"
+        "import { BaseService } from './base.service';\n"
+        "import { Widget } from \"../widgets/widget\";\n"
+        "const lazy = () => import('./lazy.module');\n"
+        "import cfg from 'config-path/config';\n"
+        "export class PageService extends BaseService {}\n"
+        "export function loadPage() { return 1; }\n"
+        "export const PAGE = 'p';\n"
+    )
+    root = _repo(tmp_path, {"media/shop/src/app/page.service.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/shop/src/app/page.service.ts", None, set())
+    assert graph["imports"] == ["./base.service", "../widgets/widget", "./lazy.module"]
+    assert sorted(graph["exports"]) == ["PAGE", "PageService", "loadPage"]
+
+
+def test_resolve_specifier_infers_extensions():
+    tracked = {"media/shop/src/app/base.service.ts", "media/shop/src/app/util/index.ts"}
+    assert rev._resolve_specifier("./base.service", "media/shop/src/app/page.service.ts", tracked) == "media/shop/src/app/base.service.ts"
+    assert rev._resolve_specifier("./util", "media/shop/src/app/page.service.ts", tracked) == "media/shop/src/app/util/index.ts"
+    assert rev._resolve_specifier("@angular/core", "media/shop/src/app/page.service.ts", tracked) is None
+
+
+def test_importer_closure_inverted_transitive():
+    graph = {
+        "a.ts": ["b.ts"],
+        "b.ts": ["c.ts"],
+        "c.ts": [],
+    }
+    out = rev.importers_of("c.ts", graph)
+    assert out == {"a.ts", "b.ts"}
+
+
+def test_min_js_excluded_from_graph():
+    assert rev._is_graph_file("media/x/y.min.js") is False
+    assert rev._is_graph_file("media/x/y.ts") is True

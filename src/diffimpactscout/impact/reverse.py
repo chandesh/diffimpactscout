@@ -338,6 +338,128 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
     return extra_entities, rows, layers, unresolved
 
 
+_JS_EXT_TRACKED = (".ts", ".tsx", ".js", ".jsx")
+
+# Matches the quoted MODULE SPECIFIER of the four import forms (static only):
+#   Matches:  import { BaseService } from './base.service';  -> "./base.service"
+#             export { X } from "../widgets/widget";         -> "../widgets/widget"
+#             const lazy = () => import('./lazy.module');    -> "./lazy.module"
+#             const fs = require('./util');                  -> "./util"
+#   Captures: import { C } from '@angular/core';               -> "@angular/core"
+#             (package/alias specifiers are captured too and dropped later by
+#              the leading-dot rule in _resolve_specifier)
+#   Skips:    dynamic import(variableName)                     (non-literal)
+_IMPORT_SPEC_RE = re.compile(
+    r"""(?:import\s+[^'"\n;]*?from\s*|export\s+[^'"\n;]*?from\s*|import\s*\(\s*|require\s*\(\s*)['"]([^'"\n]+)['"]"""
+)
+
+# Matches single-symbol export declarations (function/class/const/let/var).
+#   Matches:  export function loadPage() {}     -> "loadPage"
+#             export class PageService {}       -> "PageService"
+#             export const PAGE = 'p';          -> "PAGE"
+#             export default class App {}       -> "App"
+#   Skips:    function loadPage() {}            (no export keyword)
+_EXPORT_NAMED_RE = re.compile(
+    r"""export\s+(?:async\s+)?(?:default\s+)?(?:function\s+(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))"""
+)
+
+# Matches brace-group export lists; contents are split on commas and "as"
+# aliases stripped.
+#   Matches:  export { alpha, beta as gamma };  -> ["alpha", "beta"]
+#             export { default as Nav } from './nav'; -> ["default", "Nav"]
+_EXPORT_BRACE_RE = re.compile(r"export\s*\{([^}\n]*)\}")
+
+_VENDOR_SUFFIXES = (".min.js", ".bundle.js")
+
+
+def _is_graph_file(path):
+    lowered = path.lower()
+    return not lowered.endswith(_VENDOR_SUFFIXES)
+
+
+def analyze_frontend_graph(root, path, cache, tracked):
+    """Return {"imports": [...], "exports": [...]} for one js/ts file.
+
+    imports lists raw static specifiers (relative only resolved later);
+    alias specifiers (no leading dot) are dropped -- they are surfaced as
+    config hints by the chain. Stored in the "frontend" cache section.
+    """
+    full = os.path.join(root, path) if root else path
+    try:
+        with open(full, "rb") as fh:
+            text = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return {"imports": [], "exports": []}
+    from diffimpactscout.impact.python_analyzer import _content_hash
+
+    digest = _content_hash(text)
+    section = cache.load_section("frontend") if cache else {}
+    entry = section.get(path)
+    if entry is not None and entry.get("hash") == digest and isinstance(entry.get("graph"), dict):
+        return entry["graph"]
+    from diffimpactscout.impact.route_linker import _strip_comments
+
+    clean = _strip_comments(text)
+    imports = [s for s in _IMPORT_SPEC_RE.findall(clean) if s.startswith(".")]
+    exports = []
+    for groups in _EXPORT_NAMED_RE.findall(clean):
+        for name in groups:
+            if name:
+                exports.append(name)
+    for brace in _EXPORT_BRACE_RE.findall(clean):
+        for part in brace.split(","):
+            piece = re.split(r"\s+as\s+", part.strip())[0].strip()
+            if piece:
+                exports.append(piece.split(":")[-1].strip())
+    graph = {"imports": list(dict.fromkeys(imports)), "exports": sorted(set(exports))}
+    if cache:
+        cache.save_section("frontend", {**cache.load_section("frontend"), path: {"hash": digest, "graph": graph}})
+    return graph
+
+
+def _resolve_specifier(spec, importer_path, tracked):
+    """Resolve a relative specifier to a tracked path, or None."""
+    if not spec.startswith("."):
+        return None
+    base = spec.split("?", 1)[0]
+    parts = importer_path.split("/")[:-1]
+    for seg in base.split("/"):
+        if seg == "..":
+            if parts:
+                parts.pop()
+        elif seg == ".":
+            continue
+        elif seg:
+            parts.append(seg)
+    base_path = "/".join(parts)
+    candidates = [base_path]
+    for ext in _JS_EXT_TRACKED:
+        candidates.append(base_path + ext)
+    candidates.extend(base_path + "/index" + ext for ext in _JS_EXT_TRACKED)
+    for cand in candidates:
+        if cand in tracked:
+            return cand
+    return None
+
+
+def importers_of(target, graph):
+    """Return the full transitive set of files importing ``target``."""
+    inverted = {}
+    for path, deps in graph.items():
+        for dep in deps:
+            inverted.setdefault(dep, set()).add(path)
+    out = set()
+    queue = [target]
+    while queue:
+        current = queue.pop(0)
+        for parent in inverted.get(current, []):
+            if parent not in out:
+                out.add(parent)
+                queue.append(parent)
+    out.discard(target)
+    return out
+
+
 def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, anchor, staged, from_ref, to_ref, experimental=False):
     """Chains A (+I, E in later tasks): changed js/ts -> reverse rows.
 

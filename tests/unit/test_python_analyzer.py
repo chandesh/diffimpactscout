@@ -1,5 +1,6 @@
 import ast
 import hashlib
+import json
 import os
 import warnings
 
@@ -580,3 +581,67 @@ def test_analyze_path_directory_returns_none(tmp_path):
     os.makedirs(str(tmp_path / "adir"))
     cache = SymbolCache(str(tmp_path / "cache.json"))
     assert pa.analyze_path("adir", str(tmp_path), cache) is None
+
+
+ANALYSIS_VERSION = 2
+
+
+def _analyze(src):
+    return pa.analyze_source(src)
+
+
+def test_str_usage_recorded_for_call_arg():
+    """Verifies that a string call argument is recorded as a 'str' usage."""
+    a = _analyze("from django.shortcuts import render\n"
+                 "def view(request):\n"
+                 "    return render(request, 'app/page.html')\n")
+    strs = [u for u in a["usages"] if u["kind"] == "str"]
+    assert len(strs) == 1
+    assert strs[0]["name"] == "app/page.html"
+    assert strs[0]["ctx_qname"] == "view"
+    assert strs[0]["line"] == 3
+
+
+def test_str_usage_recorded_for_kwarg_value():
+    """Verifies that a string kwarg value is recorded as a 'str' usage."""
+    a = _analyze("def make():\n"
+                 "    return path(h, name='x-list')\n")
+    strs = [u for u in a["usages"] if u["kind"] == "str"]
+    assert [u["name"] for u in strs] == ["x-list"]
+
+
+def test_str_usage_recorded_for_assign_value():
+    """Verifies that a string assignment value is recorded as a 'str' usage."""
+    a = _analyze("class App:\n"
+                 "    template_name = 'app/page.html'\n")
+    strs = [u for u in a["usages"] if u["kind"] == "str"]
+    assert [u["name"] for u in strs] == ["app/page.html"]
+    assert strs[0]["ctx_kind"] == "class"
+
+
+def test_docstring_not_recorded_as_str_usage():
+    """Verifies that docstrings and bare expressions are not 'str' usages."""
+    a = _analyze("def view(request):\n"
+                 "    '''docstring'''\n"
+                 "    return None\n")
+    assert [u for u in a["usages"] if u["kind"] == "str"] == []
+
+
+def test_analysis_version_bumped():
+    """Verifies that analyses carry a version so old cache entries re-analyze."""
+    a = _analyze("x = 1\n")
+    assert a.get("v") == 2
+
+
+def test_stale_version_cache_entry_reanalyzes(tmp_path):
+    """Verifies that a cached analysis without the current version is re-parsed."""
+    cache_file = tmp_path / "cache.json"
+    src = "def view(request):\n    return render(request, 'app/page.html')\n"
+    # simulate a legacy (version-1) analysis dict stored under a matching hash
+    legacy = {"hash": pa._content_hash(src), "analysis": {"hash": pa._content_hash(src), "defs": {}, "usages": []}}
+    cache_file.write_text(json.dumps({"mod.py": legacy}))
+    from diffimpactscout.impact.cache import SymbolCache
+    f = tmp_path / "mod.py"
+    f.write_text(src)
+    analysis = pa.analyze_path("mod.py", str(tmp_path), SymbolCache(str(cache_file)))
+    assert any(u["kind"] == "str" and u["name"] == "app/page.html" for u in analysis["usages"])

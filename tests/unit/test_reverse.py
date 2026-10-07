@@ -668,3 +668,36 @@ def test_quoted_export_name_containing_import_syntax_does_not_leak(tmp_path):
     graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
     assert graph["imports"] == ["./real"]
 
+
+def test_js_symbol_rows_with_deleted_high(tmp_path):
+    """Verifies importer rows for changed exports, High when deleted."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/util.ts": "export function calc(x) { return x; }\n",
+        "media/shop/src/app/page.ts": "import { calc } from './util';\nconsole.log(calc(1));\n",
+        "media/shop/src/app/other.ts": "console.log('unrelated calc(');\n",
+    })
+    import subprocess
+
+    for args in (["init", "-q"], ["config", "user.name", "T"], ["config", "user.email", "t@e.co"],
+                 ["add", "-A"], ["commit", "-q", "-m", "m0"], ["remote", "add", "upstream", "."],
+                 ["push", "-q", "upstream", "master"]):
+        subprocess.check_call(["git"] + args, cwd=root)
+    # delete the exported function
+    with open(os.path.join(root, "media/shop/src/app/util.ts"), "w") as fh:
+        fh.write("export function calc2(x) { return x; }\n")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "m1"]):
+        subprocess.check_call(["git", "-C", root] + args)
+
+    from diffimpactscout.impact.diff_parser import get_file_changes
+
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    extra_entities, rows, layers, unresolved = rev.js_internal_chain(
+        root, cfg, cfg["impact"], changes, None, "refs/remotes/upstream/master", False, None, None,
+    )
+    row = next(r for r in rows if r["path"] == "media/shop/src/app/page.ts")
+    assert row["category"] == "frontend"
+    assert row["_deleted"] is True
+    assert not any(r["path"] == "media/shop/src/app/other.ts" for r in rows)
+

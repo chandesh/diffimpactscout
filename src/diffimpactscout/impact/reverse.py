@@ -659,6 +659,104 @@ def importers_of(target, graph, max_nodes=500):
     return out
 
 
+# Line-anchored variant of _EXPORT_NAMED_RE used with finditer so each match
+# yields a line number for changed-line scoping (name -> defining line).
+#   Matches:  "export function calc(x) { return x; }" on line 3 -> ("calc", 3)
+#             "  export const X = 1" (indented; \s* allows leading space)
+#   Captures: groups 1-5 = function/class/const/let/var name
+#   Skips:    export { a, b };         (brace list, handled by _EXPORT_BRACE_RE)
+#             export default Foo;      (bare ident, handled by _EXPORT_NAMED_RE)
+#             export type/interface/enum/namespace  (TS-only declarations)
+_JS_LINE_EXPORT_RE = re.compile(
+    r"""^\s*export\s+(?:async\s+)?(?:default\s+)?(?:function\s+(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))""",
+    re.M,
+)
+
+
+def _export_lines(text):
+    """Map exported name -> line number (1-based)."""
+    out = {}
+    for m in _JS_LINE_EXPORT_RE.finditer(text):
+        for name in m.groups():
+            if name:
+                out.setdefault(name, text[: m.start()].count("\n") + 1)
+    return out
+
+
+def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, from_ref, to_ref):
+    """Chain I: changed js/ts exports -> referencing files via the import graph.
+
+    Returns (extra_entities, rows, extra_layers, unresolved). extra_entities
+    stays empty: rows are attributed to pseudo-entities named
+    "js:<symbol>" so layer aggregation groups per symbol.
+    """
+    from diffimpactscout.impact.diff_parser import get_changed_lines, read_path_at_ref
+    from diffimpactscout.impact.route_linker import _is_vendor, _read_text
+
+    changed_js = [c for c in changes if c.ext in ("js", "ts", "jsx", "tsx")]
+    tracked = set(_tracked_files(root, cfg, "*.ts", "*.tsx", "*.js", "*.jsx"))
+    tracked = {p for p in tracked if _is_graph_file(p) and not _is_vendor(p)}
+    if cache is not None:
+        cache.prune_section("frontend", tracked)
+    graph = {}
+    for path in tracked:
+        graph[path] = _resolve_imports_for_graph(root, path, cache, tracked)
+    rows = []
+    layers = {}
+    unresolved = []
+    old_ref_eff = anchor or from_ref
+    for change in changed_js:
+        if not _is_graph_file(change.path) or _is_vendor(change.path):
+            continue
+        new_text = _read_text(os.path.join(root, change.path) if root else change.path) or ""
+        old_text = read_path_at_ref(root, change.path, old_ref_eff) if old_ref_eff else ""
+        old_lines, new_lines = get_changed_lines(root, change, anchor, from_ref, to_ref, staged)
+        new_exports = {n: ln for n, ln in _export_lines(new_text).items()
+                       if new_lines is None or ln in new_lines}
+        old_exports = {n: ln for n, ln in _export_lines(old_text).items()
+                       if old_lines is None or ln in old_lines}
+        deleted = set(old_exports) - set(new_exports)
+        changed_names = set(new_exports) | deleted
+        if not changed_names:
+            continue
+        importers = importers_of(change.path, graph)
+        for importer in importers:
+            importer_text = _read_text(os.path.join(root, importer) if root else importer) or ""
+            binds = change.path in (graph.get(importer) or [])
+            if not binds:
+                continue
+            for name in sorted(changed_names):
+                if name not in importer_text:
+                    continue
+                pseudo = "js:%s" % name
+                rows.append(
+                    make_row(
+                        importer, _dir_of(importer), "frontend",
+                        "%s (imported from %s)" % (name, change.path), pseudo,
+                        deleted=bool(name in deleted and name not in new_exports),
+                    )
+                )
+                layers.setdefault(pseudo, set()).add("frontend")
+        for name in sorted(deleted):
+            if not importers:
+                unresolved.append({
+                    "file": change.path,
+                    "reason": "export '%s' deleted; no tracked importers found" % name,
+                })
+    return {}, rows, layers, unresolved
+
+
+def _resolve_imports_for_graph(root, path, cache, tracked):
+    """Return the resolved tracked paths this file imports (graph edge list)."""
+    graph = analyze_frontend_graph(root, path, cache, tracked)
+    edges = []
+    for spec in graph["imports"]:
+        resolved = _resolve_specifier(spec, path, tracked)
+        if resolved and resolved in tracked:
+            edges.append(resolved)
+    return edges
+
+
 def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, anchor, staged, from_ref, to_ref, experimental=False):
     """Chains A (+I, E in later tasks): changed js/ts -> reverse rows.
 
@@ -714,6 +812,13 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
                      "renders '%s' (line %d)" % (hit["template"], hit["line"]), entity)
         )
         layers.setdefault(entity, set()).add("template")
+    e_entities, e_rows, e_layers, e_unresolved = js_internal_chain(
+        root, cfg, impact_cfg, changes, cache, anchor, staged, from_ref, to_ref
+    )
+    rows.extend(e_rows)
+    for name, cats in e_layers.items():
+        layers.setdefault(name, set()).update(cats)
+    unresolved.extend(e_unresolved)
     return extra_entities, rows, layers, unresolved
 
 

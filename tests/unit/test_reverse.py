@@ -878,4 +878,53 @@ def test_endpoint_chain_literal_and_const_prop(tmp_path):
     refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"], {"media/shop/src/app/api.ts"})
     values = sorted(r["ref"] for r in refs)
     assert values == ["/shop/direct/", "/shop/items/"]
+    direct = next(r for r in refs if r["ref"] == "/shop/direct/")
+    assert direct["method"] == "get"
+    assert direct["line"] == 6
+
+
+def test_endpoint_refs_transports_methods_and_absolute_filtered(tmp_path):
+    """fetch has no method; absolute/CDN URLs are dropped; consts propagate."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/api.ts": (
+            "const BASE = '/shop/';\n"
+            "const LIST = BASE + 'items/';\n"
+            "const CDN = 'https://cdn.example/x/';\n"
+            "function go() {\n"
+            "  http.post(LIST);\n"
+            "  fetch('/shop/fetch/');\n"
+            "  http.get(CDN);\n"
+            "}\n"
+        ),
+    })
+    refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
+    got = sorted((r["ref"], r["method"]) for r in refs)
+    assert got == [("/shop/fetch/", None), ("/shop/items/", "post")]
+
+
+def test_endpoint_refs_reject_multilevel_concat(tmp_path):
+    """One propagation level only: a concat of a concat is dropped."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/api.ts": (
+            "const A = '/a/';\n"
+            "const B = A + 'b/';\n"
+            "const C = B + 'c/';\n"
+            "function go() { http.get(B); http.get(C); }\n"
+        ),
+    })
+    refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
+    assert sorted(r["ref"] for r in refs) == ["/a/b/"]
+
+
+def test_endpoint_refs_drop_ambiguous_const(tmp_path):
+    """A const assigned more than once is dropped, not resolved arbitrarily."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/api.ts": (
+            "const API = '/one/';\n"
+            "function go() { http.get(API); }\n"
+            "const API = '/two/';\n"
+        ),
+    })
+    refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
+    assert refs == []
 

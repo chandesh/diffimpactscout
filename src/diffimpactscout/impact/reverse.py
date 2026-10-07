@@ -940,27 +940,33 @@ def _has_dynamic_include(root, path):
 _FETCH_RE = re.compile(r"\bfetch\s*\(")
 
 # Matches string-constant ASSIGNMENTS used for one-level constant propagation.
+# Both free-text quantifiers are bounded (\w{1,100}, [^=\n]{0,200}) so a long
+# word run after a keyword cannot backtrack quadratically; "\b" stops
+# "myreadonly FOO = ..." from matching.
 #   Matches:  const API = '/shop/';                       -> API -> "/shop/"
 #             static readonly LIST: string = '/shop/l/';  -> LIST -> "/shop/l/"
 #   Skips:    const API = buildUrl();          (non-literal RHS)
 _CONST_ASSIGN_RE = re.compile(
-    r"""(?:const|let|var|readonly|static\s+readonly|public\s+readonly)\s+(\w+)[^=\n]*=\s*['"`]([^'"`\n]{1,300})['"`]"""
+    r"""\b(?:const|let|var|readonly|static\s+readonly|public\s+readonly)\s+(\w{1,100})[^=\n]{0,200}=\s*['"`]([^'"`\n]{1,300})['"`]"""
 )
 
 # Matches PREFIX-CONCATENATION assignments so one-level propagation resolves them.
+# Quantifiers bounded as in _CONST_ASSIGN_RE.
 #   Matches:  const LIST = API + 'items/';   -> LIST -> consts["API"] + "items/"
 #   Skips:    const X = A + B;               (no string literal part)
 _CONST_CONCAT_RE = re.compile(
-    r"""(?:const|let|var|readonly|static\s+readonly)\s+(\w+)[^=\n]*=\s*(\w+)\s*\+\s*['"`]([^'"`\n]+)['"`]"""
+    r"""\b(?:const|let|var|readonly|static\s+readonly)\s+(\w{1,100})[^=\n]{0,200}=\s*(\w{1,100})\s*\+\s*['"`]([^'"`\n]{1,300})['"`]"""
 )
 
 
 def _http_refs_for_files(root, paths, tracked=None):
     """Extract HTTP endpoint refs from the given js/ts files.
 
-    One-level constant propagation: string const assignments (including
-    prefix concatenation via an earlier const) are substituted into call
-    arguments. Runtime-built URLs are not resolved (dropped).
+    One-level constant propagation only: a string const, or a prefix
+    concatenation of one string const plus a literal, is substituted into a
+    call argument. Deeper chains and runtime-built URLs are dropped
+    (unresolved). Const resolution is file-global; a name assigned more than
+    once is dropped rather than resolved to an arbitrary occurrence.
     """
     refs = []
     for path in paths:
@@ -969,12 +975,20 @@ def _http_refs_for_files(root, paths, tracked=None):
             continue
         clean = _strip_comments(text)
         consts = {}
+        ambiguous = set()
         for m in _CONST_ASSIGN_RE.finditer(clean):
-            consts[m.group(1)] = m.group(2)
+            name = m.group(1)
+            if name in consts or name in ambiguous:
+                consts.pop(name, None)
+                ambiguous.add(name)
+            else:
+                consts[name] = m.group(2)
+        literals = dict(consts)
         for m in _CONST_CONCAT_RE.finditer(clean):
-            base = consts.get(m.group(2))
-            if base:
-                consts[m.group(1)] = base + m.group(3)
+            name = m.group(1)
+            base = literals.get(m.group(2))
+            if base and name not in consts and name not in ambiguous:
+                consts[name] = base + m.group(3)
         for regex, has_method in ((HTTP_CALL_RE, True), (_FETCH_RE, False)):
             for m in regex.finditer(clean):
                 value = _arg_value_after(clean, m.end(), consts)

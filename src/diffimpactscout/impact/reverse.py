@@ -368,6 +368,7 @@ FRONTEND_GRAPH_VERSION = 1
 #             const s = "import x from './fake'"; and
 #             const t = `import('./in-tmpl')`;  contribute nothing
 #             import(variableName);             (non-literal; no quote follows)
+#             obj.import('./req');              (lookbehind blocks the ".")
 #             bellyrequire('./req');            (no word boundary before
 #                                                "require")
 #             foo.require('./req');             (lookbehind blocks the ".")
@@ -376,7 +377,7 @@ _IMPORT_SPEC_RE = re.compile(
     r"(?:^\s*import\b[^'\";]{0,4096}?\bfrom\s*['\"]([^'\"\n]+)['\"]"
     r"|^\s*export\b[^'\";]{0,4096}?\bfrom\s*['\"]([^'\"\n]+)['\"]"
     r"|^\s*import\s*['\"]([^'\"\n]+)['\"]"
-    r"|\bimport\s*\(\s*['\"]([^'\"\n]+)['\"]"
+    r"|(?<![.\w$])import\s*\(\s*['\"]([^'\"\n]+)['\"]"
     r"|(?<![.\w$])require\s*\(\s*['\"]([^'\"\n]+)['\"])",
     re.M,
 )
@@ -412,13 +413,17 @@ _EXPORT_NAMED_RE = re.compile(
 )
 
 # Matches brace-group export lists; contents are split on commas and the
-# EXPORTED (right-hand) side of each "as" alias is recorded.
+# EXPORTED (right-hand) side of each "as" alias is recorded. The body span
+# is capped at 4096 chars so an unmatched "{" cannot scan to EOF (keeps the
+# scan linear on malformed input).
 #   Matches:  export { alpha, beta as gamma };        -> ["alpha", "gamma"]
 #             export {\n  alpha,\n  beta\n};          -> ["alpha", "beta"]
 #   Captures: export { default as Nav } from './nav'; -> ["Nav"]
 #             export { type Foo };                    -> ["Foo"]
 #   Skips:    export * from './mod';                  (star export has no brace list)
-_EXPORT_BRACE_RE = re.compile(r"export\s*\{([^}]*)\}")
+#             export type { Foo };                    ("type" sits before the
+#                                                      brace; not a value export)
+_EXPORT_BRACE_RE = re.compile(r"export\s*\{([^}]{0,4096})\}")
 
 # Matches quoted literal regions so their contents can be blanked before
 # the import/export scan (string/template false positives).
@@ -435,8 +440,10 @@ _LITERAL_REGION_RE = re.compile(
 # Matches the prefix immediately before a quoted literal region; a region
 # survives only when this matches, i.e. it sits in an operand position or
 # names a quoted export inside an EXPORT brace list. The brace branch is
-# anchored on the "export" keyword (not a bare "{") so object-literal keys
-# and "as" type assertions are still blanked and cannot leak import syntax.
+# anchored on the "export" keyword (not a bare "{") AND excludes quote
+# characters from its free-text span, so object-literal keys, "as" type
+# assertions, and a blanked literal that merely CONTAINS "export {" cannot
+# keep a later literal alive.
 #   Matches:  "import x from "  (from operand:  from './b')
 #             "import("         (dynamic import operand: import('./b'))
 #             "require ("       (require operand: require('./b'))
@@ -451,8 +458,10 @@ _LITERAL_REGION_RE = re.compile(
 #                                 only an "export {" list is kept)
 #             "value as "        (type assertion -> region is blanked; "as"
 #                                 only counts inside an export brace list)
+#             'x = "export { "' (the span stops at the quote, so the next
+#                                 literal is not mistaken for an operand)
 #             "bellyrequire("    (no word boundary before "require")
-_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|\bexport\s*\{[^}]*\Z")
+_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|\bexport\s*\{[^}'\"`]*\Z")
 
 _VENDOR_SUFFIXES = (".min.js", ".bundle.js")
 
@@ -505,7 +514,9 @@ def analyze_frontend_graph(root, path, cache, tracked):
     alias specifiers (no leading dot) are dropped -- they are surfaced as
     config hints by the chain. Stored in the "frontend" cache section as
     {"hash", "v", "graph"}; an entry is only trusted when its hash, its
-    FRONTEND_GRAPH_VERSION marker and the graph's key shape all match.
+    FRONTEND_GRAPH_VERSION marker and both graph values (lists) match.
+    ``tracked`` is accepted for caller symmetry; extraction returns raw
+    specifiers and does not resolve them against it.
     """
     if not path:
         return {"imports": [], "exports": []}
@@ -526,8 +537,8 @@ def analyze_frontend_graph(root, path, cache, tracked):
         and entry.get("hash") == digest
         and entry.get("v") == FRONTEND_GRAPH_VERSION
         and isinstance(graph, dict)
-        and "imports" in graph
-        and "exports" in graph
+        and isinstance(graph.get("imports"), list)
+        and isinstance(graph.get("exports"), list)
     ):
         return graph
     from diffimpactscout.impact.route_linker import _strip_comments
@@ -584,15 +595,20 @@ def _resolve_specifier(spec, importer_path, tracked):
     return None
 
 
-def importers_of(target, graph):
-    """Return the full transitive set of files importing ``target``."""
+def importers_of(target, graph, max_nodes=500):
+    """Return the full transitive set of files importing ``target``.
+
+    Traversal is cycle-guarded and capped at ``max_nodes`` reached files so
+    a pathological import graph cannot blow up the row set (spec: 500-node
+    cap).
+    """
     inverted = {}
     for path, deps in graph.items():
         for dep in deps:
             inverted.setdefault(dep, set()).add(path)
     out = set()
     queue = [target]
-    while queue:
+    while queue and len(out) < max_nodes:
         current = queue.pop(0)
         for parent in inverted.get(current, []):
             if parent not in out:

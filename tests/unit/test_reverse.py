@@ -457,6 +457,7 @@ def test_ts_only_export_declarations_are_skipped(tmp_path):
         "export enum Kind { A }\n"
         "export namespace Inner {}\n"
         "export declare const Y: number;\n"
+        "export type { Foo };\n"
     )
     root = _repo(tmp_path, {"media/a.ts": src})
     graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
@@ -499,6 +500,7 @@ def test_frontend_graph_rebuilds_on_hash_version_or_shape_mismatch(tmp_path):
         {"hash": digest, "v": version + 1, "graph": stale},
         {"hash": digest, "v": version, "graph": {"exports": ["./STALE"]}},
         {"hash": digest, "v": version, "graph": {"imports": ["./STALE"]}},
+        {"hash": digest, "v": version, "graph": {"imports": "NOTALIST", "exports": []}},
     ]
     for seed in seeds:
         cache.save_section("frontend", {"media/a.ts": dict(seed)})
@@ -596,4 +598,34 @@ def test_object_literal_key_and_type_assertion_do_not_leak_imports(tmp_path):
     graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
     assert graph["imports"] == ["./real"]
     assert graph["exports"] == []
+
+
+def test_blanked_literal_containing_export_brace_does_not_leak_next_literal(tmp_path):
+    """Doc claim: the brace operand span stops at a quote.
+
+    A blanked string/template that merely CONTAINS "export {" must not keep
+    the following literal alive (which would leak import syntax).
+    """
+    src = (
+        "const s = \"export { \";\n"
+        "const t = \"import('./evil')\";\n"
+        "const u = `export {`;\n"
+        "const v = \"require('./evil2')\";\n"
+        "import real from './real';\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./real"]
+
+
+def test_import_lookbehind_blocks_member_call(tmp_path):
+    """Doc claim: obj.import('./x') is not a dynamic import (lookbehind)."""
+    src = (
+        "obj.import('./fake');\n"
+        "$import('./fake2');\n"
+        "const lazy = () => import('./real');\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./real"]
 

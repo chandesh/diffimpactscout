@@ -558,14 +558,19 @@ def test_unterminated_backtick_region_does_not_swallow_next_import(tmp_path):
 
 
 def test_quoted_export_names_survive_literal_blank(tmp_path):
-    """Quoted names in brace export lists are kept and recorded unquoted."""
+    """Quoted names in brace export lists are kept and recorded unquoted.
+
+    Covers first position ("solo"), an alias target ("str name"), and a
+    post-comma non-alias position ("later").
+    """
     src = (
         "export { x as \"str name\" };\n"
         "export { \"solo\" };\n"
+        "export { alpha, \"later\" };\n"
     )
     root = _repo(tmp_path, {"media/a.ts": src})
     graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
-    assert graph["exports"] == ["solo", "str name"]
+    assert graph["exports"] == ["alpha", "later", "solo", "str name"]
     assert graph["imports"] == []
 
 

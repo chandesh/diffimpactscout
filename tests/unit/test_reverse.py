@@ -575,3 +575,20 @@ def test_require_with_space_before_paren_captures(tmp_path):
     graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
     assert graph["imports"] == ["./sp"]
 
+
+def test_object_literal_key_and_type_assertion_do_not_leak_imports(tmp_path):
+    """Doc claim: only an "export {" brace list keeps a quoted region.
+
+    An object-literal key or an "as" type assertion containing import-like
+    text is blanked, so neither leaks a spurious import edge.
+    """
+    src = (
+        "const o = { \"import('./evil')\": 1 };\n"
+        "const q = value as \"import('./evil2')\";\n"
+        "import real from './real';\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./real"]
+    assert graph["exports"] == []
+

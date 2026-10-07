@@ -433,21 +433,26 @@ _LITERAL_REGION_RE = re.compile(
 )
 
 # Matches the prefix immediately before a quoted literal region; a region
-# survives only when this matches, i.e. it sits in an operand position
-# (or names a quoted export inside a brace list).
+# survives only when this matches, i.e. it sits in an operand position or
+# names a quoted export inside an EXPORT brace list. The brace branch is
+# anchored on the "export" keyword (not a bare "{") so object-literal keys
+# and "as" type assertions are still blanked and cannot leak import syntax.
 #   Matches:  "import x from "  (from operand:  from './b')
 #             "import("         (dynamic import operand: import('./b'))
 #             "require ("       (require operand: require('./b'))
 #             "import "         (side-effect operand: import './b')
-#             "export { x as "   (alias target: x as "str name")
-#             "export { "        (quoted export name: export { "solo" };
-#                                 also keeps object-literal keys, which no
-#                                 consumer matches -- harmless)
+#             "export { "        (quoted export name: export { "solo" })
+#             "export { x as "   (alias target: export { x as "str name" })
+#             "export { a, "     (later quoted name: export { a, "b" })
 #   Captures: nothing (used as a boolean via re.search)
 #   Skips:    "const s = "      (assignment RHS -> region is blanked;
 #                                 covers any code/assignment prefix)
-#             "bellyrequire("   (no word boundary before "require")
-_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|(?:\bas|\{)\s*\Z")
+#             "const o = { "     (object-literal key -> region is blanked;
+#                                 only an "export {" list is kept)
+#             "value as "        (type assertion -> region is blanked; "as"
+#                                 only counts inside an export brace list)
+#             "bellyrequire("    (no word boundary before "require")
+_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|\bexport\s*\{[^}]*\Z")
 
 _VENDOR_SUFFIXES = (".min.js", ".bundle.js")
 

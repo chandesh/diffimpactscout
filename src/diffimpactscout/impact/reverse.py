@@ -283,24 +283,24 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
     Returns (extra_entities, rows, extra_layers, unresolved).
     """
     template_globs = impact_cfg.get("template_globs") or []
-    template_files = _tracked_files(root, cfg, "*.html")
-    if template_globs:
-        template_files = [p for p in template_files if _glob_match_any(p, template_globs)]
-    graphs = {}
-    for path in template_files:
-        graphs[template_name_of(path) or path] = analyze_template_graph(root, path, cache, cfg)
-    extra_entities = {}
-    rows = []
-    layers = {}
-    unresolved = []
     changed_templates = [c.path for c in changes if c.ext == "html"]
     changed_names = []
     for path in changed_templates:
         name = template_name_of(path)
         if name:
             changed_names.append(name)
+    extra_entities = {}
+    rows = []
+    layers = {}
+    unresolved = []
     if not changed_names:
         return extra_entities, rows, layers, unresolved
+    template_files = _tracked_files(root, cfg, "*.html")
+    if template_globs:
+        template_files = [p for p in template_files if _glob_match_any(p, template_globs)]
+    graphs = {}
+    for path in template_files:
+        graphs[template_name_of(path) or path] = analyze_template_graph(root, path, cache, cfg)
     desc_map = {}
     for name in changed_names:
         for child, targets in descendants_of(name, graphs).items():

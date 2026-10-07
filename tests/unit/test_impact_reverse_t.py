@@ -187,8 +187,36 @@ def test_js_only_diff_produces_asset_rows(tmp_path, capsys):
     cfg = config._defaults()
     cfg["impact"]["reverse"] = True
     cfg["impact"]["asset_url_prefixes"] = ["{{ MEDIA_URL }}"]
-    impact_module.run_impact(root, cfg, json_out=True)
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
     out = json.loads(capsys.readouterr().out)
     cats = {(r["path"], r["category"]) for r in out["rows"]}
     assert ("shop/templates/shop/product.html", "template") in cats
     assert ("shop/views.py", "python") in cats
+    assert all(r.get("severity") for r in out["rows"])
+    assert out["unresolved"] == []
+
+
+def test_js_only_diff_surfaces_view_reference_rows(tmp_path, capsys):
+    """A js-only diff must surface python references of the render-site view."""
+    root = _repo(tmp_path)
+    os.makedirs(os.path.join(root, "media", "shop"))
+    with open(os.path.join(root, "media", "shop", "app.js"), "w") as fh:
+        fh.write("console.log(1);\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "product.html"), "w") as fh:
+        fh.write("<script src=\"{{ MEDIA_URL }}shop/app.js\"></script>\n")
+    with open(os.path.join(root, "shop", "urls.py"), "w") as fh:
+        fh.write("from shop.views import product_view\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
+        fh.write("console.log(2);\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m2", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    out = json.loads(capsys.readouterr().out)
+    cats = {(r["path"], r["category"]) for r in out["rows"]}
+    assert ("shop/views.py", "python") in cats
+    assert ("shop/urls.py", "python") in cats

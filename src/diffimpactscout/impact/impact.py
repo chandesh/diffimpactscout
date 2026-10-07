@@ -81,15 +81,11 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
             root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
         )
         _merge_entities(entities, extra_t)
-        for change in [c for c in changes if c.ext in ("js", "ts", "jsx", "tsx")]:
-            entities.setdefault(
-                "asset:%s" % change.path,
-                {"kind": "class_field", "deleted": False, "modules": set()},
-            )
         extra_f, rows_f, layers_f, unresolved_f = reverse_mod.frontend_chain(
             root, cfg, impact_cfg, changes, entities, analyses, cache, old_ref, staged, from_ref, to_ref,
             experimental=bool(impact_cfg.get("experimental")),
         )
+        _merge_entities(entities, extra_f)
         reverse_rows = rows_t + rows_f
         reverse_layers = {**layers_t}
         for name, cats in layers_f.items():

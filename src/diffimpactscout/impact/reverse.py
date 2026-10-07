@@ -683,13 +683,38 @@ _JS_LINE_EXPORT_RE = re.compile(
 )
 
 
+# Line-anchored brace-list export matcher used by _export_lines so names
+# exported via "export { ... }" are scoped to their line too. Body capped at
+# 4096 so an unmatched "{" cannot scan to EOF (linear). Mirrors
+# _EXPORT_BRACE_RE's name handling (right side of "as", "type " and quotes
+# stripped).
+#   Matches:  "export { alpha, beta as gamma };"  -> ["alpha", "gamma"]
+#             "export {\n  a,\n  b\n};"            -> ["a", "b"]
+#   Captures: group 1 = the raw brace body
+#   Skips:    export * from './m';               (star export, no brace list)
+#             export type { Foo };               ("type" sits before the brace)
+_JS_LINE_BRACE_EXPORT_RE = re.compile(r"^[ \t]*export\s*\{([^}]{0,4096})\}", re.M)
+
+
 def _export_lines(text):
-    """Map exported name -> line number (1-based)."""
+    """Map exported name -> line number (1-based).
+
+    Covers declaration exports (function/class/const/let/var, default ident)
+    and brace-list exports ("export { a, b as c }"), matching the name set
+    that analyze_frontend_graph records in graph["exports"].
+    """
     out = {}
     for m in _JS_LINE_EXPORT_RE.finditer(text):
         for name in m.groups():
             if name:
                 out.setdefault(name, text[: m.start()].count("\n") + 1)
+    for m in _JS_LINE_BRACE_EXPORT_RE.finditer(text):
+        line = text[: m.start()].count("\n") + 1
+        for raw in m.group(1).split(","):
+            piece = re.split(r"\s+as\s+", raw.strip())[-1].strip()
+            piece = re.sub(r"^type\s+", "", piece).strip().strip("'\"")
+            if piece:
+                out.setdefault(piece, line)
     return out
 
 
@@ -706,11 +731,16 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
     changed_js = [c for c in changes if c.ext in ("js", "ts", "jsx", "tsx")]
     tracked = set(_tracked_files(root, cfg, "*.ts", "*.tsx", "*.js", "*.jsx"))
     tracked = {p for p in tracked if _is_graph_file(p) and not _is_vendor(p)}
+    deleted_js = {
+        c.path for c in changed_js
+        if c.status[0] == "D" and _is_graph_file(c.path) and not _is_vendor(c.path)
+    }
+    resolvable = tracked | deleted_js
     if cache is not None:
         cache.prune_section("frontend", tracked)
     graph = {}
     for path in tracked:
-        graph[path] = _resolve_imports_for_graph(root, path, cache, tracked)
+        graph[path] = _resolve_imports_for_graph(root, path, cache, resolvable)
     rows = []
     layers = {}
     unresolved = []
@@ -721,10 +751,14 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
         new_text = _read_text(os.path.join(root, change.path) if root else change.path) or ""
         old_text = read_path_at_ref(root, change.path, old_ref_eff) if old_ref_eff else ""
         old_lines, new_lines = get_changed_lines(root, change, anchor, from_ref, to_ref, staged)
-        new_exports = {n: ln for n, ln in _export_lines(new_text).items()
-                       if new_lines is None or ln in new_lines}
-        old_exports = {n: ln for n, ln in _export_lines(old_text).items()
-                       if old_lines is None or ln in old_lines}
+        new_exports = {
+            n: ln for n, ln in _export_lines(_clean_for_exports(new_text)).items()
+            if new_lines is None or ln in new_lines
+        }
+        old_exports = {
+            n: ln for n, ln in _export_lines(_clean_for_exports(old_text)).items()
+            if old_lines is None or ln in old_lines
+        }
         deleted = set(old_exports) - set(new_exports)
         changed_names = set(new_exports) | deleted
         if not changed_names:
@@ -736,14 +770,14 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
             if not binds:
                 continue
             for name in sorted(changed_names):
-                if name not in importer_text:
+                if not re.search(r"\b%s\b" % re.escape(name), importer_text):
                     continue
                 pseudo = "js:%s" % name
                 rows.append(
                     make_row(
                         importer, _dir_of(importer), "frontend",
                         "%s (imported from %s)" % (name, change.path), pseudo,
-                        deleted=bool(name in deleted and name not in new_exports),
+                        deleted=name in deleted,
                     )
                 )
                 layers.setdefault(pseudo, set()).add("frontend")
@@ -754,6 +788,18 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
                     "reason": "export '%s' deleted; no tracked importers found" % name,
                 })
     return {}, rows, layers, unresolved
+
+
+def _clean_for_exports(text):
+    """Comment-stripped, literal-blanked text for export-name line scoping.
+
+    Blanking keeps the length/newlines, so line numbers from _export_lines
+    still match the original file, while comments, strings and template
+    literals can no longer contribute phantom export names.
+    """
+    from diffimpactscout.impact.route_linker import _strip_comments
+
+    return _blank_literals(_strip_comments(text), keep_export_names=True)
 
 
 def _resolve_imports_for_graph(root, path, cache, tracked):

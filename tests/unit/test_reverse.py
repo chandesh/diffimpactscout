@@ -717,4 +717,96 @@ def test_export_lines_maps_names_to_exact_defining_lines():
     assert rev._export_lines(text) == {
         "calc": 3, "boot": 4, "gen": 5, "Foo": 6, "X": 7,
     }
+    assert rev._export_lines("export { alpha, beta as gamma };\n") == {
+        "alpha": 1, "gamma": 1,
+    }
+
+
+def _js_repo(tmp_path, files):
+    root = _repo(tmp_path, files)
+    import subprocess
+
+    for args in (["init", "-q"], ["config", "user.name", "T"], ["config", "user.email", "t@e.co"],
+                 ["add", "-A"], ["commit", "-q", "-m", "m0"], ["remote", "add", "upstream", "."],
+                 ["push", "-q", "upstream", "master"]):
+        subprocess.check_call(["git"] + args, cwd=root)
+    return root
+
+
+def _js_changes(root):
+    from diffimpactscout.impact.diff_parser import get_file_changes
+
+    return get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+
+
+def _js_commit(root, message):
+    import subprocess
+
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", message])
+
+
+def test_deleted_module_flags_importers(tmp_path):
+    """A deleted module still flags files that import it (dangling ref)."""
+    root = _js_repo(tmp_path, {
+        "media/shop/src/app/util.ts": "export function calc(x) { return x; }\n",
+        "media/shop/src/app/page.ts": "import { calc } from './util';\nconsole.log(calc(1));\n",
+    })
+    os.remove(os.path.join(root, "media/shop/src/app/util.ts"))
+    _js_commit(root, "m1")
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    _e, rows, _l, _u = rev.js_internal_chain(
+        root, cfg, cfg["impact"], _js_changes(root), None,
+        "refs/remotes/upstream/master", False, None, None,
+    )
+    row = next(r for r in rows if r["path"] == "media/shop/src/app/page.ts")
+    assert row["_entity"] == "js:calc"
+    assert row["_deleted"] is True
+
+
+def test_importer_not_using_deleted_symbol_produces_no_row(tmp_path):
+    """Symbol matching is word-bounded: importing calc2 does not match calc."""
+    root = _js_repo(tmp_path, {
+        "media/shop/src/app/util.ts": (
+            "export function calc(x) { return x; }\n"
+            "export function calc2(x) { return x; }\n"
+        ),
+        "media/shop/src/app/page.ts": (
+            "import { calc2 } from './util';\nconsole.log(calc2(1));\n"
+        ),
+    })
+    with open(os.path.join(root, "media/shop/src/app/util.ts"), "w") as fh:
+        fh.write("export function calc2(x) { return x; }\n")
+    _js_commit(root, "m1")
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    _e, rows, _l, _u = rev.js_internal_chain(
+        root, cfg, cfg["impact"], _js_changes(root), None,
+        "refs/remotes/upstream/master", False, None, None,
+    )
+    assert not any(r["_entity"] == "js:calc" for r in rows)
+
+
+def test_brace_export_change_produces_row(tmp_path):
+    """A changed brace-list export is detected and scoped to its line."""
+    root = _js_repo(tmp_path, {
+        "media/shop/src/app/util.ts": (
+            "function calc(x) { return x; }\n"
+            "export { calc };\n"
+        ),
+        "media/shop/src/app/page.ts": "import { calc } from './util';\nconsole.log(calc(1));\n",
+    })
+    with open(os.path.join(root, "media/shop/src/app/util.ts"), "w") as fh:
+        fh.write("function calc2(x) { return x; }\nexport { calc2 };\n")
+    _js_commit(root, "m1")
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    _e, rows, _l, _u = rev.js_internal_chain(
+        root, cfg, cfg["impact"], _js_changes(root), None,
+        "refs/remotes/upstream/master", False, None, None,
+    )
+    row = next(r for r in rows if r["path"] == "media/shop/src/app/page.ts")
+    assert row["_entity"] == "js:calc"
+    assert row["_deleted"] is True
 

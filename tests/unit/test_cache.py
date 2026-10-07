@@ -1,5 +1,6 @@
 import builtins
 import glob
+import json
 import os
 
 import diffimpactscout.impact.cache as cache
@@ -129,3 +130,54 @@ def test_prune_accepts_list_and_empty(tmp_path):
     sc.save(_sample_data())
     assert sc.prune([]) == {}
     assert sc.prune(["a.py", "b.py"]) == {}
+
+
+def test_sections_migrate_legacy_flat_cache(tmp_path):
+    """Verifies that a legacy flat cache file loads as the py section."""
+    path = str(tmp_path / "cache.json")
+    legacy_data = {
+        "some/mod.py": {
+            "hash": "abc",
+            "analysis": {"defs": {}, "usages": []},
+        }
+    }
+    with open(path, "w") as fh:
+        json.dump(legacy_data, fh)
+    sc = SymbolCache(path)
+    assert sc.load() == legacy_data
+    assert sc.load_section("templates") == {}
+    assert sc.load_section("frontend") == {}
+
+
+def test_save_section_preserves_py_section(tmp_path):
+    """Verifies that writing a section keeps the py section intact on disk."""
+    path = str(tmp_path / "cache.json")
+    sc = SymbolCache(path)
+    sc.save(_sample_data())
+    sc.save_section("templates", {"a.html": {"hash": "h1", "graph": {}}})
+    fresh = SymbolCache(path)
+    assert fresh.load() == _sample_data()
+    assert fresh.load_section("templates") == {"a.html": {"hash": "h1", "graph": {}}}
+
+
+def test_prune_section_only_touches_own_section(tmp_path):
+    """Verifies that pruning a section leaves other sections alone."""
+    path = str(tmp_path / "cache.json")
+    sc = SymbolCache(path)
+    sc.save(_sample_data())
+    sc.save_section("frontend", {"x.ts": {"hash": "h", "graph": {}}, "y.ts": {"hash": "h", "graph": {}}})
+    sc.prune_section("frontend", ["x.ts"])
+    fresh = SymbolCache(path)
+    assert "x.ts" in fresh.load_section("frontend")
+    assert "y.ts" not in fresh.load_section("frontend")
+    assert fresh.load() == _sample_data()
+
+
+def test_corrupt_section_file_loads_empty(tmp_path):
+    """Verifies that a corrupt multi-section cache file degrades to empty."""
+    path = str(tmp_path / "cache.json")
+    with open(path, "wb") as fh:
+        fh.write(b"\x00not-json{")
+    sc = SymbolCache(path)
+    assert sc.load() == {}
+    assert sc.load_section("templates") == {}

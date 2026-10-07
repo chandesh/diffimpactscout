@@ -701,3 +701,20 @@ def test_js_symbol_rows_with_deleted_high(tmp_path):
     assert row["_deleted"] is True
     assert not any(r["path"] == "media/shop/src/app/other.ts" for r in rows)
 
+
+def test_export_lines_maps_names_to_exact_defining_lines():
+    """Doc claim: line numbers are exact (no drift across blank lines) and
+    all _EXPORT_NAMED_RE forms are recognised."""
+    text = (
+        "import x from './y';\n"
+        "\n"
+        "export function calc() {}\n"
+        "export default async function boot() {}\n"
+        "export function* gen() {}\n"
+        "export default Foo;\n"
+        "  export const X = 1;\n"
+    )
+    assert rev._export_lines(text) == {
+        "calc": 3, "boot": 4, "gen": 5, "Foo": 6, "X": 7,
+    }
+

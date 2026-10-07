@@ -661,14 +661,24 @@ def importers_of(target, graph, max_nodes=500):
 
 # Line-anchored variant of _EXPORT_NAMED_RE used with finditer so each match
 # yields a line number for changed-line scoping (name -> defining line).
-#   Matches:  "export function calc(x) { return x; }" on line 3 -> ("calc", 3)
-#             "  export const X = 1" (indented; \s* allows leading space)
-#   Captures: groups 1-5 = function/class/const/let/var name
-#   Skips:    export { a, b };         (brace list, handled by _EXPORT_BRACE_RE)
-#             export default Foo;      (bare ident, handled by _EXPORT_NAMED_RE)
+# Mirrors _EXPORT_NAMED_RE's forms so a changed/deleted export is never
+# missed; "^[ \t]*" (not "\s*") keeps the match start on the export's own
+# line, so the derived line number is exact.
+#   Matches:  "export function calc(x) {}"           -> "calc"
+#             "  export const X = 1"                  (indented; [ \t]* allows)
+#             "export default async function boot() {}" -> "boot"
+#             "export function* gen() {}"             -> "gen"
+#             "export default Foo;"                   -> "Foo"
+#   Captures: one of groups 1-5 (function/class/const/let/var name) or
+#             group 6 (export default <ident>)
+#   Skips:    export { a, b };          (brace list, handled by _EXPORT_BRACE_RE)
+#             export default function () {}   (anonymous; no name)
 #             export type/interface/enum/namespace  (TS-only declarations)
 _JS_LINE_EXPORT_RE = re.compile(
-    r"""^\s*export\s+(?:async\s+)?(?:default\s+)?(?:function\s+(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))""",
+    r"""(?:^[ \t]*export\s+(?:(?:default|async)\s+)*"""
+    r"""(?:function\s*(?:\*\s*)?(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))"""
+    r"""|^[ \t]*export\s+default\s+(?!(?:function|class|const|let|var|async)\b)"""
+    r"""([A-Za-z_$][\w$]*))""",
     re.M,
 )
 

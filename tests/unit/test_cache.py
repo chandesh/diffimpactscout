@@ -101,7 +101,7 @@ def test_save_leaves_no_temp_file(tmp_path):
     """Verifies that save leaves no temporary file behind."""
     path = str(tmp_path / "cache.json")
     SymbolCache(path).save(_sample_data())
-    leftovers = glob.glob(str(tmp_path / "cache.json.tmp"))
+    leftovers = glob.glob(str(tmp_path / "cache.json.tmp*"))
     assert leftovers == []
 
 
@@ -181,3 +181,34 @@ def test_corrupt_section_file_loads_empty(tmp_path):
     sc = SymbolCache(path)
     assert sc.load() == {}
     assert sc.load_section("templates") == {}
+
+
+def test_save_preserves_existing_templates_section(tmp_path):
+    """Verifies that save preserves an existing templates section."""
+    path = str(tmp_path / "cache.json")
+    sc = SymbolCache(path)
+    sc.save(_sample_data())
+    sc.save_section("templates", {"t.html": {"hash": "h", "graph": {}}})
+    sc.save(_sample_data())  # save again
+    fresh = SymbolCache(path)
+    assert fresh.load() == _sample_data()
+    assert fresh.load_section("templates") == {"t.html": {"hash": "h", "graph": {}}}
+
+
+def test_save_after_loading_legacy_flat_makes_sectioned(tmp_path):
+    """Verifies that after loading legacy flat cache, save() persists sectioned format."""
+    path = str(tmp_path / "cache.json")
+    legacy_data = {
+        "some/mod.py": {
+            "hash": "abc",
+            "analysis": {"defs": {}, "usages": []},
+        }
+    }
+    with open(path, "w") as fh:
+        json.dump(legacy_data, fh)
+    sc = SymbolCache(path)
+    sc.save(sc.load())  # re-save under sectioned model
+    fresh = SymbolCache(path)
+    assert fresh.load() == legacy_data
+    assert fresh.load_section("templates") == {}
+    assert fresh.load_section("frontend") == {}

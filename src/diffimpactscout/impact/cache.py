@@ -35,11 +35,15 @@ class SymbolCache(object):
         self.save_section("py", data)
 
     def save_section(self, name, data):
+        """Store a named section. In-memory state is updated even if the disk write fails."""
         self._sections()[name] = data
         _write_cache(self.path, self._data)
 
     def prune(self, existing):
-        """Drop py-section keys not in ``existing``; return the pruned section."""
+        """Drop py-section keys not in ``existing``; return the pruned section.
+        
+        Persistence: does NOT persist to disk (caller must save).
+        """
         keep = set(existing)
         data = self._sections()["py"]
         for key in [k for k in data if k not in keep]:
@@ -47,7 +51,10 @@ class SymbolCache(object):
         return data
 
     def prune_section(self, name, existing):
-        """Drop keys not in ``existing`` from the named section."""
+        """Drop keys not in ``existing`` from the named section.
+        
+        Persistence: DOES persist to disk.
+        """
         keep = set(existing)
         data = self._sections()[name]
         for key in [k for k in data if k not in keep]:
@@ -73,7 +80,7 @@ def _read_sections(path):
 
 
 def _write_cache(path, data):
-    tmp = path + ".tmp"
+    tmp = path + ".tmp.%d" % os.getpid()
     try:
         parent = os.path.dirname(path)
         if parent:
@@ -82,6 +89,10 @@ def _write_cache(path, data):
             json.dump(data, fh)
         os.replace(tmp, path)
     except (OSError, ValueError, TypeError) as exc:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
         print(
             "warning: could not write %s: %s" % (path, exc),
             file=sys.stderr,

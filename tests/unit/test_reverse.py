@@ -943,3 +943,97 @@ def test_endpoint_refs_drop_duplicate_concat_and_trailing_plus(tmp_path):
     refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
     assert refs == []
 
+
+def test_callee_walk_scopes_to_function_body():
+    """Verifies callees are resolved from the handler body via scoped usage lookup.
+
+    NOTE (adaptation): the plan asserted ``{"get_items": {"shop/services.py"}}``,
+    but callee_closure returns dotted defining MODULES (its docstring) so that
+    _endpoint_chain can rebuild the path; the plan's own _endpoint_chain does
+    ``module.replace(".", "/") + ".py"``. Adapted to the dotted module.
+    """
+    analyses = {
+        "shop/views.py": {
+            "analysis": {
+                "defs": {"product_view": {"kind": "function", "line": 4, "end_line": 8, "qname": "product_view"}},
+                "usages": [
+                    {"line": 5, "name": "get_items", "kind": "name", "ctx_qname": "product_view", "ctx_kind": "function"},
+                    {"line": 6, "name": "unrelated", "kind": "name", "ctx_qname": "other_view", "ctx_kind": "function"},
+                ],
+            }
+        },
+        "shop/services.py": {
+            "analysis": {
+                "defs": {"get_items": {"kind": "function", "line": 2, "end_line": 3, "qname": "get_items"}},
+                "usages": [],
+            }
+        },
+    }
+    out = rev.callee_closure(analyses, "product_view", "shop/views.py", max_hops=2)
+    assert out == {"get_items": {"shop.services"}}
+
+
+def test_endpoint_chain_rows(tmp_path):
+    """Verifies experimental endpoint rows: js literal -> route -> view -> callee.
+
+    NOTE (adaptation): the plan passed ``analyses={}`` and asserted
+    ``not unresolved``. Real analyses for the fixture's python files are built
+    with analyze_source (callee_closure needs them), and the unresolved check is
+    scoped to the endpoint leg: chain A legitimately emits a
+    "no template references this asset" note for the changed asset.
+    """
+    root = _repo(tmp_path, {
+        "shop/urls.py": "from django.urls import path\nimport shop.views as v\nurlpatterns = [path('shop/direct/', v.product_view)]\n",
+        "shop/views.py": (
+            "from shop import services\n\n"
+            "def product_view(request):\n"
+            "    return services.get_items(request)\n"
+        ),
+        "shop/services.py": "def get_items(request):\n    return []\n",
+        "media/shop/src/app/api.ts": "export function go() { return http.get('/shop/direct/'); }\n",
+    })
+    import subprocess
+
+    for args in (["init", "-q"], ["config", "user.name", "T"], ["config", "user.email", "t@e.co"],
+                 ["add", "-A"], ["commit", "-q", "-m", "m0"], ["remote", "add", "upstream", "."],
+                 ["push", "-q", "upstream", "master"]):
+        subprocess.check_call(["git"] + args, cwd=root)
+    with open(os.path.join(root, "media/shop/src/app/api.ts"), "a") as fh:
+        fh.write("// touch\n")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "m1"]):
+        subprocess.check_call(["git", "-C", root] + args)
+
+    from diffimpactscout.impact.diff_parser import get_file_changes
+    from diffimpactscout.impact.python_analyzer import analyze_source
+
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    analyses = {}
+    for rel in ("shop/views.py", "shop/services.py"):
+        with open(os.path.join(root, rel)) as fh:
+            analyses[rel] = {"analysis": analyze_source(fh.read())}
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "urls_globs": ["**/urls.py"], "frontend_globs": []}}
+    extra_entities, rows, layers, unresolved = rev.frontend_chain(
+        root, cfg, cfg["impact"], changes, {}, analyses, None, "refs/remotes/upstream/master", False, None, None,
+        experimental=True,
+    )
+    service_rows = [r for r in rows if r["path"] == "shop/services.py"]
+    assert len(service_rows) == 1
+    assert service_rows[0]["_entity"] == "get_items"
+    assert not any("route" in (u.get("reason") or "") for u in unresolved)
+
+
+def test_experimental_off_produces_no_endpoint_rows():
+    """Verifies the experimental gate keeps endpoint rows out by default."""
+    from diffimpactscout.impact.diff_parser import FileChange
+
+    changes = [FileChange("media/shop/src/app/api.ts", "M", None, "ts")]
+    out = rev.frontend_chain(
+        "/nonexistent-root", {"ignore_paths": []},
+        {"reverse": True, "urls_globs": [], "frontend_globs": []},
+        changes, {}, {}, None, None, False, None, None,
+        experimental=False,
+    )
+    assert out[1] == []
+    assert not any("route" in (u.get("reason") or "") for u in out[3])
+

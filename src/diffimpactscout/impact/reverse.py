@@ -833,6 +833,70 @@ def _resolve_imports_for_graph(root, path, cache, resolvable):
     return edges
 
 
+def _peel_analysis(entry):
+    """Return the raw analysis dict from a cache entry or raw analysis."""
+    if isinstance(entry, dict) and isinstance(entry.get("analysis"), dict):
+        return entry["analysis"]
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def callee_closure(analyses, handler_name, handler_path, max_hops=3, max_nodes=500):
+    """Return {callee_name: {defining module}} reachable from the handler's body.
+
+    Scoped resolution: usages are only considered inside functions whose
+    ctx_qname matches the handler's def qname (or a nested scope of it), and
+    a name becomes a callee only when a function/method with that name is
+    defined somewhere in the analyses (import-binding verification is
+    delegated to python_analyzer._usage_resolves semantics via the def
+    modules).
+    """
+    handler_analysis = _peel_analysis(analyses.get(handler_path))
+    if not handler_analysis:
+        return {}
+    qname = (handler_analysis.get("defs") or {}).get(handler_name, {}).get("qname") or handler_name
+    modules = {}
+    for path, entry in (analyses or {}).items():
+        analysis = _peel_analysis(entry)
+        if not analysis:
+            continue
+        for name, d in (analysis.get("defs") or {}).items():
+            if d.get("kind") in ("function", "method"):
+                modules.setdefault(name, set()).add(_module_of(path))
+    reached = {}
+    queue = [(handler_path, qname)]
+    hops = 0
+    while queue and hops < max_hops and len(reached) < max_nodes:
+        hops += 1
+        nxt = []
+        for path, scope_qname in queue:
+            analysis = _peel_analysis(analyses.get(path))
+            if not analysis:
+                continue
+            for u in analysis.get("usages") or []:
+                if u.get("kind") not in ("name", "attr"):
+                    continue
+                ctx = u.get("ctx_qname") or ""
+                if ctx != scope_qname and not ctx.startswith(scope_qname + "."):
+                    continue
+                name = u.get("name")
+                if not name or name == handler_name or name in reached:
+                    continue
+                mods = modules.get(name) or set()
+                if not mods:
+                    continue
+                reached[name] = mods
+                for mpath, entry in (analyses or {}).items():
+                    manalysis = _peel_analysis(entry)
+                    if not manalysis or name not in (manalysis.get("defs") or {}):
+                        continue
+                    d = manalysis["defs"][name]
+                    nxt.append((mpath, d.get("qname") or name))
+        queue = nxt
+    return reached
+
+
 def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, anchor, staged, from_ref, to_ref, experimental=False):
     """Chains A (+I, E in later tasks): changed js/ts -> reverse rows.
 
@@ -888,6 +952,14 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
                      "renders '%s' (line %d)" % (hit["template"], hit["line"]), entity)
         )
         layers.setdefault(entity, set()).add("template")
+    if experimental:
+        rows_e, layers_e, unresolved_e = _endpoint_chain(
+            root, cfg, impact_cfg, changes, analyses
+        )
+        rows.extend(rows_e)
+        for name, cats in layers_e.items():
+            layers.setdefault(name, set()).update(cats)
+        unresolved.extend(unresolved_e)
     e_entities, e_rows, e_layers, e_unresolved = js_internal_chain(
         root, cfg, impact_cfg, changes, cache, anchor, staged, from_ref, to_ref
     )
@@ -896,6 +968,57 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
         layers.setdefault(name, set()).update(cats)
     unresolved.extend(e_unresolved)
     return extra_entities, rows, layers, unresolved
+
+
+def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
+    """Chain E: changed js/ts http literals -> routes -> handler -> callees."""
+    from diffimpactscout.impact.route_linker import extract_django_routes, match_endpoints
+
+    urls_globs = impact_cfg.get("urls_globs") or []
+    if not urls_globs:
+        return [], {}, []
+    changed_js = [c for c in changes if c.ext in ("js", "ts", "jsx", "tsx")]
+    if not changed_js:
+        return [], {}, []
+    tracked = set(_tracked_files(root, cfg, "*.ts", "*.tsx", "*.js", "*.jsx"))
+    refs = _http_refs_for_files(root, [c.path for c in changed_js], tracked)
+    routes = extract_django_routes(root, urls_globs, cfg=cfg)
+    matched, unmatched = match_endpoints(refs, routes)
+    unresolved = [{"file": u.get("file"), "ref": u.get("path"), "reason": "no matching route"}
+                  for u in unmatched]
+    rows = []
+    layers = {}
+    seen_pairs = set()
+    for hit in matched:
+        route = hit.get("route")
+        handler = (route.handler or "").rsplit(".", 1)[-1] if route else None
+        if not handler:
+            continue
+        key = (hit["file"], handler)
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        pseudo = "endpoint:%s" % handler
+        layers.setdefault(pseudo, set()).add("frontend")
+        rows.append(
+            make_row(hit["file"], _dir_of(hit["file"]), "frontend",
+                     "http %s '%s' -> %s" % (hit.get("method") or "get", hit["ref"], route.full), pseudo)
+        )
+        for path, entry in (analyses or {}).items():
+            analysis = _peel_analysis(entry)
+            if not analysis or handler not in (analysis.get("defs") or {}):
+                continue
+            callees = callee_closure(analyses, handler, path)
+            for callee, mods in callees.items():
+                for module in sorted(mods):
+                    def_path = module.replace(".", "/") + ".py"
+                    layers.setdefault(callee, set()).add("python")
+                    rows.append(
+                        make_row(def_path, module, "python",
+                                 "%s() called from %s (via %s)" % (callee, handler, hit["ref"]), callee)
+                    )
+            break
+    return rows, layers, unresolved
 
 
 def _asset_matches(norm, tracked_path):

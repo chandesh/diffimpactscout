@@ -878,3 +878,25 @@ def test_str_usage_not_spurious_caller_hop_or_route_binding():
         "create": {"kind": "function", "deleted": False, "modules": {"app.views"}}
     }
     assert impact._affected_routes([route], analyses, entities, set()) == []
+
+
+def test_route_binds_handler_ignores_str_usage():
+    """Verifies that a string literal never binds a route handler by itself.
+
+    The urls module binds the name 'create' only as an alias to a different
+    object (from app.views import orders as create); the changed entity
+    'create' is not actually imported. reverse('create') records a 'str'
+    usage that resolves through that alias, so without the kind guard the
+    route would be falsely bound even though no genuine import names the
+    handler. The module (app.urls) is outside the handler's mods so the
+    same-module shortcut cannot mask the result.
+    """
+    urls = pa.analyze_source(
+        "from app.views import orders as create\n"
+        "\n"
+        "def reverse_url():\n"
+        "    return reverse('create')\n"
+    )
+    assert not impact._route_binds_handler(
+        urls, "create", {"app.views"}, "app/urls.py", set()
+    )

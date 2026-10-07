@@ -80,7 +80,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         extra_entities, reverse_rows, reverse_layers, reverse_unresolved = reverse_mod.template_chain(
             root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
         )
-        entities.update(extra_entities)
+        _merge_entities(entities, extra_entities)
     rows, endpoints, unresolved = _compose_rows(
         root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg,
         extra_rows=reverse_rows,
@@ -166,6 +166,19 @@ def _changed_entities(
                     entities[name] = {"kind": ent.kind, "deleted": True, "modules": set()}
                 entities[name]["modules"].add(old_module)
     return entities
+
+
+def _merge_entities(entities, extra):
+    for name, ent in (extra or {}).items():
+        existing = entities.get(name)
+        if existing is None:
+            entities[name] = {
+                "kind": ent.get("kind", "function"),
+                "deleted": bool(ent.get("deleted")),
+                "modules": set(ent.get("modules") or ()),
+            }
+            continue
+        existing.setdefault("modules", set()).update(ent.get("modules") or ())
 
 
 def _module_of(path):

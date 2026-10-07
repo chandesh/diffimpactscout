@@ -8,8 +8,7 @@ import os
 import re
 
 import diffimpactscout.gitrun as gitrun
-from diffimpactscout.config import is_excluded
-from diffimpactscout.impact.diff_parser import get_changed_lines, read_path_at_ref
+from diffimpactscout.config import is_excluded, _matches_glob
 
 # Matches Django {% extends %} tags with a STATIC template name.
 #   Matches:  {% extends 'common/base.html' %}   -> captures "common/base.html"
@@ -213,7 +212,7 @@ def find_render_sites(analyses, template_names):
             ctx = usage.get("ctx_qname") or ""
             hits.append({
                 "path": path,
-                "line": usage.get("line", 0),
+                "line": usage.get("line", 0) or 0,
                 "template": usage.get("name"),
                 "ctx_qname": ctx,
                 "ctx_leaf": ctx.rsplit(".", 1)[-1] if ctx else "",
@@ -288,7 +287,6 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
     graphs = {}
     for path in template_files:
         graphs[template_name_of(path) or path] = analyze_template_graph(root, path, cache, cfg)
-    cache.save_section("templates", cache.load_section("templates"))
     extra_entities = {}
     rows = []
     layers = {}
@@ -333,16 +331,14 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
             )
         )
     for path in changed_templates:
-        name = template_name_of(path)
-        graph = graphs.get(name) or {}
-        if graph.get("includes") == [] and _has_dynamic_include(root, path):
+        if _has_dynamic_include(root, path):
             unresolved.append({"file": path, "reason": "dynamic include; manual check required"})
     return extra_entities, rows, layers, unresolved
 
 
 def _glob_match_any(path, patterns):
-    from diffimpactscout.config import _matches_glob
-
+    if isinstance(patterns, str):
+        patterns = [patterns]
     return any(_matches_glob(path, p) for p in patterns)
 
 

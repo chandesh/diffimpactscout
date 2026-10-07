@@ -652,10 +652,16 @@ def test_import_lookbehind_blocks_member_call(tmp_path):
 
 
 def test_quoted_export_name_containing_import_syntax_does_not_leak(tmp_path):
-    """Doc claim: a kept quoted export name is not re-scanned for imports."""
+    """Doc claim: quoted export names are blanked for the import scan.
+
+    The import keyword may sit anywhere in the quoted name (start, after a
+    space, after a comma) and still must not produce an import edge.
+    """
     src = (
         "export { \"import('./evil')\" };\n"
         "export { \"require('./evil2')\" as x };\n"
+        "export { alpha, \"x import('./evil3')\" };\n"
+        "export { \"x require('./evil4')\" };\n"
         "import real from './real';\n"
     )
     root = _repo(tmp_path, {"media/a.ts": src})

@@ -443,11 +443,13 @@ _LITERAL_REGION_RE = re.compile(
 
 # Matches the prefix immediately before a quoted literal region; a region
 # survives only when this matches, i.e. it sits in an operand position or
-# names a quoted export inside an EXPORT brace list. It is tested against
-# the FULLY-blanked text (every region replaced by spaces), so a literal
-# that merely CONTAINS "export {" cannot make a later literal look like an
-# operand. The brace branch is anchored on the "export" keyword (not a bare
-# "{") so object-literal keys and "as" type assertions are blanked.
+# names a quoted export inside an EXPORT brace list. Used by the EXPORT scan
+# (_blank_literals(keep_export_names=True)); the import scan uses
+# _LITERAL_IMPORT_OPERAND_RE so export-brace names never reach it. Tested
+# against the FULLY-blanked text (every region replaced by spaces), so a
+# literal that merely CONTAINS "export {" cannot make a later literal look
+# like an operand. The brace branch is anchored on the "export" keyword (not
+# a bare "{") so object-literal keys and "as" type assertions are blanked.
 #   Matches:  "import x from "  (from operand:  from './b')
 #             "import("         (dynamic import operand: import('./b'))
 #             "require ("       (require operand: require('./b'))
@@ -464,6 +466,18 @@ _LITERAL_REGION_RE = re.compile(
 #                                 only counts inside an export brace list)
 #             "bellyrequire("    (no word boundary before "require")
 _LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|\bexport\s*\{[^}]*\Z")
+
+# Import-scan variant of _LITERAL_OPERAND_RE: only the transport operands are
+# kept, so a quoted name inside an "export {...}" list is blanked and its
+# contents can never leak into the import graph.
+#   Matches:  "import x from "  (from operand:  from './b')
+#             "import("         (dynamic import operand: import('./b'))
+#             "require ("       (require operand: require('./b'))
+#             "import "         (side-effect operand: import './b')
+#   Captures: nothing (used as a boolean via re.search)
+#   Skips:    "export { "        (quoted export name -> blanked for imports)
+#             "const s = "       (assignment RHS -> region is blanked)
+_LITERAL_IMPORT_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z")
 
 _VENDOR_SUFFIXES = (".min.js", ".bundle.js")
 
@@ -488,22 +502,26 @@ def _blank_region(region):
     return "".join(ch if ch in "\r\n" else " " for ch in region)
 
 
-def _blank_literals(text):
-    """Blank quoted literal regions that are not import/require operands.
+def _blank_literals(text, keep_export_names=True):
+    """Blank quoted literal regions that are not operands.
 
     Scans left to right for non-overlapping regions (double-quoted,
     single-quoted, backtick) and replaces each non-operand region's
     characters with spaces of identical length, preserving "\\n" and "\\r"
-    so line numbers never shift. Operand regions (from/import/require
-    operand quotes and quoted export names inside braces) are copied
-    through unchanged; every other region is blanked, including regions
-    that follow an operand region. Operand detection runs against a copy of
-    the text in which ALL regions are already blanked, so a literal whose
-    contents look like an operand prefix cannot keep a later literal alive.
+    so line numbers never shift. Operand regions are copied through
+    unchanged; every other region is blanked, including regions that follow
+    an operand region. ``keep_export_names`` selects the operand set: True
+    (the export scan) also keeps quoted names inside an "export {...}" list;
+    False (the import scan) keeps only from/import/require operands, so a
+    quoted export name is blanked and cannot leak its contents as imports.
+    Operand detection runs against a copy of the text in which ALL regions
+    are already blanked, so a literal whose contents look like an operand
+    prefix cannot keep a later literal alive.
     """
     regions = list(_LITERAL_REGION_RE.finditer(text))
     if not regions:
         return text
+    operand_re = _LITERAL_OPERAND_RE if keep_export_names else _LITERAL_IMPORT_OPERAND_RE
     pieces = []
     pos = 0
     for match in regions:
@@ -516,7 +534,7 @@ def _blank_literals(text):
     pos = 0
     for match in regions:
         window = max(0, match.start() - _OPERAND_WINDOW)
-        if _LITERAL_OPERAND_RE.search(blanked, window, match.start()):
+        if operand_re.search(blanked, window, match.start()):
             out.append(text[pos:match.end()])
         else:
             out.append(text[pos:match.start()])
@@ -562,19 +580,21 @@ def analyze_frontend_graph(root, path, cache, tracked):
         return graph
     from diffimpactscout.impact.route_linker import _strip_comments
 
-    clean = _blank_literals(_strip_comments(text))
+    clean = _strip_comments(text)
+    import_text = _blank_literals(clean, keep_export_names=False)
+    export_text = _blank_literals(clean, keep_export_names=True)
     imports = [
         spec
-        for groups in _IMPORT_SPEC_RE.findall(clean)
+        for groups in _IMPORT_SPEC_RE.findall(import_text)
         for spec in groups
         if spec and spec.startswith(".")
     ]
     exports = []
-    for groups in _EXPORT_NAMED_RE.findall(clean):
+    for groups in _EXPORT_NAMED_RE.findall(export_text):
         for name in groups:
             if name:
                 exports.append(name)
-    for brace in _EXPORT_BRACE_RE.findall(clean):
+    for brace in _EXPORT_BRACE_RE.findall(export_text):
         for raw in brace.split(","):
             piece = re.split(r"\s+as\s+", raw.strip())[-1].strip()
             piece = re.sub(r"^type\s+", "", piece).strip().strip("'\"")

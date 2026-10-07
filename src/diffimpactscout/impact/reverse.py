@@ -946,16 +946,20 @@ _FETCH_RE = re.compile(r"\bfetch\s*\(")
 #   Matches:  const API = '/shop/';                       -> API -> "/shop/"
 #             static readonly LIST: string = '/shop/l/';  -> LIST -> "/shop/l/"
 #   Skips:    const API = buildUrl();          (non-literal RHS)
+#             const API = '/shop/' + more;     (trailing "+" -> not a pure
+#                                               literal; (?!\s*\+) rejects it)
 _CONST_ASSIGN_RE = re.compile(
-    r"""\b(?:const|let|var|readonly|static\s+readonly|public\s+readonly)\s+(\w{1,100})[^=\n]{0,200}=\s*['"`]([^'"`\n]{1,300})['"`]"""
+    r"""\b(?:const|let|var|readonly|static\s+readonly|public\s+readonly)\s+(\w{1,100})[^=\n]{0,200}=\s*['"`]([^'"`\n]{1,300})['"`](?!\s*\+)"""
 )
 
 # Matches PREFIX-CONCATENATION assignments so one-level propagation resolves them.
-# Quantifiers bounded as in _CONST_ASSIGN_RE.
+# Quantifiers bounded as in _CONST_ASSIGN_RE; a trailing "+" is rejected so
+# "BASE + 'items/' + query" is not mistaken for a two-part join.
 #   Matches:  const LIST = API + 'items/';   -> LIST -> consts["API"] + "items/"
 #   Skips:    const X = A + B;               (no string literal part)
+#             const Y = A + 'p/' + q;        (trailing "+" -> rejected)
 _CONST_CONCAT_RE = re.compile(
-    r"""\b(?:const|let|var|readonly|static\s+readonly)\s+(\w{1,100})[^=\n]{0,200}=\s*(\w{1,100})\s*\+\s*['"`]([^'"`\n]{1,300})['"`]"""
+    r"""\b(?:const|let|var|readonly|static\s+readonly)\s+(\w{1,100})[^=\n]{0,200}=\s*(\w{1,100})\s*\+\s*['"`]([^'"`\n]{1,300})['"`](?!\s*\+)"""
 )
 
 
@@ -965,8 +969,10 @@ def _http_refs_for_files(root, paths, tracked=None):
     One-level constant propagation only: a string const, or a prefix
     concatenation of one string const plus a literal, is substituted into a
     call argument. Deeper chains and runtime-built URLs are dropped
-    (unresolved). Const resolution is file-global; a name assigned more than
-    once is dropped rather than resolved to an arbitrary occurrence.
+    (unresolved). Const resolution is file-global; a name DECLARED with a
+    string literal or such a concatenation more than once is dropped rather
+    than resolved to an arbitrary occurrence (reassignment without a
+    declaration keyword, e.g. ``let x = 'a'; x = 'b';``, is not detected).
     """
     refs = []
     for path in paths:
@@ -986,8 +992,12 @@ def _http_refs_for_files(root, paths, tracked=None):
         literals = dict(consts)
         for m in _CONST_CONCAT_RE.finditer(clean):
             name = m.group(1)
+            if name in consts or name in ambiguous:
+                consts.pop(name, None)
+                ambiguous.add(name)
+                continue
             base = literals.get(m.group(2))
-            if base and name not in consts and name not in ambiguous:
+            if base:
                 consts[name] = base + m.group(3)
         for regex, has_method in ((HTTP_CALL_RE, True), (_FETCH_RE, False)):
             for m in regex.finditer(clean):
@@ -1008,7 +1018,7 @@ def _http_refs_for_files(root, paths, tracked=None):
 
 def _arg_value_after(text, offset, consts):
     """Return the endpoint string at a call site: quoted literal or known constant."""
-    window = text[offset: offset + 300]
+    window = text[offset: offset + 512]
     stripped = window.lstrip()
     if stripped[:1] in ("'", '"'):
         lit = QUOTED_LITERAL_RE.match(stripped)

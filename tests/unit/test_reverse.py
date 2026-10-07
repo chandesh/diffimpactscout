@@ -928,3 +928,18 @@ def test_endpoint_refs_drop_ambiguous_const(tmp_path):
     refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
     assert refs == []
 
+
+def test_endpoint_refs_drop_duplicate_concat_and_trailing_plus(tmp_path):
+    """Duplicate concat declarations are dropped; a trailing "+" is rejected."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/api.ts": (
+            "const A = '/a/';\n"
+            "const B = A + 'b/';\n"
+            "const B = A + 'c/';\n"
+            "const D = A + 'd/' + query;\n"
+            "function go() { http.get(B); http.get(D); }\n"
+        ),
+    })
+    refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
+    assert refs == []
+

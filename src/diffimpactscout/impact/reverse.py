@@ -1012,10 +1012,11 @@ def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
             for callee, mods in callees.items():
                 for module in sorted(mods):
                     def_path = module.replace(".", "/") + ".py"
-                    layers.setdefault(callee, set()).add("python")
+                    pseudo_c = "js-fn:%s" % callee
+                    layers.setdefault(pseudo_c, set()).add("python")
                     rows.append(
                         make_row(def_path, module, "python",
-                                 "%s() called from %s (via %s)" % (callee, handler, hit["ref"]), callee)
+                                 "%s() called from %s (via %s)" % (callee, handler, hit["ref"]), pseudo_c)
                     )
             break
     return rows, layers, unresolved

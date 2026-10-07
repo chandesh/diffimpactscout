@@ -1019,7 +1019,7 @@ def test_endpoint_chain_rows(tmp_path):
     )
     service_rows = [r for r in rows if r["path"] == "shop/services.py"]
     assert len(service_rows) == 1
-    assert service_rows[0]["_entity"] == "get_items"
+    assert service_rows[0]["_entity"] == "js-fn:get_items"
     assert not any("route" in (u.get("reason") or "") for u in unresolved)
 
 

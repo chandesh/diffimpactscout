@@ -990,12 +990,15 @@ def _http_refs_for_files(root, paths, tracked=None):
             else:
                 consts[name] = m.group(2)
         literals = dict(consts)
+        concat_seen = set()
         for m in _CONST_CONCAT_RE.finditer(clean):
             name = m.group(1)
-            if name in consts or name in ambiguous:
+            if name in consts or name in ambiguous or name in concat_seen:
                 consts.pop(name, None)
                 ambiguous.add(name)
+                concat_seen.add(name)
                 continue
+            concat_seen.add(name)
             base = literals.get(m.group(2))
             if base:
                 consts[name] = base + m.group(3)

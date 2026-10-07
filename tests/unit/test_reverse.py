@@ -88,3 +88,52 @@ def test_normalize_asset_ref_dynamic_cdn_query_and_dot_lead():
     assert rev._normalize_asset_ref("//cdn.example.com/a.js") is None
     assert rev._normalize_asset_ref("shop/app.js?v=1.2") == "shop/app.js"
     assert rev._normalize_asset_ref("./js/app.js") == "js/app.js"
+
+
+def test_render_site_rows_for_changed_template():
+    """Verifies that a changed template produces a python row per render site."""
+    analyses = {
+        "shop/views.py": {
+            "analysis": {
+                "defs": {},
+                "usages": [
+                    {"line": 9, "name": "shop/product.html", "kind": "str", "ctx_qname": "product_view", "ctx_kind": "function"},
+                    {"line": 3, "name": "shop/other.html", "kind": "str", "ctx_qname": "other_view", "ctx_kind": "function"},
+                ],
+            }
+        },
+    }
+    hits = rev.find_render_sites(analyses, ["shop/product.html"])
+    assert len(hits) == 1
+    assert hits[0]["path"] == "shop/views.py"
+    assert hits[0]["ctx_leaf"] == "product_view"
+
+
+def test_extends_descendants_closed_transitively():
+    """Verifies that descendant templates of a changed base are closed transitively."""
+    graphs = {
+        "a.html": {"extends": ["b.html"], "includes": []},
+        "b.html": {"extends": ["c.html"], "includes": ["d.html"]},
+        "c.html": {"extends": [], "includes": []},
+        "d.html": {"extends": [], "includes": []},
+    }
+    out = rev.descendants_of("c.html", graphs)
+    assert out == {"b.html": ["c.html"], "a.html": ["b.html"]}
+
+
+def test_extends_cycle_guard():
+    """Verifies that an extends cycle does not loop forever."""
+    graphs = {
+        "a.html": {"extends": ["b.html"], "includes": []},
+        "b.html": {"extends": ["a.html"], "includes": []},
+    }
+    assert rev.descendants_of("a.html", graphs) == {}
+
+
+def test_reverse_row_shape():
+    """Verifies that row dicts carry the fields the report pipeline consumes."""
+    row = rev.make_row("shop/views.py", "shop", "python", "render('shop/product.html') at line 9", "product_view")
+    assert row["path"] == "shop/views.py"
+    assert row["category"] == "python"
+    assert row["_entity"] == "product_view"
+    assert row["_deleted"] is False

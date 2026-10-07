@@ -171,3 +171,72 @@ def _tracked_files(root, cfg, *patterns):
         if not is_excluded(path, cfg, root):
             files.append(path)
     return files
+
+
+def find_render_sites(analyses, template_names):
+    """Return hits where a changed template name appears as a string usage.
+
+    analyses maps path -> cache entry or raw analysis (same contract as
+    python_analyzer.find_references). Each hit adds "path" and
+    "ctx_leaf" (the enclosing function/method name = the render site).
+    """
+    wanted = set(template_names)
+    hits = []
+    for path, entry in (analyses or {}).items():
+        analysis = entry
+        if isinstance(entry, dict) and isinstance(entry.get("analysis"), dict):
+            analysis = entry["analysis"]
+        if not isinstance(analysis, dict):
+            continue
+        for usage in analysis.get("usages") or []:
+            if usage.get("kind") != "str" or usage.get("name") not in wanted:
+                continue
+            ctx = usage.get("ctx_qname") or ""
+            hits.append({
+                "path": path,
+                "line": usage.get("line", 0),
+                "template": usage.get("name"),
+                "ctx_qname": ctx,
+                "ctx_leaf": ctx.rsplit(".", 1)[-1] if ctx else "",
+            })
+    hits.sort(key=lambda h: (h["path"], h["line"]))
+    return hits
+
+
+def descendants_of(name, graphs):
+    """Map child template name -> the direct extends target for all descendants of ``name``.
+
+    Walks the inverted extends graph transitively with a cycle guard; a
+    child is included only when reached through a chain of extends edges.
+    """
+    children = {}
+    for child, graph in graphs.items():
+        for target in graph.get("extends") or []:
+            children.setdefault(target, []).append(child)
+    out = {}
+    queue = [name]
+    seen = {name}
+    while queue:
+        current = queue.pop(0)
+        for child in children.get(current, []):
+            if child in seen:
+                if child == name:
+                    return {}
+                continue
+            seen.add(child)
+            targets = [t for t in graphs.get(child, {}).get("extends") or []]
+            out[child] = [t for t in targets if t == current] or targets
+            queue.append(child)
+    return out
+
+
+def make_row(path, module, category, ref, entity_name, deleted=False):
+    """Build a row dict shaped for the existing report pipeline."""
+    return {
+        "path": path,
+        "module": module,
+        "category": category,
+        "ref": ref,
+        "_entity": entity_name,
+        "_deleted": deleted,
+    }

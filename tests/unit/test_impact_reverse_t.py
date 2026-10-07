@@ -112,6 +112,20 @@ def test_dynamic_include_surfaces_in_unresolved(tmp_path, capsys):
     assert "shop/templates/shop/base.html" in files
 
 
+def test_merge_entities_preserves_existing_kind_and_deleted():
+    """Reverse pseudo-entities must not clobber a real changed/deleted symbol."""
+    entities = {"detail": {"kind": "function", "deleted": True, "modules": {"app_a.views"}}}
+    extra = {"detail": {"kind": "function", "deleted": False, "modules": {"app_b.views"}}}
+    impact_module._merge_entities(entities, extra)
+    assert entities["detail"]["deleted"] is True
+    assert entities["detail"]["kind"] == "function"
+    assert entities["detail"]["modules"] == {"app_a.views", "app_b.views"}
+    impact_module._merge_entities(
+        entities, {"newview": {"kind": "function", "deleted": False, "modules": {"x"}}}
+    )
+    assert entities["newview"] == {"kind": "function", "deleted": False, "modules": {"x"}}
+
+
 def test_unrelated_template_view_produces_no_row(tmp_path, capsys):
     """A view rendering a template that is neither changed nor a descendant gets no row."""
     root = _repo(tmp_path)

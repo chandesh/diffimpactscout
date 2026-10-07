@@ -63,7 +63,7 @@ def test_reverse_off_keeps_empty_table(tmp_path, capsys):
     _git("add", "-A", cwd=root)
     _git("commit", "-m", "m1", cwd=root)
     cfg = config._defaults()
-    rc = impact_module.run_impact(root, cfg, json_out=True)
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["rows"] == []
 
@@ -114,16 +114,31 @@ def test_dynamic_include_surfaces_in_unresolved(tmp_path, capsys):
 
 def test_merge_entities_preserves_existing_kind_and_deleted():
     """Reverse pseudo-entities must not clobber a real changed/deleted symbol."""
-    entities = {"detail": {"kind": "function", "deleted": True, "modules": {"app_a.views"}}}
+    entities = {"detail": {"kind": "class", "deleted": True, "modules": {"app_a.views"}}}
     extra = {"detail": {"kind": "function", "deleted": False, "modules": {"app_b.views"}}}
     impact_module._merge_entities(entities, extra)
     assert entities["detail"]["deleted"] is True
-    assert entities["detail"]["kind"] == "function"
+    assert entities["detail"]["kind"] == "class"
     assert entities["detail"]["modules"] == {"app_a.views", "app_b.views"}
     impact_module._merge_entities(
         entities, {"newview": {"kind": "function", "deleted": False, "modules": {"x"}}}
     )
     assert entities["newview"] == {"kind": "function", "deleted": False, "modules": {"x"}}
+
+
+def test_mixed_static_and_dynamic_include_is_unresolved(tmp_path, capsys):
+    """A template with both a static and a dynamic include is still unresolved."""
+    root = _template_repo(tmp_path)
+    with open(os.path.join(root, "shop", "templates", "shop", "base.html"), "w") as fh:
+        fh.write("{% include 'shop/nav.html' %}\n{% include fragment_template %}\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    out = json.loads(capsys.readouterr().out)
+    files = {u.get("file") for u in out["unresolved"]}
+    assert "shop/templates/shop/base.html" in files
 
 
 def test_unrelated_template_view_produces_no_row(tmp_path, capsys):

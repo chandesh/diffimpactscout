@@ -613,7 +613,7 @@ def test_object_literal_key_and_type_assertion_do_not_leak_imports(tmp_path):
 
 
 def test_blanked_literal_containing_export_brace_does_not_leak_next_literal(tmp_path):
-    """Doc claim: the brace operand span stops at a quote.
+    """Doc claim: operand detection runs against fully-blanked text.
 
     A blanked string/template that merely CONTAINS "export {" must not keep
     the following literal alive (which would leak import syntax).

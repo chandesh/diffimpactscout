@@ -847,11 +847,12 @@ def callee_closure(analyses, handler_name, handler_path, max_hops=3, max_nodes=5
 
     Scoped resolution: usages are only considered inside functions whose
     ctx_qname matches the handler's def qname (or a nested scope of it), and
-    a name becomes a callee only when a function/method with that name is
-    defined somewhere in the analyses (import-binding verification is
-    delegated to python_analyzer._usage_resolves semantics via the def
-    modules).
+    each candidate name is resolved with python_analyzer._usage_resolves
+    (import-from binding), so a same-name function defined in an unrelated
+    module is never attributed (no bare-name matching).
     """
+    import diffimpactscout.impact.python_analyzer as pa
+
     handler_analysis = _peel_analysis(analyses.get(handler_path))
     if not handler_analysis:
         return {}
@@ -881,15 +882,23 @@ def callee_closure(analyses, handler_name, handler_path, max_hops=3, max_nodes=5
                 if ctx != scope_qname and not ctx.startswith(scope_qname + "."):
                     continue
                 name = u.get("name")
-                if not name or name == handler_name or name in reached:
+                if not name or name == handler_name:
                     continue
-                mods = modules.get(name) or set()
-                if not mods:
+                candidates = modules.get(name) or set()
+                if not candidates:
                     continue
-                reached[name] = mods
+                resolved = {
+                    module for module in candidates
+                    if pa._usage_resolves(analysis, u, name, {module}, path, set())
+                }
+                if not resolved:
+                    continue
+                reached.setdefault(name, set()).update(resolved)
                 for mpath, entry in (analyses or {}).items():
                     manalysis = _peel_analysis(entry)
                     if not manalysis or name not in (manalysis.get("defs") or {}):
+                        continue
+                    if _module_of(mpath) not in resolved:
                         continue
                     d = manalysis["defs"][name]
                     nxt.append((mpath, d.get("qname") or name))

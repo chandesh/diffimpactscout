@@ -947,16 +947,17 @@ def test_endpoint_refs_drop_duplicate_concat_and_trailing_plus(tmp_path):
 def test_callee_walk_scopes_to_function_body():
     """Verifies callees are resolved from the handler body via scoped usage lookup.
 
-    NOTE (adaptation): the plan asserted ``{"get_items": {"shop/services.py"}}``,
-    but callee_closure returns dotted defining MODULES (its docstring) so that
-    _endpoint_chain can rebuild the path; the plan's own _endpoint_chain does
-    ``module.replace(".", "/") + ".py"``. Adapted to the dotted module.
+    NOTE (adaptations): callee_closure returns dotted defining MODULES (its
+    docstring; _endpoint_chain rebuilds the path via module.replace(".", "/")),
+    and resolution uses import-from binding, so the synthetic views analysis
+    carries the ``from shop.services import get_items`` import usage.
     """
     analyses = {
         "shop/views.py": {
             "analysis": {
                 "defs": {"product_view": {"kind": "function", "line": 4, "end_line": 8, "qname": "product_view"}},
                 "usages": [
+                    {"line": 1, "name": "get_items", "kind": "import", "module": "shop.services", "level": 0},
                     {"line": 5, "name": "get_items", "kind": "name", "ctx_qname": "product_view", "ctx_kind": "function"},
                     {"line": 6, "name": "unrelated", "kind": "name", "ctx_qname": "other_view", "ctx_kind": "function"},
                 ],
@@ -971,6 +972,36 @@ def test_callee_walk_scopes_to_function_body():
     }
     out = rev.callee_closure(analyses, "product_view", "shop/views.py", max_hops=2)
     assert out == {"get_items": {"shop.services"}}
+
+
+def test_callee_walk_uses_import_binding_not_bare_name():
+    """A same-name function in an unrelated module is not attributed."""
+    analyses = {
+        "shop/views.py": {
+            "analysis": {
+                "defs": {"product_view": {"kind": "function", "line": 4, "end_line": 8, "qname": "product_view"}},
+                "usages": [
+                    {"line": 1, "name": "services", "kind": "import", "module": "shop", "level": 0},
+                    {"line": 5, "name": "get_items", "kind": "attr", "base": "services", "ctx_qname": "product_view", "ctx_kind": "function"},
+                ],
+            }
+        },
+        "shop/services.py": {
+            "analysis": {
+                "defs": {"get_items": {"kind": "function", "line": 2, "end_line": 3, "qname": "get_items"}},
+                "usages": [],
+            }
+        },
+        "billing/services.py": {
+            "analysis": {
+                "defs": {"get_items": {"kind": "function", "line": 2, "end_line": 3, "qname": "get_items"}},
+                "usages": [],
+            }
+        },
+    }
+    assert rev.callee_closure(analyses, "product_view", "shop/views.py", max_hops=2) == {
+        "get_items": {"shop.services"},
+    }
 
 
 def test_endpoint_chain_rows(tmp_path):

@@ -810,3 +810,31 @@ def test_brace_export_change_produces_row(tmp_path):
     assert row["_entity"] == "js:calc"
     assert row["_deleted"] is True
 
+
+def test_multiline_brace_export_change_is_detected(tmp_path):
+    """Each brace-list name maps to its OWN line, so a middle-line change is
+    scoped correctly (not hidden by the opener line)."""
+    root = _js_repo(tmp_path, {
+        "media/shop/src/app/util.ts": (
+            "function x() {}\n"
+            "function y() {}\n"
+            "export {\n"
+            "  x,\n"
+            "  y,\n"
+            "};\n"
+        ),
+        "media/shop/src/app/page.ts": "import { x } from './util';\nconsole.log(x());\n",
+    })
+    with open(os.path.join(root, "media/shop/src/app/util.ts"), "w") as fh:
+        fh.write("function x2() {}\nfunction y() {}\nexport {\n  x2,\n  y,\n};\n")
+    _js_commit(root, "m1")
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    _e, rows, _l, _u = rev.js_internal_chain(
+        root, cfg, cfg["impact"], _js_changes(root), None,
+        "refs/remotes/upstream/master", False, None, None,
+    )
+    row = next(r for r in rows if r["path"] == "media/shop/src/app/page.ts")
+    assert row["_entity"] == "js:x"
+    assert row["_deleted"] is True
+

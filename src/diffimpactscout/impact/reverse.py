@@ -4,6 +4,7 @@ Example: a diff that touches only a template produces rows for the views
 that render it, its route(s), and the templates extending it.
 """
 
+import bisect
 import os
 import re
 
@@ -659,62 +660,42 @@ def importers_of(target, graph, max_nodes=500):
     return out
 
 
-# Line-anchored variant of _EXPORT_NAMED_RE used with finditer so each match
-# yields a line number for changed-line scoping (name -> defining line).
-# Mirrors _EXPORT_NAMED_RE's forms so a changed/deleted export is never
-# missed; "^[ \t]*" (not "\s*") keeps the match start on the export's own
-# line, so the derived line number is exact.
-#   Matches:  "export function calc(x) {}"           -> "calc"
-#             "  export const X = 1"                  (indented; [ \t]* allows)
-#             "export default async function boot() {}" -> "boot"
-#             "export function* gen() {}"             -> "gen"
-#             "export default Foo;"                   -> "Foo"
-#   Captures: one of groups 1-5 (function/class/const/let/var name) or
-#             group 6 (export default <ident>)
-#   Skips:    export { a, b };          (brace list, handled by _EXPORT_BRACE_RE)
-#             export default function () {}   (anonymous; no name)
-#             export type/interface/enum/namespace  (TS-only declarations)
-_JS_LINE_EXPORT_RE = re.compile(
-    r"""(?:^[ \t]*export\s+(?:(?:default|async)\s+)*"""
-    r"""(?:function\s*(?:\*\s*)?(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))"""
-    r"""|^[ \t]*export\s+default\s+(?!(?:function|class|const|let|var|async)\b)"""
-    r"""([A-Za-z_$][\w$]*))""",
-    re.M,
-)
+def _newline_offsets(text):
+    """Index of every "\\n" in ``text`` (for O(log n) line lookups)."""
+    return [i for i, ch in enumerate(text) if ch == "\n"]
 
 
-# Line-anchored brace-list export matcher used by _export_lines so names
-# exported via "export { ... }" are scoped to their line too. Body capped at
-# 4096 so an unmatched "{" cannot scan to EOF (linear). Mirrors
-# _EXPORT_BRACE_RE's name handling (right side of "as", "type " and quotes
-# stripped).
-#   Matches:  "export { alpha, beta as gamma };"  -> ["alpha", "gamma"]
-#             "export {\n  a,\n  b\n};"            -> ["a", "b"]
-#   Captures: group 1 = the raw brace body
-#   Skips:    export * from './m';               (star export, no brace list)
-#             export type { Foo };               ("type" sits before the brace)
-_JS_LINE_BRACE_EXPORT_RE = re.compile(r"^[ \t]*export\s*\{([^}]{0,4096})\}", re.M)
+def _line_at(newlines, pos):
+    """1-based line number of character offset ``pos``."""
+    return bisect.bisect_left(newlines, pos) + 1
 
 
 def _export_lines(text):
     """Map exported name -> line number (1-based).
 
-    Covers declaration exports (function/class/const/let/var, default ident)
-    and brace-list exports ("export { a, b as c }"), matching the name set
-    that analyze_frontend_graph records in graph["exports"].
+    Reuses _EXPORT_NAMED_RE / _EXPORT_BRACE_RE so the name set is identical
+    to analyze_frontend_graph's graph["exports"] (no export form is missed).
+    Each brace-list name is mapped to its OWN line (per comma-segment
+    offset), not the opener line, so changed-line scoping stays correct for
+    multi-line export lists.
     """
+    newlines = _newline_offsets(text)
     out = {}
-    for m in _JS_LINE_EXPORT_RE.finditer(text):
+    for m in _EXPORT_NAMED_RE.finditer(text):
         for name in m.groups():
             if name:
-                out.setdefault(name, text[: m.start()].count("\n") + 1)
-    for m in _JS_LINE_BRACE_EXPORT_RE.finditer(text):
-        line = text[: m.start()].count("\n") + 1
+                out.setdefault(name, _line_at(newlines, m.start()))
+    for m in _EXPORT_BRACE_RE.finditer(text):
+        body_start = m.start(1)
+        offset = 0
         for raw in m.group(1).split(","):
+            seg_start = body_start + offset
+            offset += len(raw) + 1
+            lead = len(raw) - len(raw.lstrip())
             piece = re.split(r"\s+as\s+", raw.strip())[-1].strip()
             piece = re.sub(r"^type\s+", "", piece).strip().strip("'\"")
             if piece:
-                out.setdefault(piece, line)
+                out.setdefault(piece, _line_at(newlines, seg_start + lead))
     return out
 
 
@@ -770,7 +751,7 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
             if not binds:
                 continue
             for name in sorted(changed_names):
-                if not re.search(r"\b%s\b" % re.escape(name), importer_text):
+                if not re.search(r"(?<![\w$])%s(?![\w$])" % re.escape(name), importer_text):
                     continue
                 pseudo = "js:%s" % name
                 rows.append(
@@ -802,13 +783,17 @@ def _clean_for_exports(text):
     return _blank_literals(_strip_comments(text), keep_export_names=True)
 
 
-def _resolve_imports_for_graph(root, path, cache, tracked):
-    """Return the resolved tracked paths this file imports (graph edge list)."""
-    graph = analyze_frontend_graph(root, path, cache, tracked)
+def _resolve_imports_for_graph(root, path, cache, resolvable):
+    """Return the resolved paths this file imports (graph edge list).
+
+    ``resolvable`` is the set of tracked graph files plus any changed deleted
+    paths, so a dangling import to a deleted module still forms an edge.
+    """
+    graph = analyze_frontend_graph(root, path, cache, resolvable)
     edges = []
     for spec in graph["imports"]:
-        resolved = _resolve_specifier(spec, path, tracked)
-        if resolved and resolved in tracked:
+        resolved = _resolve_specifier(spec, path, resolvable)
+        if resolved and resolved in resolvable:
             edges.append(resolved)
     return edges
 

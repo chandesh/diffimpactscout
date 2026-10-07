@@ -167,3 +167,28 @@ def test_unrelated_template_view_produces_no_row(tmp_path, capsys):
     for row in out["rows"]:
         assert "unrelated" not in (row.get("ref") or "")
         assert "unrelated" not in (row.get("path") or "")
+
+
+def test_js_only_diff_produces_asset_rows(tmp_path, capsys):
+    """Verifies that a js-only diff yields asset->template->view rows."""
+    root = _repo(tmp_path)
+    os.makedirs(os.path.join(root, "media", "shop"))
+    with open(os.path.join(root, "media", "shop", "app.js"), "w") as fh:
+        fh.write("console.log(1);\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "product.html"), "w") as fh:
+        fh.write("<script src=\"{{ MEDIA_URL }}shop/app.js\"></script>\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
+        fh.write("console.log(2);\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m2", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+    cfg["impact"]["asset_url_prefixes"] = ["{{ MEDIA_URL }}"]
+    impact_module.run_impact(root, cfg, json_out=True)
+    out = json.loads(capsys.readouterr().out)
+    cats = {(r["path"], r["category"]) for r in out["rows"]}
+    assert ("shop/templates/shop/product.html", "template") in cats
+    assert ("shop/views.py", "python") in cats

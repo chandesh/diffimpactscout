@@ -75,12 +75,26 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     cache.prune(py_files)
     cache.save(cache.load())
     analyses = cache.load()
-    extra_entities, reverse_rows, reverse_layers, reverse_unresolved = {}, [], {}, []
+    reverse_rows, reverse_layers, reverse_unresolved = [], {}, []
     if impact_cfg.get("reverse") and not fast:
-        extra_entities, reverse_rows, reverse_layers, reverse_unresolved = reverse_mod.template_chain(
+        extra_t, rows_t, layers_t, unresolved_t = reverse_mod.template_chain(
             root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
         )
-        _merge_entities(entities, extra_entities)
+        _merge_entities(entities, extra_t)
+        for change in [c for c in changes if c.ext in ("js", "ts", "jsx", "tsx")]:
+            entities.setdefault(
+                "asset:%s" % change.path,
+                {"kind": "class_field", "deleted": False, "modules": set()},
+            )
+        extra_f, rows_f, layers_f, unresolved_f = reverse_mod.frontend_chain(
+            root, cfg, impact_cfg, changes, entities, analyses, cache, old_ref, staged, from_ref, to_ref,
+            experimental=bool(impact_cfg.get("experimental")),
+        )
+        reverse_rows = rows_t + rows_f
+        reverse_layers = {**layers_t}
+        for name, cats in layers_f.items():
+            reverse_layers.setdefault(name, set()).update(cats)
+        reverse_unresolved = unresolved_t + unresolved_f
     rows, endpoints, unresolved = _compose_rows(
         root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg,
         extra_rows=reverse_rows,

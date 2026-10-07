@@ -202,3 +202,66 @@ def test_extends_cycle_fail_closed_with_genuine_child():
         "b.html": {"extends": ["a.html"], "includes": []},
     }
     assert rev.descendants_of("a.html", graphs) == {}
+
+
+def test_normalize_asset_ref_strips_query_and_prefix():
+    assert rev._normalize_asset_ref("{{ MEDIA_URL }}shop/app.js?v=1.2") == "shop/app.js"
+    assert rev._normalize_asset_ref("./shop/app.js") == "shop/app.js"
+    assert rev._normalize_asset_ref("https://cdn.example/x.js") is None
+    assert rev._normalize_asset_ref("{{ MEDIA_URL }}shop/app.js") == "shop/app.js"
+
+
+def test_asset_chain_rows(tmp_path):
+    """Verifies that a changed tracked js file produces template + view rows."""
+    root = _repo(tmp_path, {
+        "media/shop/app.js": "console.log('x');\n",
+        "shop/templates/shop/base.html": "<script src=\"{{ MEDIA_URL }}shop/app.js?v=1\"></script>\n",
+        "shop/templates/shop/page.html": "<script src=\"{{ MEDIA_URL }}shop/other.js\"></script>\n",
+        "shop/views.py": (
+            "from django.shortcuts import render\n\n"
+            "def base_view(request):\n"
+            "    return render(request, 'shop/base.html')\n"
+        ),
+    })
+    import subprocess
+
+    subprocess.check_call(["git", "init", "-q"], cwd=root)
+    subprocess.check_call(["git", "symbolic-ref", "HEAD", "refs/heads/master"], cwd=root)
+    subprocess.check_call(["git", "-C", root, "config", "user.name", "T"])
+    subprocess.check_call(["git", "-C", root, "config", "user.email", "t@e.co"])
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m0"])
+    subprocess.check_call(["git", "-C", root, "remote", "add", "upstream", "."])
+    subprocess.check_call(["git", "-C", root, "push", "-q", "upstream", "master"])
+    with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
+        fh.write("console.log('y');\n")
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m1"])
+
+    from diffimpactscout.impact.diff_parser import get_file_changes
+
+    cache = SymbolCache(str(tmp_path / "cache.json"))
+    analyses = {
+        "shop/views.py": {
+            "analysis": {
+                "usages": [
+                    {"line": 4, "name": "shop/base.html", "kind": "str",
+                     "ctx_qname": "base_view", "ctx_kind": "function"},
+                ],
+            }
+        },
+    }
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": ["**/*.html"],
+                      "asset_url_prefixes": ["{{ MEDIA_URL }}"]}}
+    entities = {}
+    extra_entities, rows, layers, unresolved = rev.frontend_chain(
+        root, cfg, cfg["impact"], changes, entities, analyses, cache,
+        "refs/remotes/upstream/master", False, None, None, experimental=False,
+    )
+    cats = {(r["path"], r["category"]) for r in rows}
+    assert ("shop/templates/shop/base.html", "template") in cats
+    assert not any("page.html" in p for p, _c in cats)
+    py_rows = [r for r in rows if r["category"] == "python"]
+    assert any(r["path"] == "shop/views.py" for r in py_rows)

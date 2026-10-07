@@ -155,7 +155,9 @@ def _normalize_asset_ref(value, prefixes=None):
     resolved.
     """
     s = value.strip()
-    for prefix in (prefixes or ()):
+    if prefixes is None:
+        prefixes = DEFAULT_ASSET_PREFIXES
+    for prefix in prefixes:
         if s.startswith(prefix):
             s = s[len(prefix):]
             break
@@ -334,6 +336,73 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
         if _has_dynamic_include(root, path):
             unresolved.append({"file": path, "reason": "dynamic include; manual check required"})
     return extra_entities, rows, layers, unresolved
+
+
+def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, anchor, staged, from_ref, to_ref, experimental=False):
+    """Chains A (+I, E in later tasks): changed js/ts -> reverse rows.
+
+    Returns (extra_entities, rows, extra_layers, unresolved).
+    """
+    changed_js = [c for c in changes if c.ext in ("js", "ts", "jsx", "tsx")]
+    if not changed_js:
+        return {}, [], {}, []
+    extra_entities = {}
+    rows = []
+    layers = {}
+    unresolved = []
+    template_files = _tracked_files(root, cfg, "*.html")
+    graphs = {}
+    for path in template_files:
+        graphs[path] = analyze_template_graph(root, path, cache, cfg)
+    prefixes = impact_cfg.get("asset_url_prefixes") or list(DEFAULT_ASSET_PREFIXES)
+    tracked_assets = set(_tracked_files(root, cfg, "*.js", "*.ts", "*.css"))
+    for change in changed_js:
+        matching = []
+        for path, entry in graphs.items():
+            for ref in entry.get("assets") or []:
+                norm = _normalize_asset_ref(ref, prefixes)
+                resolved = _resolve_asset(norm, tracked_assets)
+                if resolved == change.path:
+                    matching.append((path, ref))
+        for tpath, ref in matching:
+            rows.append(
+                make_row(tpath, _dir_of(tpath), "template", "loads '%s'" % ref, "asset:%s" % change.path)
+            )
+            layers.setdefault("asset:%s" % change.path, set()).add("template")
+        if not matching and _normalize_asset_ref(change.path, prefixes):
+            unresolved.append({"file": change.path, "reason": "no template references this asset"})
+    # link templates back to their render sites
+    linked_names = [
+        template_name_of(r["path"]) for r in rows if r["category"] == "template"
+    ]
+    linked_names = [n for n in linked_names if n]
+    for hit in find_render_sites(analyses, linked_names):
+        entity = hit["ctx_leaf"]
+        if not entity:
+            continue
+        module = _module_of(hit["path"])
+        ent = extra_entities.setdefault(
+            entity, {"kind": "function", "deleted": False, "modules": set()}
+        )
+        ent["modules"].add(module)
+        rows.append(
+            make_row(hit["path"], module, "python",
+                     "renders '%s' (line %d)" % (hit["ctx_qname"] or "", hit["line"]), entity)
+        )
+        layers.setdefault(entity, set()).add("template")
+    return extra_entities, rows, layers, unresolved
+
+
+def _resolve_asset(norm, tracked_assets):
+    """Resolve a normalized asset ref to a tracked path, or None."""
+    if not norm:
+        return None
+    if norm in tracked_assets:
+        return norm
+    for tracked in tracked_assets:
+        if tracked.endswith("/" + norm):
+            return tracked
+    return None
 
 
 def _glob_match_any(path, patterns):

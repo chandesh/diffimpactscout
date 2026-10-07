@@ -273,6 +273,8 @@ def _usage_index(analyses):
 def _hop_callers(index, name, mods, weak):
     callers = {}
     for path, analysis, u in index.get(name, []):
+        if u.get("kind") == "str":
+            continue
         if u.get("kind") == "attr" and not u.get("base"):
             continue
         if not pa._usage_resolves(analysis, u, name, mods, path, weak):
@@ -306,6 +308,8 @@ def _route_binds_handler(urls_entry, handler, mods, path, weak):
         return True
     for u in analysis.get("usages") or []:
         if u.get("name") != handler:
+            continue
+        if u.get("kind") == "str":
             continue
         if pa._usage_resolves(analysis, u, handler, mods, path, weak):
             return True

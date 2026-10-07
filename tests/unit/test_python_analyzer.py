@@ -630,7 +630,7 @@ def test_docstring_not_recorded_as_str_usage():
 def test_analysis_version_bumped():
     """Verifies that analyses carry a version so old cache entries re-analyze."""
     a = _analyze("x = 1\n")
-    assert a.get("v") == 2
+    assert a.get("v") == ANALYSIS_VERSION
 
 
 def test_stale_version_cache_entry_reanalyzes(tmp_path):
@@ -640,7 +640,6 @@ def test_stale_version_cache_entry_reanalyzes(tmp_path):
     # simulate a legacy (version-1) analysis dict stored under a matching hash
     legacy = {"hash": pa._content_hash(src), "analysis": {"hash": pa._content_hash(src), "defs": {}, "usages": []}}
     cache_file.write_text(json.dumps({"mod.py": legacy}))
-    from diffimpactscout.impact.cache import SymbolCache
     f = tmp_path / "mod.py"
     f.write_text(src)
     analysis = pa.analyze_path("mod.py", str(tmp_path), SymbolCache(str(cache_file)))

@@ -852,3 +852,29 @@ def test_run_impact_fastapi_links_frontend_to_decorated_route(tmp_path, capsys):
     assert len(frontend_rows) == 1
     assert frontend_rows[0]["path"] == "src/orders.service.ts"
     assert "/api/v1/orders/" in frontend_rows[0]["ref"]
+
+
+def test_str_usage_not_spurious_caller_hop_or_route_binding():
+    """Verifies that a string literal equal to an entity name is not a caller hop.
+
+    A module that imports 'create' and also contains getattr(obj, 'create')
+    records a 'str' usage whose name equals the changed entity. Without a kind
+    guard the string is treated as a call site of 'create', marking 'config'
+    reachable and spuriously flagging its route as affected. reverse('create'),
+    redirect('create') and getattr(model, 'create') all hit this pattern.
+    """
+    analyses = {
+        "app/other.py": pa.analyze_source(
+            "from app.views import create\n"
+            "\n"
+            "def config():\n"
+            "    return getattr(obj, 'create')\n"
+        )
+    }
+    index = impact._usage_index(analyses)
+    assert impact._hop_callers(index, "create", {"app.views"}, set()) == {}
+    route = route_linker.Route(None, "/config/", "config", "app/other.py")
+    entities = {
+        "create": {"kind": "function", "deleted": False, "modules": {"app.views"}}
+    }
+    assert impact._affected_routes([route], analyses, entities, set()) == []

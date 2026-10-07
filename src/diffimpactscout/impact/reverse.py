@@ -76,8 +76,12 @@ def analyze_template_graph(root, path, cache, cfg):
     """Return {"extends", "includes", "assets"} for one template, hash-gated.
 
     extends/includes are static-tag names only; assets are normalized
-    asset paths (query stripped, prefixes stripped, comments ignored).
-    The graph is stored in the "templates" cache section keyed by path.
+    asset paths (query stripped, prefixes stripped, comments ignored,
+    dynamic {{ ... }} refs ignored). The returned dict has exactly those
+    three keys on BOTH cache hits and misses (never "hash" or "graph").
+    The graph is stored in the "templates" cache section keyed by path as
+    {"hash": sha1 hex, "graph": the three-key dict}; the cache entry is
+    only trusted when its "graph" is a dict, otherwise it is rebuilt.
     """
     full = os.path.join(root, path) if root else path
     try:
@@ -85,25 +89,32 @@ def analyze_template_graph(root, path, cache, cfg):
             text = fh.read().decode("utf-8", "replace")
     except (OSError, ValueError):
         return {"extends": [], "includes": [], "assets": []}
+    digest = _digest(text)
     section = cache.load_section("templates")
     entry = section.get(path)
+    if isinstance(entry, dict) and entry.get("hash") == digest:
+        cached = entry.get("graph")
+        if isinstance(cached, dict):
+            return cached
     graph = _template_graph_from_text(text)
-    if entry is not None and entry.get("hash") == graph["hash"]:
-        return entry["graph"]
-    section[path] = {"hash": graph["hash"], "graph": _graph_only(graph)}
+    section[path] = {"hash": digest, "graph": _graph_only(graph)}
     cache.save_section("templates", section)
-    return graph
+    return _graph_only(graph)
+
+
+def _digest(text):
+    from diffimpactscout.impact.python_analyzer import _content_hash
+
+    return _content_hash(text)
 
 
 def _template_graph_from_text(text):
-    from diffimpactscout.impact.python_analyzer import _content_hash
-
     clean = _strip_html_comments(text)
     graph = {
         "extends": _EXTENDS_RE.findall(clean),
         "includes": _INCLUDE_RE.findall(clean),
         "assets": _assets_from_text(clean),
-        "hash": _content_hash(text),
+        "hash": _digest(text),
     }
     return graph
 
@@ -131,9 +142,10 @@ DEFAULT_ASSET_PREFIXES = ("{{ MEDIA_URL }}", "{{ STATIC_URL }}", "{% static '", 
 def _normalize_asset_ref(value, prefixes=None):
     """Normalize a template asset reference to a repo-relative path or None.
 
-    Strips template-variable prefixes, query/version strings, "./" leads,
-    and rejects absolute/CDN URLs. Returns "" for dynamic ({{ ... }}-only)
-    references so they land in the unresolved bucket upstream.
+    Strips template-variable prefixes, query/version strings, "./" leads.
+    Returns None for absolute/CDN URLs and for dynamic ({{ ... }}-only)
+    references: dynamic template asset references are ignored, not
+    resolved.
     """
     s = value.strip()
     for prefix in (prefixes or ()):
@@ -145,7 +157,7 @@ def _normalize_asset_ref(value, prefixes=None):
     if s.startswith(("http://", "https://", "//")):
         return None
     if s.startswith("{{"):
-        return ""
+        return None
     while s.startswith("./"):
         s = s[2:]
     if not s or s.endswith(".html") and "templateUrl" not in value:

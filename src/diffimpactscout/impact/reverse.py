@@ -135,11 +135,11 @@ def _asset_prefixes(cfg):
     """
     impact = (cfg or {}).get("impact") or {}
     user = impact.get("asset_url_prefixes")
-    if not user:
+    if not isinstance(user, (list, tuple)):
         return DEFAULT_ASSET_PREFIXES
     prefixes = list(DEFAULT_ASSET_PREFIXES)
     for prefix in user:
-        if prefix not in prefixes:
+        if isinstance(prefix, str) and prefix and prefix not in prefixes:
             prefixes.append(prefix)
     return tuple(prefixes)
 

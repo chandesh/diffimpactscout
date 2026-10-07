@@ -340,40 +340,114 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
 
 _JS_EXT_TRACKED = (".ts", ".tsx", ".js", ".jsx")
 
+# Schema version for the "frontend" cache section. Bump when the graph
+# shape or the extraction regexes change so entries written by older
+# code are rebuilt instead of trusted.
+FRONTEND_GRAPH_VERSION = 1
+
 # Matches the quoted MODULE SPECIFIER of static and dynamic import forms.
+# Every branch carries at most ONE variable-length quantifier over free
+# text: adjacent quantifiers never share a character class (keyword
+# boundaries use \b, keyword-to-quote spacing uses \s*), so backtracking
+# stays linear and compact valid syntax still matches. The free-text scan
+# in the two "from" branches is capped at 4096 chars so an import/export
+# line with no "from" ahead cannot scan to EOF (O(k*n) -> O(k*4096)).
 #   Matches:  import { BaseService } from './base.service';  -> "./base.service"
 #             import {\n  Alpha,\n  Beta\n} from './multi';  -> "./multi"
-#             const lazy = () => import('./lazy.module');    -> "./lazy.module"
-#             const fs = require('./util');                  -> "./util"
-#             import './polyfills';                          -> "./polyfills"
-#   Captures: import { C } from '@angular/core';               -> "@angular/core"
-#             (package/alias specifiers are captured then dropped by the
-#              leading-dot rule in _resolve_specifier)
-#   Skips:    const doc = "import x from './fake'";            (string literal; line-anchored)
-#             bellyrequire('./req');                         (\b blocks partial-keyword match)
-#             import(variableName);                          (non-literal dynamic import)
+#             import{a}from'./x';                           -> "./x"
+#             import'./side';                               -> "./side"
+#             export * from './z';                          -> "./z"
+#             export{b}from'./y';                           -> "./y"
+#             export { x } from './w';                      -> "./w"
+#             const lazy = () => import('./lazy.module');   -> "./lazy.module"
+#             const fs = require('./util');                 -> "./util"
+#   Captures: import { C } from '@angular/core';              -> "@angular/core"
+#             (package/alias specifiers are captured here, then dropped by
+#              the leading-dot filter in analyze_frontend_graph)
+#   Skips:    literal contents are blanked first by _blank_literals, so
+#             const s = "import x from './fake'"; and
+#             const t = `import('./in-tmpl')`;  contribute nothing
+#             import(variableName);             (non-literal; no quote follows)
+#             bellyrequire('./req');            (no word boundary before
+#                                                "require")
+#             foo.require('./req');             (lookbehind blocks the ".")
+#             $require('./req');                (lookbehind blocks the "$")
 _IMPORT_SPEC_RE = re.compile(
-    r"""(?:^\s*import\s+[^'";]*?from\s*|^\s*export\s+[^'";]*?from\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)['"]([^'"\n]+)['"]""",
+    r"(?:^\s*import\b[^'\";]{0,4096}?\bfrom\s*['\"]([^'\"\n]+)['\"]"
+    r"|^\s*export\b[^'\";]{0,4096}?\bfrom\s*['\"]([^'\"\n]+)['\"]"
+    r"|^\s*import\s*['\"]([^'\"\n]+)['\"]"
+    r"|\bimport\s*\(\s*['\"]([^'\"\n]+)['\"]"
+    r"|(?<![.\w$])require\s*\(\s*['\"]([^'\"\n]+)['\"])",
     re.M,
 )
 
-# Matches single-symbol export declarations (function/class/const/let/var).
-#   Matches:  export function loadPage() {}     -> "loadPage"
-#             export class PageService {}       -> "PageService"
-#             export const PAGE = 'p';          -> "PAGE"
-#             export default class App {}       -> "App"
-#   Skips:    function loadPage() {}            (no export keyword)
+# Matches single-symbol export declarations plus the
+# "export default <ident>;" reference form.
+#   Matches:  export function loadPage() {}        -> "loadPage"
+#             export function* gen() {}            -> "gen"
+#             export class PageService {}          -> "PageService"
+#             export const PAGE = 'p';             -> "PAGE"
+#             export let x = 1;                    -> "x"
+#             export var y = 2;                    -> "y"
+#             export default class App {}          -> "App"
+#             export default function f() {}       -> "f"
+#             export async function run() {}       -> "run"
+#             export default async function f() {} -> "f"
+#             export default Foo;                  -> "Foo"
+#   Skips:    function loadPage() {}               (no export keyword)
+#             export default function () {}        (anonymous default; no
+#                                                   pseudo-name "default")
+#             export default class {}              (anonymous default)
+#             export default () => {};             (anonymous default)
+#             export type Flags = {...};           (TS-only declaration)
+#             export interface Shape {}            (TS-only declaration)
+#             export enum Kind {}                  (TS-only declaration)
+#             export namespace Inner {}            (TS-only declaration)
+#             export declare const X: T;           (TS-only declaration)
 _EXPORT_NAMED_RE = re.compile(
-    r"""export\s+(?:async\s+)?(?:default\s+)?(?:function\s+(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))"""
+    r"(?:export\s+(?:(?:default|async)\s+)*"
+    r"(?:function\s*(?:\*\s*)?(\w+)|class\s+(\w+)|const\s+(\w+)|let\s+(\w+)|var\s+(\w+))"
+    r"|export\s+default\s+(?!(?:function|class|const|let|var|async)\b)"
+    r"([A-Za-z_$][\w$]*))"
 )
 
-# Matches brace-group export lists; contents are split on commas and "as"
-# aliases stripped.
-#   Matches:  export { alpha, beta as gamma };        -> ["alpha", "beta"]
+# Matches brace-group export lists; contents are split on commas and the
+# EXPORTED (right-hand) side of each "as" alias is recorded.
+#   Matches:  export { alpha, beta as gamma };        -> ["alpha", "gamma"]
 #             export {\n  alpha,\n  beta\n};          -> ["alpha", "beta"]
-#   Captures: export { default as Nav } from './nav'; -> ["default"]
+#   Captures: export { default as Nav } from './nav'; -> ["Nav"]
+#             export { type Foo };                    -> ["Foo"]
 #   Skips:    export * from './mod';                  (star export has no brace list)
 _EXPORT_BRACE_RE = re.compile(r"export\s*\{([^}]*)\}")
+
+# Matches quoted literal regions so their contents can be blanked before
+# the import/export scan (string/template false positives).
+#   Matches:  "./x"    (double-quoted, single line, escape-aware)
+#             './x'    (single-quoted, single line, escape-aware)
+#             `a\nb`   (backtick template, may span lines, escape-aware)
+#   Captures: nothing (no groups; the whole match is the region)
+#   Skips:    unterminated quotes (no closing quote on the same line for
+#             '...'/"..."; no closing backtick at all)
+_LITERAL_REGION_RE = re.compile(
+    r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`"
+)
+
+# Matches the prefix immediately before a quoted literal region; a region
+# survives only when this matches, i.e. it sits in an operand position
+# (or names a quoted export inside a brace list).
+#   Matches:  "import x from "  (from operand:  from './b')
+#             "import("         (dynamic import operand: import('./b'))
+#             "require ("       (require operand: require('./b'))
+#             "import "         (side-effect operand: import './b')
+#             "export { x as "   (alias target: x as "str name")
+#             "export { "        (quoted export name: export { "solo" };
+#                                 also keeps object-literal keys, which no
+#                                 consumer matches -- harmless)
+#   Captures: nothing (used as a boolean via re.search)
+#   Skips:    "const s = "      (assignment RHS -> region is blanked;
+#                                 covers any code/assignment prefix)
+#             "bellyrequire("   (no word boundary before "require")
+_LITERAL_OPERAND_RE = re.compile(r"\b(?:from|import|require)\s*\(?\s*\Z|(?:\bas|\{)\s*\Z")
 
 _VENDOR_SUFFIXES = (".min.js", ".bundle.js")
 
@@ -386,19 +460,54 @@ def _is_graph_file(path):
     return not lowered.endswith(_VENDOR_SUFFIXES)
 
 
+# _OPERAND_WINDOW bounds the prefix look-back in _blank_literals: only
+# the 512 chars before a region are checked for an operand keyword (an
+# operand keyword sits immediately before its quote; the cap keeps the
+# check O(1) per region instead of re-scanning the whole prefix).
+_OPERAND_WINDOW = 512
+
+
+def _blank_literals(text):
+    """Blank quoted literal regions that are not import/require operands.
+
+    Scans left to right for non-overlapping regions (double-quoted,
+    single-quoted, backtick) and replaces each non-operand region's
+    characters with spaces of identical length, preserving "\\n" and "\\r"
+    so line numbers never shift. Operand regions (from/import/require
+    operand quotes and quoted export names inside braces) are copied
+    through unchanged; every other region is blanked, including regions
+    that follow an operand region.
+    """
+    out = []
+    pos = 0
+    for match in _LITERAL_REGION_RE.finditer(text):
+        region = match.group(0)
+        window = max(0, match.start() - _OPERAND_WINDOW)
+        if _LITERAL_OPERAND_RE.search(text, window, match.start()):
+            out.append(text[pos:match.end()])
+        else:
+            out.append(text[pos:match.start()])
+            out.append("".join(ch if ch in "\r\n" else " " for ch in region))
+        pos = match.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def analyze_frontend_graph(root, path, cache, tracked):
     """Return {"imports": [...], "exports": [...]} for one js/ts file.
 
     imports lists raw static specifiers (relative only resolved later);
     alias specifiers (no leading dot) are dropped -- they are surfaced as
-    config hints by the chain. Stored in the "frontend" cache section.
+    config hints by the chain. Stored in the "frontend" cache section as
+    {"hash", "v", "graph"}; an entry is only trusted when its hash, its
+    FRONTEND_GRAPH_VERSION marker and the graph's key shape all match.
     """
     if not path:
         return {"imports": [], "exports": []}
     full = os.path.join(root, path) if root else path
     try:
         with open(full, "rb") as fh:
-            text = fh.read().decode("utf-8", "replace")
+            text = fh.read().decode("utf-8-sig", "replace")
     except (OSError, ValueError):
         return {"imports": [], "exports": []}
     from diffimpactscout.impact.python_analyzer import _content_hash
@@ -406,25 +515,39 @@ def analyze_frontend_graph(root, path, cache, tracked):
     digest = _content_hash(text)
     section = cache.load_section("frontend") if cache else {}
     entry = section.get(path)
-    if isinstance(entry, dict) and entry.get("hash") == digest and isinstance(entry.get("graph"), dict):
-        return entry["graph"]
+    graph = entry.get("graph") if isinstance(entry, dict) else None
+    if (
+        isinstance(entry, dict)
+        and entry.get("hash") == digest
+        and entry.get("v") == FRONTEND_GRAPH_VERSION
+        and isinstance(graph, dict)
+        and "imports" in graph
+        and "exports" in graph
+    ):
+        return graph
     from diffimpactscout.impact.route_linker import _strip_comments
 
-    clean = _strip_comments(text)
-    imports = [s for s in _IMPORT_SPEC_RE.findall(clean) if s.startswith(".")]
+    clean = _blank_literals(_strip_comments(text))
+    imports = [
+        spec
+        for groups in _IMPORT_SPEC_RE.findall(clean)
+        for spec in groups
+        if spec and spec.startswith(".")
+    ]
     exports = []
     for groups in _EXPORT_NAMED_RE.findall(clean):
         for name in groups:
             if name:
                 exports.append(name)
     for brace in _EXPORT_BRACE_RE.findall(clean):
-        for part in brace.split(","):
-            piece = re.split(r"\s+as\s+", part.strip())[0].strip()
+        for raw in brace.split(","):
+            piece = re.split(r"\s+as\s+", raw.strip())[-1].strip()
+            piece = re.sub(r"^type\s+", "", piece).strip().strip("'\"")
             if piece:
-                exports.append(piece.split(":")[-1].strip())
+                exports.append(piece)
     graph = {"imports": list(dict.fromkeys(imports)), "exports": sorted(set(exports))}
     if cache:
-        section[path] = {"hash": digest, "graph": graph}
+        section[path] = {"hash": digest, "v": FRONTEND_GRAPH_VERSION, "graph": graph}
         cache.save_section("frontend", section)
     return graph
 

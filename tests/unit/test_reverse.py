@@ -348,3 +348,230 @@ def test_is_graph_file_excludes_min_and_bundle_variants():
     assert rev._is_graph_file("media/x/y.bundle.jsx") is False
     assert rev._is_graph_file("media/x/y.min.cjs") is False
     assert rev._is_graph_file("media/x/y.ts") is True
+
+
+def test_brace_export_multiline_and_right_side_alias_names(tmp_path):
+    """Verifies brace exports record the EXPORTED name, not the source name."""
+    src = (
+        "export {\n"
+        "  a,\n"
+        "  b\n"
+        "};\n"
+        "export { x as y } from './m';\n"
+        "export { alpha, beta as gamma };\n"
+        "export { default as Nav } from './nav';\n"
+        "export { type Foo };\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert sorted(graph["exports"]) == ["Foo", "Nav", "a", "alpha", "b", "gamma", "y"]
+    assert graph["imports"] == ["./m", "./nav"]
+
+
+def test_star_export_contributes_import_specifier(tmp_path):
+    root = _repo(tmp_path, {"media/a.ts": "export * from './m';\n"})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./m"]
+    assert graph["exports"] == []
+
+
+def test_dynamic_import_variable_produces_no_import(tmp_path):
+    root = _repo(tmp_path, {"media/a.ts": "import(variableName);\n"})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == []
+
+
+def test_compact_import_export_forms_capture_specifiers(tmp_path):
+    src = (
+        "import{a}from'./x';\n"
+        "import'./side';\n"
+        "export{b}from'./y';\n"
+        "export * from './z';\n"
+        "export { x } from './w';\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./x", "./side", "./y", "./z", "./w"]
+    assert sorted(graph["exports"]) == ["b", "x"]
+
+
+def test_require_lookbehind_blocks_member_and_dollar_calls(tmp_path):
+    src = (
+        "const fs = require('./util');\n"
+        "foo.require('./fake');\n"
+        "$require('./fake');\n"
+        "bellyrequire('./req');\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./util"]
+
+
+def test_string_and_template_literals_leak_nothing(tmp_path):
+    src = (
+        "const s = \"call import('./dyn')\";\n"
+        "const t = `use import('./in-tmpl')`;\n"
+        "const u = `multi\n"
+        "import x from './fake2'\n"
+        "export const FAKE = 1;\n"
+        "`;\n"
+        "const v = \"export function foo() {}\";\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == []
+    assert graph["exports"] == []
+
+
+def test_frontend_graph_decodes_bom_before_scanning(tmp_path):
+    root = _repo(tmp_path, {"media/a.ts": "\ufeffimport x from './b';\n"})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./b"]
+
+
+def test_export_default_ident_generator_and_anonymous_default(tmp_path):
+    src = (
+        "export default Foo;\n"
+        "export default function () {}\n"
+        "export default class {}\n"
+        "export default () => {};\n"
+        "export function* gen() {}\n"
+        "export default function named() {}\n"
+        "export default class App {}\n"
+        "export default async function boot() {}\n"
+        "export async function run() {}\n"
+        "export let count = 1;\n"
+        "export var flag = 2;\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert sorted(graph["exports"]) == [
+        "App", "Foo", "boot", "count", "flag", "gen", "named", "run",
+    ]
+
+
+def test_ts_only_export_declarations_are_skipped(tmp_path):
+    src = (
+        "export type Flags = { a: number };\n"
+        "export interface Shape { b: number }\n"
+        "export enum Kind { A }\n"
+        "export namespace Inner {}\n"
+        "export declare const Y: number;\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["exports"] == []
+
+
+def test_frontend_graph_cache_hit_returns_stored_graph(tmp_path):
+    from diffimpactscout.impact.python_analyzer import _content_hash
+
+    src = "import './b';\n"
+    root = _repo(tmp_path, {"media/a.ts": src})
+    cache = SymbolCache(str(tmp_path / "c.json"))
+    first = rev.analyze_frontend_graph(root, "media/a.ts", cache, set())
+    assert first["imports"] == ["./b"]
+    entry = cache.load_section("frontend")["media/a.ts"]
+    assert entry["v"] == rev.FRONTEND_GRAPH_VERSION
+    cache.save_section("frontend", {
+        "media/a.ts": {
+            "hash": _content_hash(src),
+            "v": rev.FRONTEND_GRAPH_VERSION,
+            "graph": {"imports": ["./HIT"], "exports": ["HIT"]},
+        }
+    })
+    second = rev.analyze_frontend_graph(root, "media/a.ts", cache, set())
+    assert second == {"imports": ["./HIT"], "exports": ["HIT"]}
+
+
+def test_frontend_graph_rebuilds_on_hash_version_or_shape_mismatch(tmp_path):
+    from diffimpactscout.impact.python_analyzer import _content_hash
+
+    src = "import './b';\n"
+    root = _repo(tmp_path, {"media/a.ts": src})
+    cache = SymbolCache(str(tmp_path / "c.json"))
+    digest = _content_hash(src)
+    version = rev.FRONTEND_GRAPH_VERSION
+    stale = {"imports": ["./STALE"], "exports": ["STALE"]}
+    seeds = [
+        {"hash": "not-the-hash", "v": version, "graph": stale},
+        {"hash": digest, "graph": stale},
+        {"hash": digest, "v": version + 1, "graph": stale},
+        {"hash": digest, "v": version, "graph": {"exports": ["./STALE"]}},
+        {"hash": digest, "v": version, "graph": {"imports": ["./STALE"]}},
+    ]
+    for seed in seeds:
+        cache.save_section("frontend", {"media/a.ts": dict(seed)})
+        graph = rev.analyze_frontend_graph(root, "media/a.ts", cache, set())
+        assert graph == {"imports": ["./b"], "exports": []}
+        entry = cache.load_section("frontend")["media/a.ts"]
+        assert entry["v"] == version
+        assert entry["hash"] == digest
+        assert entry["graph"] == {"imports": ["./b"], "exports": []}
+
+
+def test_single_quoted_region_shields_double_quoted_fp(tmp_path):
+    """Doc claim: a single-quoted region blanks the double quotes inside it.
+
+    Without the single-quote branch of _LITERAL_REGION_RE, "./x" is seen
+    as its own operand region and the fake require import leaks.
+    """
+    src = (
+        "const s = 'call require(\"./x\")';\n"
+        "import real from './real';\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert "./x" not in graph["imports"]
+    assert "./real" in graph["imports"]
+
+
+def test_escape_aware_region_shields_escaped_quotes(tmp_path):
+    """Doc claim: quoted regions are escape-aware.
+
+    Without escape handling, the region ends at the first backslash-escaped
+    quote and the inner require('./x') becomes visible to the import scan.
+    """
+    src = (
+        "const s = \"say \\\"require('./x')\\\"\";\n"
+        "import real from './real';\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert "./x" not in graph["imports"]
+    assert "./real" in graph["imports"]
+
+
+def test_unterminated_backtick_region_does_not_swallow_next_import(tmp_path):
+    """Doc claim: unterminated quotes are skipped (no closing backtick).
+
+    The region must not run to EOF; the import on the following line is
+    still extracted.
+    """
+    src = (
+        "const t = `oops\n"
+        "import x from './b';\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./b"]
+
+
+def test_quoted_export_names_survive_literal_blank(tmp_path):
+    """Quoted names in brace export lists are kept and recorded unquoted."""
+    src = (
+        "export { x as \"str name\" };\n"
+        "export { \"solo\" };\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["exports"] == ["solo", "str name"]
+    assert graph["imports"] == []
+
+
+def test_require_with_space_before_paren_captures(tmp_path):
+    """Doc claim: require ( './sp' ) (space before paren) is an operand."""
+    root = _repo(tmp_path, {"media/a.ts": "const sp = require ( './sp' );\n"})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./sp"]
+

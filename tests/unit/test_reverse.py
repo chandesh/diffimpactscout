@@ -838,3 +838,25 @@ def test_multiline_brace_export_change_is_detected(tmp_path):
     assert row["_entity"] == "js:x"
     assert row["_deleted"] is True
 
+
+def test_custom_asset_prefix_stripped_and_cache_invalidated(tmp_path):
+    """User asset_url_prefixes append to defaults and are part of the cache key."""
+    root = _repo(tmp_path, {
+        "shop/templates/shop/base.html":
+            "<script src=\"{{ CDN }}shop/app.js\"></script>\n",
+    })
+    cache = SymbolCache(str(tmp_path / "cache.json"))
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"asset_url_prefixes": ["{{ CDN }}"]}}
+    graph = rev.analyze_template_graph(
+        root, "shop/templates/shop/base.html", cache, cfg
+    )
+    assert graph["assets"] == ["shop/app.js"]
+    # Same content, different prefix set -> the cached graph must not be reused.
+    cfg2 = {"ignore_paths": [], "use_gitignore": False,
+            "impact": {"asset_url_prefixes": ["{{ OTHER }}"]}}
+    graph2 = rev.analyze_template_graph(
+        root, "shop/templates/shop/base.html", cache, cfg2
+    )
+    assert graph2["assets"] == []
+

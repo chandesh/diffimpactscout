@@ -88,8 +88,10 @@ def analyze_template_graph(root, path, cache, cfg):
     dynamic {{ ... }} refs ignored). The returned dict has exactly those
     three keys on BOTH cache hits and misses (never "hash" or "graph").
     The graph is stored in the "templates" cache section keyed by path as
-    {"hash": sha1 hex, "graph": the three-key dict}; the cache entry is
-    only trusted when its "graph" is a dict, otherwise it is rebuilt.
+    {"hash": sha1 hex, "prefixes": the effective prefix list, "graph": the
+    three-key dict}; the entry is trusted only when its "graph" is a dict
+    AND its "prefixes" still match, so changing asset_url_prefixes rebuilds
+    the graph even when the file content is unchanged.
     """
     full = os.path.join(root, path) if root else path
     try:
@@ -98,14 +100,23 @@ def analyze_template_graph(root, path, cache, cfg):
     except (OSError, ValueError):
         return {"extends": [], "includes": [], "assets": []}
     digest = _digest(text)
+    prefixes = _asset_prefixes(cfg)
     section = cache.load_section("templates")
     entry = section.get(path)
-    if isinstance(entry, dict) and entry.get("hash") == digest:
+    if (
+        isinstance(entry, dict)
+        and entry.get("hash") == digest
+        and entry.get("prefixes") == list(prefixes)
+    ):
         cached = entry.get("graph")
         if isinstance(cached, dict):
             return cached
-    graph = _template_graph_from_text(text)
-    section[path] = {"hash": digest, "graph": _graph_only(graph)}
+    graph = _template_graph_from_text(text, prefixes)
+    section[path] = {
+        "hash": digest,
+        "prefixes": list(prefixes),
+        "graph": _graph_only(graph),
+    }
     cache.save_section("templates", section)
     return _graph_only(graph)
 
@@ -116,12 +127,29 @@ def _digest(text):
     return _content_hash(text)
 
 
-def _template_graph_from_text(text):
+def _asset_prefixes(cfg):
+    """Effective asset URL prefixes: DEFAULT_ASSET_PREFIXES plus any user list.
+
+    A user-supplied ``impact.asset_url_prefixes`` APPENDS to the built-in
+    defaults (it cannot replace or clear them); duplicates are dropped.
+    """
+    impact = (cfg or {}).get("impact") or {}
+    user = impact.get("asset_url_prefixes")
+    if not user:
+        return DEFAULT_ASSET_PREFIXES
+    prefixes = list(DEFAULT_ASSET_PREFIXES)
+    for prefix in user:
+        if prefix not in prefixes:
+            prefixes.append(prefix)
+    return tuple(prefixes)
+
+
+def _template_graph_from_text(text, prefixes):
     clean = _strip_html_comments(text)
     graph = {
         "extends": _EXTENDS_RE.findall(clean),
         "includes": _INCLUDE_RE.findall(clean),
-        "assets": _assets_from_text(clean),
+        "assets": _assets_from_text(clean, prefixes),
         "hash": _digest(text),
     }
     return graph
@@ -131,14 +159,14 @@ def _graph_only(graph):
     return {k: v for k, v in graph.items() if k != "hash"}
 
 
-def _assets_from_text(clean):
+def _assets_from_text(clean, prefixes):
     values = []
     values.extend(_STATIC_RE.findall(clean))
     values.extend(_SCRIPT_SRC_RE.findall(clean))
     values.extend(_LINK_HREF_RE.findall(clean))
     assets = []
     for value in values:
-        norm = _normalize_asset_ref(value, DEFAULT_ASSET_PREFIXES)
+        norm = _normalize_asset_ref(value, prefixes)
         if norm:
             assets.append(norm)
     return assets
@@ -817,7 +845,7 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
     graphs = {}
     for path in template_files:
         graphs[path] = analyze_template_graph(root, path, cache, cfg)
-    prefixes = impact_cfg.get("asset_url_prefixes") or list(DEFAULT_ASSET_PREFIXES)
+    prefixes = _asset_prefixes(cfg)
     for change in changed_js:
         matching = []
         for path, entry in graphs.items():

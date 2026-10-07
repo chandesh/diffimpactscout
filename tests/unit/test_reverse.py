@@ -1,8 +1,9 @@
-import json
 import os
+import subprocess
 
 import diffimpactscout.impact.reverse as rev
 from diffimpactscout.impact.cache import SymbolCache
+from diffimpactscout.impact.diff_parser import get_file_changes
 
 
 def _repo(tmp_path, files):
@@ -215,6 +216,7 @@ def test_asset_chain_rows(tmp_path):
     """Verifies that a changed tracked js file produces template + view rows."""
     root = _repo(tmp_path, {
         "media/shop/app.js": "console.log('x');\n",
+        "media/shop/orphan.js": "console.log('o');\n",
         "shop/templates/shop/base.html": "<script src=\"{{ MEDIA_URL }}shop/app.js?v=1\"></script>\n",
         "shop/templates/shop/page.html": "<script src=\"{{ MEDIA_URL }}shop/other.js\"></script>\n",
         "shop/views.py": (
@@ -223,8 +225,6 @@ def test_asset_chain_rows(tmp_path):
             "    return render(request, 'shop/base.html')\n"
         ),
     })
-    import subprocess
-
     subprocess.check_call(["git", "init", "-q"], cwd=root)
     subprocess.check_call(["git", "symbolic-ref", "HEAD", "refs/heads/master"], cwd=root)
     subprocess.check_call(["git", "-C", root, "config", "user.name", "T"])
@@ -235,10 +235,10 @@ def test_asset_chain_rows(tmp_path):
     subprocess.check_call(["git", "-C", root, "push", "-q", "upstream", "master"])
     with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
         fh.write("console.log('y');\n")
+    with open(os.path.join(root, "media", "shop", "orphan.js"), "a") as fh:
+        fh.write("console.log('z');\n")
     subprocess.check_call(["git", "-C", root, "add", "-A"])
     subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m1"])
-
-    from diffimpactscout.impact.diff_parser import get_file_changes
 
     cache = SymbolCache(str(tmp_path / "cache.json"))
     analyses = {
@@ -265,3 +265,8 @@ def test_asset_chain_rows(tmp_path):
     assert not any("page.html" in p for p, _c in cats)
     py_rows = [r for r in rows if r["category"] == "python"]
     assert any(r["path"] == "shop/views.py" for r in py_rows)
+    assert unresolved == [
+        {"file": "media/shop/orphan.js", "reason": "no template references this asset"}
+    ]
+    assert layers.get("asset:media/shop/app.js") == {"template"}
+    assert extra_entities.get("base_view", {}).get("modules") == {"shop.views"}

@@ -288,10 +288,10 @@ In a terminal, `impact` then asks `Proceed with push? (Y/n)`. On a non-interacti
 
 ### Reverse chains
 
-When the change-set touches no Python (or in addition to changed Python symbols), `impact` also runs reverse chains (`impact.reverse` must be on):
+When the change-set touches no Python (or in addition to changed Python symbols), `impact` also runs reverse chains (`impact.reverse` must be on; they are skipped entirely under `impact --fast`):
 
-- **Template chain:** a changed Django template is matched (by exact template name) to the Python functions that render it, then through the existing route and frontend linking; templates that extend or include the changed template are reported too. Dynamic template names/includes land in "unresolved".
-- **Asset chain:** a changed tracked JS/TS file is matched to the templates that load it (`script src`, `{% static %}`, `templateUrl`), then to the views rendering those templates. Untracked targets (bundles, CDNs) are listed as unresolved, never guessed.
+- **Template chain:** a changed Django template is matched (by exact template name) to the Python functions that render it, then through the existing route and frontend linking; templates that extend the changed template are reported too. Dynamic `{% include var %}` tags land in "unresolved"; dynamic `{% extends %}` targets are ignored.
+- **Asset chain:** a changed tracked JS/TS file is matched to the templates that load it (`script src`, `{% static %}`, `link href`), then to the views rendering those templates. A changed tracked asset with no referencing template lands in "unresolved"; untracked targets (bundles, CDNs) are ignored, never guessed.
 - **Import chain:** changed JS/TS exports are matched to other tracked frontend files that import them; deleted exports are flagged High. Minified and vendored files are excluded; unresolvable path aliases are skipped.
 - **Endpoint chain (experimental):** changed frontend HTTP literals are matched to Django routes, the handler view, and the service/utility functions it calls. Enable with `"experimental": true` in the `impact` section; advisory only, and never a sole grounds for blocking.
 

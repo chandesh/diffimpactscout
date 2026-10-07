@@ -340,17 +340,21 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
 
 _JS_EXT_TRACKED = (".ts", ".tsx", ".js", ".jsx")
 
-# Matches the quoted MODULE SPECIFIER of the four import forms (static only):
+# Matches the quoted MODULE SPECIFIER of static and dynamic import forms.
 #   Matches:  import { BaseService } from './base.service';  -> "./base.service"
-#             export { X } from "../widgets/widget";         -> "../widgets/widget"
+#             import {\n  Alpha,\n  Beta\n} from './multi';  -> "./multi"
 #             const lazy = () => import('./lazy.module');    -> "./lazy.module"
 #             const fs = require('./util');                  -> "./util"
+#             import './polyfills';                          -> "./polyfills"
 #   Captures: import { C } from '@angular/core';               -> "@angular/core"
-#             (package/alias specifiers are captured too and dropped later by
-#              the leading-dot rule in _resolve_specifier)
-#   Skips:    dynamic import(variableName)                     (non-literal)
+#             (package/alias specifiers are captured then dropped by the
+#              leading-dot rule in _resolve_specifier)
+#   Skips:    const doc = "import x from './fake'";            (string literal; line-anchored)
+#             bellyrequire('./req');                         (\b blocks partial-keyword match)
+#             import(variableName);                          (non-literal dynamic import)
 _IMPORT_SPEC_RE = re.compile(
-    r"""(?:import\s+[^'"\n;]*?from\s*|export\s+[^'"\n;]*?from\s*|import\s*\(\s*|require\s*\(\s*)['"]([^'"\n]+)['"]"""
+    r"""(?:^\s*import\s+[^'";]*?from\s*|^\s*export\s+[^'";]*?from\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)['"]([^'"\n]+)['"]""",
+    re.M,
 )
 
 # Matches single-symbol export declarations (function/class/const/let/var).
@@ -365,15 +369,20 @@ _EXPORT_NAMED_RE = re.compile(
 
 # Matches brace-group export lists; contents are split on commas and "as"
 # aliases stripped.
-#   Matches:  export { alpha, beta as gamma };  -> ["alpha", "beta"]
-#             export { default as Nav } from './nav'; -> ["default", "Nav"]
-_EXPORT_BRACE_RE = re.compile(r"export\s*\{([^}\n]*)\}")
+#   Matches:  export { alpha, beta as gamma };        -> ["alpha", "beta"]
+#             export {\n  alpha,\n  beta\n};          -> ["alpha", "beta"]
+#   Captures: export { default as Nav } from './nav'; -> ["default"]
+#   Skips:    export * from './mod';                  (star export has no brace list)
+_EXPORT_BRACE_RE = re.compile(r"export\s*\{([^}]*)\}")
 
 _VENDOR_SUFFIXES = (".min.js", ".bundle.js")
 
 
 def _is_graph_file(path):
     lowered = path.lower()
+    basename = os.path.basename(lowered)
+    if ".min." in basename or ".bundle." in basename:
+        return False
     return not lowered.endswith(_VENDOR_SUFFIXES)
 
 
@@ -384,6 +393,8 @@ def analyze_frontend_graph(root, path, cache, tracked):
     alias specifiers (no leading dot) are dropped -- they are surfaced as
     config hints by the chain. Stored in the "frontend" cache section.
     """
+    if not path:
+        return {"imports": [], "exports": []}
     full = os.path.join(root, path) if root else path
     try:
         with open(full, "rb") as fh:
@@ -395,7 +406,7 @@ def analyze_frontend_graph(root, path, cache, tracked):
     digest = _content_hash(text)
     section = cache.load_section("frontend") if cache else {}
     entry = section.get(path)
-    if entry is not None and entry.get("hash") == digest and isinstance(entry.get("graph"), dict):
+    if isinstance(entry, dict) and entry.get("hash") == digest and isinstance(entry.get("graph"), dict):
         return entry["graph"]
     from diffimpactscout.impact.route_linker import _strip_comments
 
@@ -413,7 +424,8 @@ def analyze_frontend_graph(root, path, cache, tracked):
                 exports.append(piece.split(":")[-1].strip())
     graph = {"imports": list(dict.fromkeys(imports)), "exports": sorted(set(exports))}
     if cache:
-        cache.save_section("frontend", {**cache.load_section("frontend"), path: {"hash": digest, "graph": graph}})
+        section[path] = {"hash": digest, "graph": graph}
+        cache.save_section("frontend", section)
     return graph
 
 
@@ -421,12 +433,14 @@ def _resolve_specifier(spec, importer_path, tracked):
     """Resolve a relative specifier to a tracked path, or None."""
     if not spec.startswith("."):
         return None
-    base = spec.split("?", 1)[0]
+    base = spec.split("?", 1)[0].split("#", 1)[0]
     parts = importer_path.split("/")[:-1]
     for seg in base.split("/"):
         if seg == "..":
             if parts:
                 parts.pop()
+            else:
+                return None
         elif seg == ".":
             continue
         elif seg:

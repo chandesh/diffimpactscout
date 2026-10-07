@@ -310,3 +310,41 @@ def test_importer_closure_inverted_transitive():
 def test_min_js_excluded_from_graph():
     assert rev._is_graph_file("media/x/y.min.js") is False
     assert rev._is_graph_file("media/x/y.ts") is True
+
+
+def test_import_regex_multiline_and_sideeffect(tmp_path):
+    src = (
+        "import {\n  Alpha,\n  Beta\n} from './multi';\n"
+        "import './polyfills';\n"
+        "const doc = \"import x from './fake'\";\n"
+        "bellyrequire('./req');\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert "./multi" in graph["imports"]
+    assert "./polyfills" in graph["imports"]
+    assert "./fake" not in graph["imports"]
+    assert "./req" not in graph["imports"]
+
+
+def test_resolve_specifier_rejects_overclimb_and_strips_fragment():
+    tracked = {"media/a/b/x.ts", "media/a/b/c.ts"}
+    assert rev._resolve_specifier("../../../../c", "media/a/b/d.ts", tracked) is None
+    assert rev._resolve_specifier("./x#frag", "media/a/b/d.ts", tracked) == "media/a/b/x.ts"
+
+
+def test_frontend_graph_tolerates_non_dict_cache_entry(tmp_path):
+    from diffimpactscout.impact.cache import SymbolCache
+
+    root = _repo(tmp_path, {"media/a.ts": "import './b';\n"})
+    cache = SymbolCache(str(tmp_path / "c.json"))
+    cache.save_section("frontend", {"media/a.ts": "garbage"})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", cache, set())
+    assert graph["imports"] == ["./b"]
+
+
+def test_is_graph_file_excludes_min_and_bundle_variants():
+    assert rev._is_graph_file("media/x/y.min.jsx") is False
+    assert rev._is_graph_file("media/x/y.bundle.jsx") is False
+    assert rev._is_graph_file("media/x/y.min.cjs") is False
+    assert rev._is_graph_file("media/x/y.ts") is True

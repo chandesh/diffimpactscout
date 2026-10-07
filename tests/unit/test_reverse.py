@@ -137,3 +137,68 @@ def test_reverse_row_shape():
     assert row["category"] == "python"
     assert row["_entity"] == "product_view"
     assert row["_deleted"] is False
+
+
+def test_render_site_skips_non_str_usage():
+    """Verifies that a matching name with kind != "str" is not a render site."""
+    analyses = {
+        "shop/views.py": {
+            "analysis": {
+                "usages": [
+                    {"line": 9, "name": "shop/product.html", "kind": "name", "ctx_qname": "v", "ctx_kind": "function"},
+                    {"line": 12, "name": "shop/product.html", "kind": "attr", "ctx_qname": "v", "ctx_kind": "function"},
+                    {"line": 15, "name": "shop/product.html", "kind": "str", "ctx_qname": "v", "ctx_kind": "function"},
+                ],
+            }
+        },
+    }
+    hits = rev.find_render_sites(analyses, ["shop/product.html"])
+    assert [h["line"] for h in hits] == [15]
+
+
+def test_render_site_skips_module_scope_usage():
+    """Verifies that module-scope string constants are not render sites."""
+    analyses = {
+        "shop/constants.py": {
+            "analysis": {
+                "usages": [
+                    {"line": 4, "name": "shop/product.html", "kind": "str", "ctx_qname": "", "ctx_kind": "module"},
+                    {"line": 8, "name": "shop/product.html", "kind": "str"},
+                ],
+            }
+        },
+    }
+    assert rev.find_render_sites(analyses, ["shop/product.html"]) == []
+
+
+def test_render_site_handles_flat_raw_analysis():
+    """Verifies that a raw analysis dict (not wrapped) is accepted."""
+    analyses = {
+        "shop/views.py": {
+            "usages": [
+                {"line": 9, "name": "shop/product.html", "kind": "str", "ctx_qname": "product_view", "ctx_kind": "function"},
+            ],
+        },
+    }
+    hits = rev.find_render_sites(analyses, ["shop/product.html"])
+    assert len(hits) == 1
+    assert hits[0]["ctx_leaf"] == "product_view"
+
+
+def test_render_site_skips_non_list_usages():
+    """Verifies a non-list "usages" value is ignored instead of crashing."""
+    analyses = {
+        "a.py": {"analysis": {"usages": {"line": 1}}},
+        "b.py": {"analysis": {"usages": None}},
+    }
+    assert rev.find_render_sites(analyses, ["shop/product.html"]) == []
+
+
+def test_extends_cycle_fail_closed_with_genuine_child():
+    """Verifies a seed on a cycle yields no descendants even with real children."""
+    graphs = {
+        "a.html": {"extends": ["x.html"], "includes": []},
+        "x.html": {"extends": ["a.html"], "includes": []},
+        "b.html": {"extends": ["a.html"], "includes": []},
+    }
+    assert rev.descendants_of("a.html", graphs) == {}

@@ -179,6 +179,12 @@ def find_render_sites(analyses, template_names):
     analyses maps path -> cache entry or raw analysis (same contract as
     python_analyzer.find_references). Each hit adds "path" and
     "ctx_leaf" (the enclosing function/method name = the render site).
+
+    Only usages inside a function, method or class scope are kept:
+    module-scope constants and bare expressions (ctx_kind "module") are
+    skipped so module-level assignments such as ``TEMPLATE = 'x.html'``
+    do not become render sites. This is a heuristic -- a string argument
+    that merely looks like a template inside a function still matches.
     """
     wanted = set(template_names)
     hits = []
@@ -188,8 +194,13 @@ def find_render_sites(analyses, template_names):
             analysis = entry["analysis"]
         if not isinstance(analysis, dict):
             continue
-        for usage in analysis.get("usages") or []:
+        usages = analysis.get("usages")
+        if not isinstance(usages, list):
+            continue
+        for usage in usages:
             if usage.get("kind") != "str" or usage.get("name") not in wanted:
+                continue
+            if usage.get("ctx_kind") not in ("function", "method", "class"):
                 continue
             ctx = usage.get("ctx_qname") or ""
             hits.append({
@@ -208,6 +219,9 @@ def descendants_of(name, graphs):
 
     Walks the inverted extends graph transitively with a cycle guard; a
     child is included only when reached through a chain of extends edges.
+    When the seed itself sits on an extends cycle the result is empty
+    (fail-closed): a partial or ambiguous descendant set is worse than
+    none, and Django rejects extends cycles at render time anyway.
     """
     children = {}
     for child, graph in graphs.items():
@@ -220,6 +234,9 @@ def descendants_of(name, graphs):
         current = queue.pop(0)
         for child in children.get(current, []):
             if child in seen:
+                # Seed re-reached: the seed participates in an extends
+                # cycle, so fail closed with no descendants rather than a
+                # partial/ambiguous set (Django rejects cycles at render).
                 if child == name:
                     return {}
                 continue

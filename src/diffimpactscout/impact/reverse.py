@@ -373,12 +373,16 @@ FRONTEND_GRAPH_VERSION = 1
 #                                                "require")
 #             foo.require('./req');             (lookbehind blocks the ".")
 #             $require('./req');                (lookbehind blocks the "$")
+#             export { "import('./x')" };       (quoted export names are kept
+#                                                by _blank_literals, but the
+#                                                quote lookbehind stops their
+#                                                contents being re-scanned)
 _IMPORT_SPEC_RE = re.compile(
     r"(?:^\s*import\b[^'\";]{0,4096}?\bfrom\s*['\"]([^'\"\n]+)['\"]"
     r"|^\s*export\b[^'\";]{0,4096}?\bfrom\s*['\"]([^'\"\n]+)['\"]"
     r"|^\s*import\s*['\"]([^'\"\n]+)['\"]"
-    r"|(?<![.\w$])import\s*\(\s*['\"]([^'\"\n]+)['\"]"
-    r"|(?<![.\w$])require\s*\(\s*['\"]([^'\"\n]+)['\"])",
+    r"|(?<![.\w$'\"`])import\s*\(\s*['\"]([^'\"\n]+)['\"]"
+    r"|(?<![.\w$'\"`])require\s*\(\s*['\"]([^'\"\n]+)['\"])",
     re.M,
 )
 
@@ -629,6 +633,8 @@ def importers_of(target, graph, max_nodes=500):
             if parent not in out:
                 out.add(parent)
                 queue.append(parent)
+                if len(out) >= max_nodes:
+                    break
     out.discard(target)
     return out
 

@@ -307,6 +307,15 @@ def test_importer_closure_inverted_transitive():
     assert out == {"a.ts", "b.ts"}
 
 
+def test_importer_closure_caps_wide_fan_in():
+    """The 500-node cap holds even for a module with 1000 direct importers."""
+    graph = {"shared.ts": []}
+    for i in range(1000):
+        graph["m%d.ts" % i] = ["shared.ts"]
+    out = rev.importers_of("shared.ts", graph)
+    assert len(out) == 500
+
+
 def test_min_js_excluded_from_graph():
     assert rev._is_graph_file("media/x/y.min.js") is False
     assert rev._is_graph_file("media/x/y.ts") is True
@@ -636,6 +645,18 @@ def test_import_lookbehind_blocks_member_call(tmp_path):
         "obj.import('./fake');\n"
         "$import('./fake2');\n"
         "const lazy = () => import('./real');\n"
+    )
+    root = _repo(tmp_path, {"media/a.ts": src})
+    graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())
+    assert graph["imports"] == ["./real"]
+
+
+def test_quoted_export_name_containing_import_syntax_does_not_leak(tmp_path):
+    """Doc claim: a kept quoted export name is not re-scanned for imports."""
+    src = (
+        "export { \"import('./evil')\" };\n"
+        "export { \"require('./evil2')\" as x };\n"
+        "import real from './real';\n"
     )
     root = _repo(tmp_path, {"media/a.ts": src})
     graph = rev.analyze_frontend_graph(root, "media/a.ts", None, set())

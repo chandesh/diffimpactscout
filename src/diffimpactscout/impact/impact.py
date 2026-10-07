@@ -14,6 +14,7 @@ import diffimpactscout.gitrun as gitrun
 import diffimpactscout.scope as scope
 from diffimpactscout.config import is_excluded
 from diffimpactscout.impact import reporter
+from diffimpactscout.impact import reverse as reverse_mod
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
 from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
@@ -74,8 +75,17 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     cache.prune(py_files)
     cache.save(cache.load())
     analyses = cache.load()
+    extra_entities, reverse_rows, reverse_layers, reverse_unresolved = {}, [], {}, []
+    if impact_cfg.get("reverse") and not fast:
+        extra_entities, reverse_rows, reverse_layers, reverse_unresolved = reverse_mod.template_chain(
+            root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
+        )
+        entities.update(extra_entities)
     rows, endpoints, unresolved = _compose_rows(
-        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg
+        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg,
+        extra_rows=reverse_rows,
+        extra_layers=reverse_layers,
+        extra_unresolved=reverse_unresolved,
     )
     changed_count = len(changes)
     if json_out:
@@ -179,10 +189,14 @@ def _entity_overlaps_changed(entity, changed_lines):
 
 
 def _compose_rows(
-    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None
+    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
+    extra_rows=None, extra_layers=None, extra_unresolved=None,
 ):
     rows = []
     layers = {}
+    for name, cats in (extra_layers or {}).items():
+        layers.setdefault(name, set()).update(cats)
+    rows.extend(extra_rows or [])
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
     deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
@@ -213,7 +227,7 @@ def _compose_rows(
     frontend_matched, _frontend_unresolved = route_linker.match_endpoints(
         frontend_refs, affected
     )
-    unresolved = []
+    unresolved = list(extra_unresolved or [])
     for hit in template_matched:
         row = _linked_row(hit, entities, layers, "template", changed_paths)
         if row is not None:

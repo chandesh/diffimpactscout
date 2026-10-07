@@ -9,6 +9,7 @@ import re
 
 import diffimpactscout.gitrun as gitrun
 from diffimpactscout.config import is_excluded
+from diffimpactscout.impact.diff_parser import get_changed_lines, read_path_at_ref
 
 # Matches Django {% extends %} tags with a STATIC template name.
 #   Matches:  {% extends 'common/base.html' %}   -> captures "common/base.html"
@@ -48,6 +49,13 @@ _TEMPLATEURL_RE = re.compile(r"templateUrl\s*:\s*['\"]([^'\"\n]+)['\"]")
 #   Matches:  <!-- <script src="old.js"></script> -->   (removed before scanning)
 #             <!--[if IE]><script src="shim.js"></script><![endif]-->
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+# Matches Django {% include %} tags whose argument is NOT a quoted
+# static name, i.e. a computed/dynamic include.
+#   Matches:  {% include block.template_name %}   (dynamic)
+#             {% include fragment_path %}
+#   Skips:    {% include 'shop/nav.html' %}       (quoted static name)
+_DYNAMIC_INCLUDE_RE = re.compile(r"{%-?\s*include\s+[^'\"%\n]+%}")
 
 
 def template_name_of(path):
@@ -257,3 +265,103 @@ def make_row(path, module, category, ref, entity_name, deleted=False):
         "_entity": entity_name,
         "_deleted": deleted,
     }
+
+
+def _module_of(path):
+    if not path:
+        return ""
+    stem = path[:-3] if path.endswith(".py") else path
+    if stem.endswith("/__init__"):
+        stem = stem[: -len("/__init__")]
+    return stem.replace("/", ".")
+
+
+def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, staged, from_ref, to_ref):
+    """Chain T: changed templates -> render sites -> view pseudo-entities + rows.
+
+    Returns (extra_entities, rows, extra_layers, unresolved).
+    """
+    template_globs = impact_cfg.get("template_globs") or []
+    template_files = _tracked_files(root, cfg, "*.html")
+    if template_globs:
+        template_files = [p for p in template_files if _glob_match_any(p, template_globs)]
+    graphs = {}
+    for path in template_files:
+        graphs[template_name_of(path) or path] = analyze_template_graph(root, path, cache, cfg)
+    cache.save_section("templates", cache.load_section("templates"))
+    extra_entities = {}
+    rows = []
+    layers = {}
+    unresolved = []
+    changed_templates = [c.path for c in changes if c.ext == "html"]
+    changed_names = []
+    for path in changed_templates:
+        name = template_name_of(path)
+        if name:
+            changed_names.append(name)
+    if not changed_names:
+        return extra_entities, rows, layers, unresolved
+    desc_map = {}
+    for name in changed_names:
+        for child, targets in descendants_of(name, graphs).items():
+            desc_map.setdefault(child, set()).update(targets or [])
+    affected_names = set(changed_names) | set(desc_map)
+    for hit in find_render_sites(analyses, affected_names):
+        entity = hit["ctx_leaf"]
+        if not entity:
+            continue
+        module = _module_of(hit["path"])
+        ent = extra_entities.setdefault(
+            entity, {"kind": "function", "deleted": False, "modules": set()}
+        )
+        ent["modules"].add(module)
+        rows.append(
+            make_row(
+                hit["path"], module, "python",
+                "renders '%s' (line %d)" % (hit["template"], hit["line"]),
+                entity,
+            )
+        )
+        layers.setdefault(entity, set()).add("template")
+    for child in sorted(desc_map):
+        targets = sorted(desc_map[child])
+        child_path = _path_for_name(template_files, child)
+        rows.append(
+            make_row(
+                child_path, _dir_of(child_path), "template",
+                "extends '%s'" % (", ".join(targets[:2])), "extends:%s" % child,
+            )
+        )
+    for path in changed_templates:
+        name = template_name_of(path)
+        graph = graphs.get(name) or {}
+        if graph.get("includes") == [] and _has_dynamic_include(root, path):
+            unresolved.append({"file": path, "reason": "dynamic include; manual check required"})
+    return extra_entities, rows, layers, unresolved
+
+
+def _glob_match_any(path, patterns):
+    from diffimpactscout.config import _matches_glob
+
+    return any(_matches_glob(path, p) for p in patterns)
+
+
+def _dir_of(path):
+    return os.path.dirname(path or "") or ""
+
+
+def _path_for_name(template_files, name):
+    for path in template_files:
+        if template_name_of(path) == name:
+            return path
+    return name
+
+
+def _has_dynamic_include(root, path):
+    full = os.path.join(root, path) if root else path
+    try:
+        with open(full, "rb") as fh:
+            text = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return False
+    return bool(_DYNAMIC_INCLUDE_RE.search(_strip_html_comments(text)))

@@ -101,7 +101,7 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 | --- | --- |
 | `--staged` | Analyze the staged diff (base ref becomes `HEAD`). |
 | `--fast` | Skip template and frontend scanning; limit Python scanning to the changed files plus import-linked files. |
-| `--json` | Emit the report as JSON (`{changed_count, rows, unresolved}`) instead of a markdown table. |
+| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, hidden_count}`) instead of a markdown table. |
 | `--expand` | Open rolled-up rows (e.g. "35 templates directly extend it") to list their child files. |
 | `--all` | Also show lower-confidence (heuristic/transitive) impacts. |
 
@@ -114,6 +114,9 @@ Runs the `guard` checks first, then always falls through to the `impact` blast-r
 | `--staged` | Restrict both the guard and the impact analysis to staged files. |
 | `--fast` | Passes through to `impact` (skip template/frontend scanning). |
 | `--json` | Passes through to `impact` (emit the report as JSON). |
+| `--markdown` | Passes through to `impact` (emit a Markdown table). |
+| `--expand` | Passes through to `impact` (open rolled-up rows to list their child files). |
+| `--all` | Passes through to `impact` (also show lower-confidence impacts). |
 
 ### `diffimpactscout dependency-check`
 

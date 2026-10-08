@@ -22,6 +22,9 @@ def _parser():
     parser = argparse.ArgumentParser(
         prog="diffimpactscout",
         description="Incremental pre-push guard and AST blast-radius impact analyzer.",
+        epilog="Reverse reports are confidence-tiered; see 'impact --expand' to "
+               "open rolled-up rows and 'impact --all' to include "
+               "lower-confidence impacts.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command")

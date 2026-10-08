@@ -3,7 +3,7 @@ import subprocess
 
 import diffimpactscout.impact.reverse as rev
 from diffimpactscout.impact.cache import SymbolCache
-from diffimpactscout.impact.diff_parser import get_file_changes
+from diffimpactscout.impact.diff_parser import FileChange, get_file_changes
 
 
 def _repo(tmp_path, files):
@@ -1176,4 +1176,66 @@ def test_find_render_sites_certain_accepts_template_name_kwarg():
         ]}},
     }
     assert len(rev.find_render_sites(analyses, ["app/page.html"], certain=True)) == 1
+
+
+def _tgraph_analyses(render_lines):
+    usages = []
+    for line, tpl, callee in render_lines:
+        u = {"line": line, "name": tpl, "kind": "str", "ctx_qname": "v", "ctx_kind": "function"}
+        if callee:
+            u["callee"] = callee
+        usages.append(u)
+    return {"app/views.py": {"analysis": {"defs": {}, "usages": usages}}}
+
+
+def _git_tracked_repo(tmp_path, files):
+    root = _repo(tmp_path, files)
+    subprocess.check_call(["git", "init", "-q"], cwd=root)
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    return root
+
+
+def test_template_chain_tiers_and_rollup(tmp_path):
+    files = {"app/templates/base.html": "<html></html>\n"}
+    for i in range(10):  # > INLINE_LIMIT direct children
+        files["app/templates/c%d.html" % i] = "{% extends 'base.html' %}\n"
+    files["app/templates/grand.html"] = "{% extends 'c0.html' %}\n"
+    root = _git_tracked_repo(tmp_path, files)
+    cache = SymbolCache(str(tmp_path / "cache.json"))
+    cfg = {"ignore_paths": [], "use_gitignore": False, "impact": {}}
+    changes = [FileChange("app/templates/base.html", "M", None, "html")]
+    analyses = _tgraph_analyses([
+        (3, "base.html", "render"),      # backend certain
+        (4, "base.html", "mystery"),     # heuristic (non-render)
+        (5, "grand.html", "render"),     # heuristic (descendant)
+    ])
+    _e, rows, _l, _u = rev.template_chain(root, cfg, cfg["impact"], changes, analyses, cache, None, False, None, None)
+    by_tier = {}
+    for r in rows:
+        by_tier.setdefault(r["tier"], []).append(r)
+    front = by_tier[rev.TIER_FRONTEND]
+    roll = next(r for r in front if r["path"].endswith("base.html"))
+    assert roll["ref"].startswith("changed — 10 templates")
+    assert len(roll["related"]) == 10
+    backend = by_tier[rev.TIER_BACKEND]
+    assert [r["ref"] for r in backend] == ["renders 'base.html' (line 3)"]
+    heur = by_tier[rev.TIER_HEURISTIC]
+    assert any("line 4" in r["ref"] for r in heur)
+    assert any("grand.html" in r["ref"] for r in heur)
+
+
+def test_template_chain_inline_children_below_limit(tmp_path):
+    root = _git_tracked_repo(tmp_path, {
+        "app/templates/base.html": "<html></html>\n",
+        "app/templates/a.html": "{% extends 'base.html' %}\n",
+        "app/templates/b.html": "{% extends 'base.html' %}\n",
+    })
+    cache = SymbolCache(str(tmp_path / "cache.json"))
+    cfg = {"ignore_paths": [], "use_gitignore": False, "impact": {}}
+    changes = [FileChange("app/templates/base.html", "M", None, "html")]
+    _e, rows, _l, _u = rev.template_chain(root, cfg, cfg["impact"], changes, {}, cache, None, False, None, None)
+    front = [r for r in rows if r["tier"] == rev.TIER_FRONTEND]
+    refs = sorted(r["ref"] for r in front)
+    assert refs == ["changed", "extends 'base.html'", "extends 'base.html'"]
+    assert all("related" not in r for r in front)
 

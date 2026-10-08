@@ -309,9 +309,13 @@ def descendants_of(name, graphs):
     return out
 
 
-def make_row(path, module, category, ref, entity_name, deleted=False):
-    """Build a row dict shaped for the existing report pipeline."""
-    return {
+def make_row(path, module, category, ref, entity_name, deleted=False, tier=None, related=None):
+    """Build a row dict shaped for the existing report pipeline.
+
+    ``tier`` (frontend/backend/heuristic) marks reverse-chain confidence;
+    ``related`` lists the collapsed child paths of a rolled-up row.
+    """
+    row = {
         "path": path,
         "module": module,
         "category": category,
@@ -319,6 +323,11 @@ def make_row(path, module, category, ref, entity_name, deleted=False):
         "_entity": entity_name,
         "_deleted": deleted,
     }
+    if tier is not None:
+        row["tier"] = tier
+    if related is not None:
+        row["related"] = list(related)
+    return row
 
 
 def _module_of(path):
@@ -333,6 +342,9 @@ def _module_of(path):
 def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, staged, from_ref, to_ref):
     """Chain T: changed templates -> render sites -> view pseudo-entities + rows.
 
+    Tiers: frontend = changed templates + direct extends children; backend =
+    known-render-API sites of a changed template; heuristic = transitive
+    descendants, descendant render sites, and non-render literals.
     Returns (extra_entities, rows, extra_layers, unresolved).
     """
     template_globs = impact_cfg.get("template_globs") or []
@@ -358,37 +370,72 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
         )
     if cache is not None:
         cache.save_section("templates", cache.load_section("templates"))
-    desc_map = {}
+
+    direct = {}
+    descendants = set()
     for name in changed_names:
-        for child, targets in descendants_of(name, graphs).items():
-            desc_map.setdefault(child, set()).update(targets or [])
-    affected_names = set(changed_names) | set(desc_map)
-    for hit in find_render_sites(analyses, affected_names):
+        children = sorted(c for c, g in graphs.items() if name in (g.get("extends") or []))
+        direct[name] = children
+        descendants.update(descendants_of(name, graphs))
+    transitive = descendants - {c for children in direct.values() for c in children}
+
+    for name in changed_names:
+        path = _path_for_name(template_files, name)
+        children = direct[name]
+        if len(children) > INLINE_LIMIT:
+            rows.append(make_row(
+                path, _dir_of(path), "template",
+                "changed — %d templates directly extend it" % len(children),
+                "changed:%s" % name, tier=TIER_FRONTEND,
+                related=[_path_for_name(template_files, c) for c in children],
+            ))
+        else:
+            rows.append(make_row(
+                path, _dir_of(path), "template", "changed",
+                "changed:%s" % name, tier=TIER_FRONTEND,
+            ))
+            for child in children:
+                cpath = _path_for_name(template_files, child)
+                rows.append(make_row(
+                    cpath, _dir_of(cpath), "template",
+                    "extends '%s'" % name, "extends:%s" % child, tier=TIER_FRONTEND,
+                ))
+
+    for child in sorted(transitive):
+        cpath = _path_for_name(template_files, child)
+        rows.append(make_row(
+            cpath, _dir_of(cpath), "template", "extends (transitive)",
+            "extends:%s" % child, tier=TIER_HEURISTIC,
+        ))
+
+    certain = find_render_sites(analyses, changed_names, certain=True)
+    certain_keys = {(h["path"], h["line"]) for h in certain}
+    for hit in certain:
         entity = hit["ctx_leaf"]
         if not entity:
             continue
         module = _module_of(hit["path"])
-        ent = extra_entities.setdefault(
-            entity, {"kind": "function", "deleted": False, "modules": set()}
-        )
+        ent = extra_entities.setdefault(entity, {"kind": "function", "deleted": False, "modules": set()})
         ent["modules"].add(module)
-        rows.append(
-            make_row(
-                hit["path"], module, "python",
-                "renders '%s' (line %d)" % (hit["template"], hit["line"]),
-                entity,
-            )
-        )
+        rows.append(make_row(
+            hit["path"], module, "python",
+            "renders '%s' (line %d)" % (hit["template"], hit["line"]),
+            entity, tier=TIER_BACKEND,
+        ))
         layers.setdefault(entity, set()).add("template")
-    for child in sorted(desc_map):
-        targets = sorted(desc_map[child])
-        child_path = _path_for_name(template_files, child)
-        rows.append(
-            make_row(
-                child_path, _dir_of(child_path), "template",
-                "extends '%s'" % (", ".join(targets[:2])), "extends:%s" % child,
-            )
-        )
+
+    for hit in find_render_sites(analyses, set(changed_names) | descendants, certain=False):
+        if (hit["path"], hit["line"]) in certain_keys:
+            continue
+        entity = hit["ctx_leaf"]
+        if not entity:
+            continue
+        rows.append(make_row(
+            hit["path"], _module_of(hit["path"]), "python",
+            "renders '%s' (line %d)" % (hit["template"], hit["line"]),
+            "render:%s:%s" % (hit["path"], hit["line"]), tier=TIER_HEURISTIC,
+        ))
+
     for path in changed_templates:
         if _has_dynamic_include(root, path):
             unresolved.append({"file": path, "reason": "dynamic include; manual check required"})

@@ -1274,3 +1274,58 @@ def test_asset_chain_rows_are_frontend_and_view_links_heuristic(tmp_path):
     assert template_rows and all(r["tier"] == rev.TIER_FRONTEND for r in template_rows)
     assert python_rows and all(r["tier"] == rev.TIER_HEURISTIC for r in python_rows)
 
+
+
+def _git_committed_repo(tmp_path, files):
+    root = _repo(tmp_path, files)
+    subprocess.check_call(["git", "init", "-q"], cwd=root)
+    subprocess.check_call(["git", "symbolic-ref", "HEAD", "refs/heads/master"], cwd=root)
+    subprocess.check_call(["git", "-C", root, "config", "user.name", "T"])
+    subprocess.check_call(["git", "-C", root, "config", "user.email", "t@e.co"])
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m0"])
+    subprocess.check_call(["git", "-C", root, "remote", "add", "upstream", "."])
+    subprocess.check_call(["git", "-C", root, "push", "-q", "upstream", "master"])
+    return root
+
+
+def test_asset_chain_rolls_up_many_loading_templates(tmp_path):
+    files = {"media/shop/app.js": "console.log('x');\n"}
+    for i in range(10):
+        files["shop/templates/shop/t%d.html" % i] = \
+            "<script src=\"{{ MEDIA_URL }}shop/app.js\"></script>\n"
+    root = _git_committed_repo(tmp_path, files)
+    with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
+        fh.write("console.log('y');\n")
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m1"])
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "asset_url_prefixes": ["{{ MEDIA_URL }}"]}}
+    _e, rows, _l, _u = rev.frontend_chain(root, cfg, cfg["impact"], changes, {}, {}, None,
+                                          "refs/remotes/upstream/master", False, None, None)
+    roll = [r for r in rows if "templates load this asset" in r["ref"]]
+    assert len(roll) == 1
+    assert len(roll[0]["related"]) == 10
+    assert roll[0]["tier"] == rev.TIER_FRONTEND
+
+
+def test_import_chain_rolls_up_many_importers(tmp_path):
+    files = {"media/shop/src/app/util.ts": "export function calc(x) { return x; }\n"}
+    for i in range(10):
+        files["media/shop/src/app/p%d.ts" % i] = \
+            "import { calc } from './util';\nconsole.log(calc(1));\n"
+    root = _git_committed_repo(tmp_path, files)
+    with open(os.path.join(root, "media", "shop", "src", "app", "util.ts"), "w") as fh:
+        fh.write("export function calc2(x) { return x; }\n")
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m1"])
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    _e, rows, _l, _u = rev.js_internal_chain(root, cfg, cfg["impact"], changes, None,
+                                             "refs/remotes/upstream/master", False, None, None)
+    roll = [r for r in rows if "references across" in r["ref"]]
+    assert len(roll) == 1
+    assert len(roll[0]["related"]) == 10
+    assert roll[0]["tier"] == rev.TIER_FRONTEND

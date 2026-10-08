@@ -225,6 +225,29 @@ def _entity_overlaps_changed(entity, changed_lines):
     return False
 
 
+def _row_severity(row, layers, delrow, changed_paths):
+    """Return (severity, reason) for a row, honoring its confidence tier.
+
+    Untiered rows (the Python-symbol pipeline) keep the historical rules.
+    Reverse rows never reach High from the >=2-layers rule: frontend changed
+    rows are High, deleted/renamed stays High, backend-certain is Medium, and
+    structural/heuristic rows are capped at Medium.
+    """
+    base = reporter.classify_severity(layers, delrow, changed_paths, row.get("path"))
+    tier = row.get("tier")
+    if tier is None:
+        return base, reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
+    if delrow:
+        return "High", reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
+    if tier == reverse_mod.TIER_FRONTEND and (row.get("ref") or "").startswith("changed"):
+        return "High", "the file itself is in the change-set"
+    if tier == reverse_mod.TIER_BACKEND:
+        return "Medium", "renders a changed template"
+    if base == "High":
+        return "Medium", "reachable through the template/import graph"
+    return base, reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
+
+
 def _compose_rows(
     root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
     extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
@@ -286,13 +309,10 @@ def _compose_rows(
     for row in rows:
         name = row.pop("_entity")
         delrow = row.pop("_deleted")
-        row["severity"] = reporter.classify_severity(
-            layers.get(name) or (), delrow, changed_paths, row.get("path")
-        )
-        row["reason"] = reporter.severity_reason(
-            layers.get(name) or (), delrow, changed_paths, row.get("path")
-        )
-        row["action"] = _action(row["severity"], delrow)
+        severity, reason = _row_severity(row, layers.get(name) or (), delrow, changed_paths)
+        row["severity"] = severity
+        row["reason"] = reason
+        row["action"] = _action(severity, delrow)
     endpoints = _endpoint_rows(affected)
     return rows, endpoints, unresolved, hidden_count
 

@@ -852,6 +852,7 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
         if not changed_names:
             continue
         importers = importers_of(change.path, graph)
+        pairs = []
         for importer in importers:
             importer_text = _read_text(os.path.join(root, importer) if root else importer) or ""
             binds = change.path in (graph.get(importer) or [])
@@ -860,6 +861,17 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
             for name in sorted(changed_names):
                 if not re.search(r"(?<![\w$])%s(?![\w$])" % re.escape(name), importer_text):
                     continue
+                pairs.append((importer, name))
+        if len(pairs) > INLINE_LIMIT:
+            related = sorted({imp for imp, _n in pairs})
+            rows.append(make_row(
+                change.path, _dir_of(change.path), "frontend",
+                "changed - %d references across %d files" % (len(pairs), len(related)),
+                "import:%s" % change.path, tier=TIER_FRONTEND, related=related,
+            ))
+            layers.setdefault("import:%s" % change.path, set()).add("frontend")
+        else:
+            for importer, name in pairs:
                 pseudo = "js:%s" % name
                 rows.append(
                     make_row(
@@ -1010,12 +1022,22 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
                 norm = _normalize_asset_ref(ref, prefixes)
                 if norm and _asset_matches(norm, change.path):
                     matching.append((path, ref))
-        for tpath, ref in sorted(set(matching)):
-            rows.append(
-                make_row(tpath, _dir_of(tpath), "template", "loads '%s'" % ref, "asset:%s" % change.path,
-                         tier=TIER_FRONTEND)
-            )
+        matching = sorted(set(matching))
+        loading = sorted({t for t, _ref in matching})
+        if len(loading) > INLINE_LIMIT:
+            rows.append(make_row(
+                change.path, _dir_of(change.path), "frontend",
+                "changed - %d templates load this asset" % len(loading),
+                "asset:%s" % change.path, tier=TIER_FRONTEND, related=loading,
+            ))
             layers.setdefault("asset:%s" % change.path, set()).add("template")
+        else:
+            for tpath, ref in matching:
+                rows.append(
+                    make_row(tpath, _dir_of(tpath), "template", "loads '%s'" % ref,
+                             "asset:%s" % change.path, tier=TIER_FRONTEND)
+                )
+                layers.setdefault("asset:%s" % change.path, set()).add("template")
         if not matching and change.path:
             unresolved.append({"file": change.path, "reason": "no template references this asset"})
     linked_names = [

@@ -334,3 +334,19 @@ def test_reverse_report_is_tight_by_default(tmp_path, capsys):
     full = json.loads(capsys.readouterr().out)
     assert full["hidden_count"] == 0
     assert any(r.get("tier") == "heuristic" for r in full["rows"])
+
+
+def test_row_severity_is_tier_aware():
+    """Frontend changed rows are High; backend/heuristic rows are capped at Medium."""
+    changed = ["app/templates/base.html"]
+    front = {"path": "app/templates/base.html", "ref": "changed", "tier": "frontend"}
+    assert impact_module._row_severity(front, {"template"}, False, changed)[0] == "High"
+    backend = {"path": "app/views.py", "ref": "renders 'base.html'", "tier": "backend"}
+    assert impact_module._row_severity(backend, {"template"}, False, changed)[0] == "Medium"
+    heur = {"path": "app/views.py", "ref": "renders 'x'", "tier": "heuristic"}
+    assert impact_module._row_severity(heur, {"template", "python"}, False, changed)[0] == "Medium"
+    # deleted/renamed stays High for any tier
+    assert impact_module._row_severity(heur, set(), True, changed)[0] == "High"
+    # untiered (Python-symbol) rows keep the >=2-layers High rule
+    plain = {"path": "app/x.py", "ref": "uses f"}
+    assert impact_module._row_severity(plain, {"python", "template"}, False, changed)[0] == "High"

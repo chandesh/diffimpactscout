@@ -246,6 +246,20 @@ def test_render_report_unresolved_section():
     assert "no-such-route" in out
 
 
+def test_render_report_unresolved_dict_entry():
+    """Verifies that reverse-chain unresolved dicts render readably."""
+    out = reporter.render_report(
+        [], [],
+        [{"file": "shop/templates/x.html", "reason": "dynamic include; manual check required"}],
+        1,
+    )
+    assert "shop/templates/x.html (dynamic include; manual check required)" in out
+    out_md = reporter.render_report(
+        [], [], [{"file": "a.ts", "ref": "/x/", "reason": "no matching route"}], 1, markdown=True
+    )
+    assert "a.ts: /x/ (no matching route)" in out_md
+
+
 def test_render_report_unresolved_omitted_when_empty():
     """Verifies that the unresolved section is omitted when there are none."""
     out = reporter.render_report([], [], [], 0)

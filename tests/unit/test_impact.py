@@ -852,3 +852,51 @@ def test_run_impact_fastapi_links_frontend_to_decorated_route(tmp_path, capsys):
     assert len(frontend_rows) == 1
     assert frontend_rows[0]["path"] == "src/orders.service.ts"
     assert "/api/v1/orders/" in frontend_rows[0]["ref"]
+
+
+def test_str_usage_not_spurious_caller_hop_or_route_binding():
+    """Verifies that a string literal equal to an entity name is not a caller hop.
+
+    A module that imports 'create' and also contains getattr(obj, 'create')
+    records a 'str' usage whose name equals the changed entity. Without a kind
+    guard the string is treated as a call site of 'create', marking 'config'
+    reachable and spuriously flagging its route as affected. reverse('create'),
+    redirect('create') and getattr(model, 'create') all hit this pattern.
+    """
+    analyses = {
+        "app/other.py": pa.analyze_source(
+            "from app.views import create\n"
+            "\n"
+            "def config():\n"
+            "    return getattr(obj, 'create')\n"
+        )
+    }
+    index = impact._usage_index(analyses)
+    assert impact._hop_callers(index, "create", {"app.views"}, set()) == {}
+    route = route_linker.Route(None, "/config/", "config", "app/other.py")
+    entities = {
+        "create": {"kind": "function", "deleted": False, "modules": {"app.views"}}
+    }
+    assert impact._affected_routes([route], analyses, entities, set()) == []
+
+
+def test_route_binds_handler_ignores_str_usage():
+    """Verifies that a string literal never binds a route handler by itself.
+
+    The urls module binds the name 'create' only as an alias to a different
+    object (from app.views import orders as create); the changed entity
+    'create' is not actually imported. reverse('create') records a 'str'
+    usage that resolves through that alias, so without the kind guard the
+    route would be falsely bound even though no genuine import names the
+    handler. The module (app.urls) is outside the handler's mods so the
+    same-module shortcut cannot mask the result.
+    """
+    urls = pa.analyze_source(
+        "from app.views import orders as create\n"
+        "\n"
+        "def reverse_url():\n"
+        "    return reverse('create')\n"
+    )
+    assert not impact._route_binds_handler(
+        urls, "create", {"app.views"}, "app/urls.py", set()
+    )

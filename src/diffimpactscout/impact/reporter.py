@@ -162,6 +162,22 @@ def _endpoint_lines(endpoints):
     return lines
 
 
+def _unresolved_line(ref):
+    """Render one unresolved reference.
+
+    Reverse-chain entries are dicts (``file``/``path``, optional ``ref`` and
+    ``reason``); they render as ``location: ref (reason)``. Plain strings
+    (legacy) are rendered unchanged.
+    """
+    if not isinstance(ref, dict):
+        return str(ref)
+    location = ref.get("file") or ref.get("path") or ""
+    detail = ref.get("ref")
+    reason = ref.get("reason") or ""
+    head = ": ".join(str(part) for part in (location, detail) if part) or "?"
+    return "%s (%s)" % (head, reason) if reason else head
+
+
 def _render_ascii(rows, endpoints, unresolved, changed_count):
     lines = []
     lines.append("=" * 70)
@@ -181,7 +197,7 @@ def _render_ascii(rows, endpoints, unresolved, changed_count):
         lines.append("")
         lines.append("  Unresolved references (manual check required):")
         for ref in unresolved:
-            lines.append("    - %s" % str(ref))
+            lines.append("    - %s" % _unresolved_line(ref))
     rationale = _rationale_lines(rows)
     if rationale:
         lines.append("")
@@ -214,7 +230,7 @@ def _render_markdown(rows, endpoints, unresolved, changed_count):
         lines.append("")
         lines.append("## Unresolved references (manual check required)")
         for ref in unresolved:
-            lines.append("- %s" % str(ref))
+            lines.append("- %s" % _unresolved_line(ref))
     rationale = _rationale_lines(rows)
     if rationale:
         lines.append("")

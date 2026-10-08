@@ -12,20 +12,25 @@ from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
 
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
+ANALYSIS_VERSION = 2
+
 
 def analyze_source(src):
     """Parse source text and build a per-file symbol analysis.
 
     Returns a dict with keys:
       hash   -- sha1 hex digest of the source text
+      v      -- analysis format version (bumped when usages/defs change)
       defs   -- {name: {"kind", "line", "end_line", "qname"}}
       usages -- [{"line", "name", "kind", "ctx_qname", "ctx_kind"}]
     Returns None when the source cannot be parsed.
 
     defs covers functions, classes, methods, module fields and class
-    fields. usages covers name loads ("name"), attribute loads ("attr")
-    and imports ("import"). Definitions and assignment targets are never
-    recorded as usages. An attribute load records only the attribute name
+    fields. usages covers name loads ("name"), attribute loads ("attr"),
+    imports ("import") and string constants in call args, kwarg values and
+    assignment values ("str" -- the string is stored in "name"). Definitions
+    and assignment targets are never recorded as usages. An attribute load
+    records only the attribute name
     (obj.status -> name "status", kind "attr"); the base object name is
     not recorded so a field search matches obj.status exactly once.
     Imports record the imported names, with dotted module names reduced
@@ -43,7 +48,12 @@ def analyze_source(src):
     defs = {}
     usages = []
     _walk(tree, [], defs, usages)
-    return {"hash": _content_hash(src), "defs": defs, "usages": usages}
+    return {
+        "v": ANALYSIS_VERSION,
+        "hash": _content_hash(src),
+        "defs": defs,
+        "usages": usages,
+    }
 
 
 def analyze_path(path, root, cache):
@@ -71,7 +81,7 @@ def analyze_path(path, root, cache):
         entry = data.get(path)
     if isinstance(entry, dict) and entry.get("hash") == _content_hash(text):
         analysis = entry.get("analysis")
-        if isinstance(analysis, dict):
+        if isinstance(analysis, dict) and analysis.get("v") == ANALYSIS_VERSION:
             return analysis
     analysis = analyze_source(text)
     if analysis is None:
@@ -89,6 +99,7 @@ def find_references(
     changed_paths=None,
     weak_attr=(),
     deleted=(),
+    require_attr_base=False,
 ):
     """Return reference hits for the given entity names, optionally by kind.
 
@@ -115,7 +126,10 @@ def find_references(
     entities removed or renamed in the change-set; their hits are bound to
     the defining modules even inside changed files so a same-name reference
     on a foreign object (e.g. ``service.create`` when ``create`` was a
-    deleted function) is pruned.
+    deleted function) is pruned. require_attr_base, when True, drops
+    attribute hits whose base chain is empty (unverifiable) — used for
+    reverse-chain pseudo-entities whose leaf name can be generic (e.g.
+    ``get``), where such hits are almost always unrelated.
 
     Caller contract:
       changed class_field    -> kinds={"attr"}
@@ -145,6 +159,8 @@ def find_references(
                 continue
             how = usage.get("kind", "name")
             if kinds is not None and how not in kinds:
+                continue
+            if require_attr_base and how == "attr" and not usage.get("base"):
                 continue
             if changed and name in mods:
                 if (name in gone or path not in changed) and not _usage_resolves(
@@ -284,6 +300,8 @@ def _walk(node, scope, defs, usages):
                 if alias.asname:
                     u["alias"] = alias.asname
                 usages.append(u)
+        elif isinstance(child, ast.Call):
+            _visit_call(child, scope, defs, usages)
         elif isinstance(child, ast.Attribute):
             _visit_attribute(child, scope, defs, usages)
         elif isinstance(child, ast.Name):
@@ -330,6 +348,27 @@ def _attr_base(node):
     return ".".join(reversed(parts))
 
 
+def _visit_call(node, scope, defs, usages):
+    for arg in node.args:
+        value = _str_const(arg)
+        if value is not None:
+            usages.append(_usage(arg, value, "str", scope))
+    for kw in node.keywords:
+        value = _str_const(kw.value)
+        if value is not None:
+            usages.append(_usage(kw.value, value, "str", scope))
+    _walk(node, scope, defs, usages)
+
+
+def _str_const(node):
+    if not isinstance(node, ast.Constant):
+        return None
+    value = node.value
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 def _visit_assign(child, scope, defs, usages):
     kind = None
     if not scope:
@@ -339,6 +378,11 @@ def _visit_assign(child, scope, defs, usages):
     if kind is not None:
         for target in _assign_targets(child):
             _record_def(defs, target, kind, _qualname(scope, target), child)
+    value = getattr(child, "value", None)
+    if value is not None:
+        sval = _str_const(value)
+        if sval is not None:
+            usages.append(_usage(value, sval, "str", scope))
     _walk(child, scope, defs, usages)
 
 

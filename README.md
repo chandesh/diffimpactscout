@@ -197,6 +197,9 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
 | `impact` | `urls_globs` / `template_globs` / `frontend_globs` | Glob patterns for route files, Django templates, and frontend sources. |
 | `impact` | `cache_file` | Path of the symbol cache (relative to the repo root). |
 | `impact` | `fast_mode`, `threads` | Reserved defaults from `init`; fast mode is currently selected with the `impact --fast` flag. |
+| `impact` | `reverse` | `true`/`false`; when on, template-only and frontend-only diffs are analyzed back to render sites, views, routes, and referencing frontend files. Default: off for `generic`/`python` profiles, on for `django`/`frontend`. |
+| `impact` | `experimental` | `true`/`false`; enables the endpoint chain (changed frontend HTTP calls to routes, handler views, and the service/utility functions they call). Advisory only. Default: off in all profiles. |
+| `impact` | `asset_url_prefixes` | Template URL prefixes stripped before asset resolution. User entries are **appended** to the built-in defaults (`{{ MEDIA_URL }}`, `{{ STATIC_URL }}`, `{% static '`, `url('`); they cannot replace or clear the defaults. |
 
 A config entry can also declare a custom external check:
 
@@ -282,6 +285,15 @@ Summary: 3 changed file(s); High: 1, Medium: 2, Low: 0
 ```
 
 In a terminal, `impact` then asks `Proceed with push? (Y/n)`. On a non-interactive run (for example after a CI trigger), the report is shown as a warning and the push is not blocked unless `IMPACT_CHECK_STRICT` is set.
+
+### Reverse chains
+
+When the change-set touches no Python (or in addition to changed Python symbols), `impact` also runs reverse chains (`impact.reverse` must be on; they are skipped entirely under `impact --fast`):
+
+- **Template chain:** a changed Django template is matched (by exact template name) to the Python functions that render it, then through the existing route and frontend linking; templates that extend the changed template are reported too. Dynamic `{% include var %}` tags land in "unresolved"; dynamic `{% extends %}` targets are ignored.
+- **Asset chain:** a changed tracked JS/TS file is matched to the templates that load it (`script src`, `{% static %}`, `link href`), then to the views rendering those templates. A changed tracked asset with no referencing template lands in "unresolved"; untracked targets (bundles, CDNs) are ignored, never guessed.
+- **Import chain:** changed JS/TS exports are matched to other tracked frontend files that import them; deleted exports are flagged High. Minified and vendored files are excluded; unresolvable path aliases are skipped.
+- **Endpoint chain (experimental):** changed frontend HTTP literals are matched to Django routes, the handler view, and the service/utility functions it calls. Enable with `"experimental": true` in the `impact` section; advisory only, and never a sole grounds for blocking.
 
 ## Checks reference
 

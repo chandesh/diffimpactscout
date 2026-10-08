@@ -14,6 +14,7 @@ import diffimpactscout.gitrun as gitrun
 import diffimpactscout.scope as scope
 from diffimpactscout.config import is_excluded
 from diffimpactscout.impact import reporter
+from diffimpactscout.impact import reverse as reverse_mod
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
 from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
@@ -74,8 +75,37 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     cache.prune(py_files)
     cache.save(cache.load())
     analyses = cache.load()
+    reverse_rows, reverse_layers, reverse_unresolved = [], {}, []
+    pseudo_entities = set()
+    if impact_cfg.get("reverse") and not fast:
+        real_names = set(entities)
+        extra_t, rows_t, layers_t, unresolved_t = reverse_mod.template_chain(
+            root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
+        )
+        _merge_entities(entities, extra_t)
+        extra_f, rows_f, layers_f, unresolved_f = reverse_mod.frontend_chain(
+            root, cfg, impact_cfg, changes, entities, analyses, cache, old_ref, staged, from_ref, to_ref,
+            experimental=bool(impact_cfg.get("experimental")),
+        )
+        _merge_entities(entities, extra_f)
+        # Reverse render-site pseudo-entities exist to re-seed route/frontend
+        # linking, not to be reference-searched: their enclosing function's
+        # leaf name can be generic (e.g. "get"), which would explode
+        # find_references with unrelated same-name usages. The chains already
+        # emit their own rows; keep the entities (for _affected_routes) but
+        # skip reference search for the ones that are not real changed entities.
+        pseudo_entities = (set(extra_t) | set(extra_f)) - real_names
+        reverse_rows = rows_t + rows_f
+        reverse_layers = {**layers_t}
+        for name, cats in layers_f.items():
+            reverse_layers.setdefault(name, set()).update(cats)
+        reverse_unresolved = unresolved_t + unresolved_f
     rows, endpoints, unresolved = _compose_rows(
-        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg
+        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg,
+        extra_rows=reverse_rows,
+        extra_layers=reverse_layers,
+        extra_unresolved=reverse_unresolved,
+        pseudo_entities=pseudo_entities,
     )
     changed_count = len(changes)
     if json_out:
@@ -158,6 +188,19 @@ def _changed_entities(
     return entities
 
 
+def _merge_entities(entities, extra):
+    for name, ent in (extra or {}).items():
+        existing = entities.get(name)
+        if existing is None:
+            entities[name] = {
+                "kind": ent.get("kind", "function"),
+                "deleted": bool(ent.get("deleted")),
+                "modules": set(ent.get("modules") or ()),
+            }
+            continue
+        existing.setdefault("modules", set()).update(ent.get("modules") or ())
+
+
 def _module_of(path):
     if not path:
         return ""
@@ -179,17 +222,23 @@ def _entity_overlaps_changed(entity, changed_lines):
 
 
 def _compose_rows(
-    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None
+    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
+    extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
 ):
     rows = []
     layers = {}
+    for name, cats in (extra_layers or {}).items():
+        layers.setdefault(name, set()).update(cats)
+    rows.extend(extra_rows or [])
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
     deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
         name for name, ent in entities.items() if ent.get("kind") == "class_field"
     ]
     weak = set(weak_attr)
+    pseudo = set(pseudo_entities or ())
     for name, ent in entities.items():
+        layers.setdefault(name, set())
         kinds = _ENTITY_KINDS.get(ent["kind"], _DEFAULT_KINDS)
         hits = pa.find_references(
             analyses,
@@ -199,8 +248,8 @@ def _compose_rows(
             changed_paths=changed_paths,
             weak_attr=weak_attr,
             deleted=deleted,
+            require_attr_base=(name in pseudo),
         )
-        layers.setdefault(name, set())
         for hit in hits:
             layers[name].add("python")
             rows.append(_python_row(hit, name, ent))
@@ -213,7 +262,7 @@ def _compose_rows(
     frontend_matched, _frontend_unresolved = route_linker.match_endpoints(
         frontend_refs, affected
     )
-    unresolved = []
+    unresolved = list(extra_unresolved or [])
     for hit in template_matched:
         row = _linked_row(hit, entities, layers, "template", changed_paths)
         if row is not None:
@@ -273,6 +322,8 @@ def _usage_index(analyses):
 def _hop_callers(index, name, mods, weak):
     callers = {}
     for path, analysis, u in index.get(name, []):
+        if u.get("kind") == "str":
+            continue
         if u.get("kind") == "attr" and not u.get("base"):
             continue
         if not pa._usage_resolves(analysis, u, name, mods, path, weak):
@@ -306,6 +357,8 @@ def _route_binds_handler(urls_entry, handler, mods, path, weak):
         return True
     for u in analysis.get("usages") or []:
         if u.get("name") != handler:
+            continue
+        if u.get("kind") == "str":
             continue
         if pa._usage_resolves(analysis, u, handler, mods, path, weak):
             return True

@@ -77,13 +77,14 @@ def _summary_line(rows, changed_count):
 
 
 def _rationale_lines(rows):
+    """Severity rationale lines (no index: tiered tables number per section)."""
     lines = []
-    for i, row in enumerate(rows or [], start=1):
+    for row in rows or []:
         reason = _cell(row, "reason")
         if not reason:
             continue
         label = "%s -> %s" % (_cell(row, "path") or "-", _cell(row, "ref") or "-")
-        lines.append("    %d. %s - %s (%s)" % (i, _cell(row, "severity") or "?", label, reason))
+        lines.append("    - %s - %s (%s)" % (_cell(row, "severity") or "?", label, reason))
     return lines
 
 

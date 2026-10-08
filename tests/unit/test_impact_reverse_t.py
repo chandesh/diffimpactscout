@@ -42,7 +42,7 @@ def test_template_only_diff_produces_rows(tmp_path, capsys):
     _git("commit", "-m", "m1", cwd=root)
     cfg = config._defaults()
     cfg["impact"]["reverse"] = True
-    rc = impact_module.run_impact(root, cfg, json_out=True)
+    rc = impact_module.run_impact(root, cfg, json_out=True, show_all=True)
     out = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert out["changed_count"] == 1
@@ -187,7 +187,7 @@ def test_js_only_diff_produces_asset_rows(tmp_path, capsys):
     cfg = config._defaults()
     cfg["impact"]["reverse"] = True
     cfg["impact"]["asset_url_prefixes"] = ["{{ MEDIA_URL }}"]
-    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
     out = json.loads(capsys.readouterr().out)
     cats = {(r["path"], r["category"]) for r in out["rows"]}
     assert ("shop/templates/shop/product.html", "template") in cats
@@ -215,7 +215,7 @@ def test_js_only_diff_surfaces_view_reference_rows(tmp_path, capsys):
     _git("commit", "-m", "m2", cwd=root)
     cfg = config._defaults()
     cfg["impact"]["reverse"] = True
-    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
     out = json.loads(capsys.readouterr().out)
     cats = {(r["path"], r["category"]) for r in out["rows"]}
     assert ("shop/views.py", "python") in cats
@@ -251,8 +251,48 @@ def test_generic_render_site_name_does_not_explode_references(tmp_path, capsys):
     _git("commit", "-m", "m1", cwd=root)
     cfg = config._defaults()
     cfg["impact"]["reverse"] = True
-    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
     out = json.loads(capsys.readouterr().out)
     paths = {r["path"] for r in out["rows"]}
     assert "shop/views.py" in paths          # render-site row present
     assert "other/utils.py" not in paths     # unrelated .get() usages excluded
+
+
+def test_reverse_default_hides_heuristic_rows(tmp_path, capsys):
+    """A template change shows frontend+backend by default; heuristic is hidden."""
+    root = str(tmp_path)
+    _git("init", cwd=root)
+    _git("symbolic-ref", "HEAD", "refs/heads/master", cwd=root)
+    os.makedirs(os.path.join(root, "app", "templates"))
+    with open(os.path.join(root, "app", "templates", "base.html"), "w") as fh:
+        fh.write("<html></html>\n")
+    with open(os.path.join(root, "app", "templates", "mid.html"), "w") as fh:
+        fh.write("{% extends 'base.html' %}\n")
+    for i in range(10):
+        with open(os.path.join(root, "app", "templates", "c%d.html" % i), "w") as fh:
+            fh.write("{% extends 'mid.html' %}\n")
+    with open(os.path.join(root, "app", "views.py"), "w") as fh:
+        fh.write("from django.shortcuts import render\n\ndef v(request):\n"
+                 "    return render(request, 'base.html')\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m0", cwd=root)
+    _git("remote", "add", "upstream", ".", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "app", "templates", "base.html"), "w") as fh:
+        fh.write("<html><body>x</body></html>\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    out = json.loads(capsys.readouterr().out)
+    tiers = {r.get("tier") for r in out["rows"]}
+    assert "heuristic" not in tiers
+    assert out["hidden_count"] >= 10
+    assert any(r.get("tier") == "backend" for r in out["rows"])
+
+    capsys.readouterr()
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
+    out_all = json.loads(capsys.readouterr().out)
+    assert out_all["hidden_count"] == 0
+    assert any(r.get("tier") == "heuristic" for r in out_all["rows"])

@@ -242,7 +242,8 @@ def _render_markdown(rows, endpoints, unresolved, changed_count):
     return "\n".join(lines) + "\n"
 
 
-def render_report(rows, endpoints, unresolved, changed_count, markdown=False):
+def render_report(rows, endpoints, unresolved, changed_count, markdown=False,
+                  hidden_count=0, expand=False):
     if markdown:
         return _render_markdown(rows, endpoints, unresolved, changed_count)
     return _render_ascii(rows, endpoints, unresolved, changed_count)

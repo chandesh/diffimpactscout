@@ -37,7 +37,8 @@ _ENTITY_KINDS = {
 _DEFAULT_KINDS = ("name",)
 
 
-def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False):
+def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False,
+               expand=False, show_all=False):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -100,12 +101,13 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         for name, cats in layers_f.items():
             reverse_layers.setdefault(name, set()).update(cats)
         reverse_unresolved = unresolved_t + unresolved_f
-    rows, endpoints, unresolved = _compose_rows(
+    rows, endpoints, unresolved, hidden_count = _compose_rows(
         root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg,
         extra_rows=reverse_rows,
         extra_layers=reverse_layers,
         extra_unresolved=reverse_unresolved,
         pseudo_entities=pseudo_entities,
+        show_all=show_all,
     )
     changed_count = len(changes)
     if json_out:
@@ -116,6 +118,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
                     "rows": rows,
                     "endpoints": endpoints,
                     "unresolved": unresolved,
+                    "hidden_count": hidden_count,
                 }
             )
             + "\n"
@@ -123,7 +126,8 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     else:
         sys.stdout.write(
             reporter.render_report(
-                rows, endpoints, unresolved, changed_count, markdown=markdown
+                rows, endpoints, unresolved, changed_count,
+                markdown=markdown, hidden_count=hidden_count, expand=(expand or show_all),
             )
         )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")
@@ -224,12 +228,18 @@ def _entity_overlaps_changed(entity, changed_lines):
 def _compose_rows(
     root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
     extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
+    show_all=False,
 ):
     rows = []
     layers = {}
     for name, cats in (extra_layers or {}).items():
         layers.setdefault(name, set()).update(cats)
-    rows.extend(extra_rows or [])
+    hidden_count = 0
+    for r in (extra_rows or []):
+        if r.get("tier") == reverse_mod.TIER_HEURISTIC and not show_all:
+            hidden_count += 1
+        else:
+            rows.append(r)
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
     deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
@@ -284,7 +294,7 @@ def _compose_rows(
         )
         row["action"] = _action(row["severity"], delrow)
     endpoints = _endpoint_rows(affected)
-    return rows, endpoints, unresolved
+    return rows, endpoints, unresolved, hidden_count
 
 
 def _endpoint_rows(routes):

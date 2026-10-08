@@ -1152,3 +1152,28 @@ def test_frontend_chain_batches_cache_writes(tmp_path):
                        "refs/remotes/upstream/master", False, None, None)
     assert writes.count("frontend") == 1
 
+
+def test_find_render_sites_certain_filters_to_known_render_apis():
+    analyses = {
+        "a.py": {"analysis": {"usages": [
+            {"line": 3, "name": "app/page.html", "kind": "str", "callee": "render",
+             "ctx_qname": "v", "ctx_kind": "function"},
+            {"line": 4, "name": "app/page.html", "kind": "str", "callee": "mystery",
+             "ctx_qname": "v", "ctx_kind": "function"},
+        ]}},
+    }
+    certain = rev.find_render_sites(analyses, ["app/page.html"], certain=True)
+    assert [h["line"] for h in certain] == [3]
+    every = rev.find_render_sites(analyses, ["app/page.html"], certain=False)
+    assert [h["line"] for h in every] == [3, 4]
+
+
+def test_find_render_sites_certain_accepts_template_name_kwarg():
+    analyses = {
+        "a.py": {"analysis": {"usages": [
+            {"line": 3, "name": "app/page.html", "kind": "str", "callee": "helper",
+             "kwarg": "template_name", "ctx_qname": "v", "ctx_kind": "function"},
+        ]}},
+    }
+    assert len(rev.find_render_sites(analyses, ["app/page.html"], certain=True)) == 1
+

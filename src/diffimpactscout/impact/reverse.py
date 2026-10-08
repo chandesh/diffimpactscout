@@ -59,6 +59,19 @@ _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 #   Skips:    {% include 'shop/nav.html' %}       (quoted static name)
 _DYNAMIC_INCLUDE_RE = re.compile(r"{%-?\s*include\s+[^'\"%\n]+%}")
 
+# Django's documented template-rendering entry points. A "str" usage whose
+# callee is one of these (or a call kwarg named "template_name") is a CERTAIN
+# render site; any other literal equal to a template name is heuristic.
+RENDER_APIS = ("render", "render_to_string", "get_template", "select_template", "TemplateResponse")
+
+# Reverse rows above this many direct children roll up into one row carrying
+# the child paths in "related" (see template_chain / frontend_chain).
+INLINE_LIMIT = 8
+
+TIER_FRONTEND = "frontend"
+TIER_BACKEND = "backend"
+TIER_HEURISTIC = "heuristic"
+
 
 def template_name_of(path):
     """Return the Django template name for a repo path, or None.
@@ -217,7 +230,7 @@ def _tracked_files(root, cfg, *patterns):
     return files
 
 
-def find_render_sites(analyses, template_names):
+def find_render_sites(analyses, template_names, certain=False):
     """Return hits where a changed template name appears as a string usage.
 
     analyses maps path -> cache entry or raw analysis (same contract as
@@ -226,9 +239,12 @@ def find_render_sites(analyses, template_names):
 
     Only usages inside a function, method or class scope are kept:
     module-scope constants and bare expressions (ctx_kind "module") are
-    skipped so module-level assignments such as ``TEMPLATE = 'x.html'``
-    do not become render sites. This is a heuristic -- a string argument
+    skipped so module-level assignments such as ``TEMPLATE = 'x.html'`` do
+    not become render sites. This is a heuristic -- a string argument
     that merely looks like a template inside a function still matches.
+    When ``certain`` is True only usages that call a known render API
+    (RENDER_APIS) or pass ``template_name=`` are kept, so a bare literal in
+    e.g. a config dict is excluded (used for the backend tier).
     """
     wanted = set(template_names)
     hits = []
@@ -245,6 +261,8 @@ def find_render_sites(analyses, template_names):
             if usage.get("kind") != "str" or usage.get("name") not in wanted:
                 continue
             if usage.get("ctx_kind") not in ("function", "method", "class"):
+                continue
+            if certain and usage.get("callee") not in RENDER_APIS and usage.get("kwarg") != "template_name":
                 continue
             ctx = usage.get("ctx_qname") or ""
             hits.append({

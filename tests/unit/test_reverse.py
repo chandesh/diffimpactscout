@@ -89,6 +89,9 @@ def test_normalize_asset_ref_dynamic_cdn_query_and_dot_lead():
     assert rev._normalize_asset_ref("//cdn.example.com/a.js") is None
     assert rev._normalize_asset_ref("shop/app.js?v=1.2") == "shop/app.js"
     assert rev._normalize_asset_ref("./js/app.js") == "js/app.js"
+    assert rev._normalize_asset_ref("/static/js/app.js") == "static/js/app.js"
+    assert rev._normalize_asset_ref("{{ STATIC_URL }}/css/site.css") == "css/site.css"
+    assert rev._normalize_asset_ref("templates/partial.html") is None
 
 
 def test_render_site_rows_for_changed_template():

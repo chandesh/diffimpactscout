@@ -47,11 +47,6 @@ _SCRIPT_SRC_RE = re.compile(r"<script[^>]*\ssrc\s*=\s*['\"]([^'\"\n]+)['\"]", re
 #   Skips:    <a href="/somewhere/">             (anchor tags, not link tags)
 _LINK_HREF_RE = re.compile(r"<link[^>]*\shref\s*=\s*['\"]([^'\"\n]+)['\"]", re.I)
 
-# Matches Angular component templateUrl config entries.
-#   Matches:  templateUrl: './product.html'      -> captures "./product.html"
-#             templateUrl: 'shop/page.html'      -> captures "shop/page.html"
-_TEMPLATEURL_RE = re.compile(r"templateUrl\s*:\s*['\"]([^'\"\n]+)['\"]")
-
 # Matches whole HTML comments so commented-out tags never produce matches.
 #   Matches:  <!-- <script src="old.js"></script> -->   (removed before scanning)
 #             <!--[if IE]><script src="shim.js"></script><![endif]-->
@@ -87,7 +82,7 @@ def _strip_html_comments(text):
     return _HTML_COMMENT_RE.sub("", text)
 
 
-def analyze_template_graph(root, path, cache, cfg):
+def analyze_template_graph(root, path, cache, cfg, persist=True):
     """Return {"extends", "includes", "assets"} for one template, hash-gated.
 
     extends/includes are static-tag names only; assets are normalized
@@ -98,7 +93,8 @@ def analyze_template_graph(root, path, cache, cfg):
     {"hash": sha1 hex, "prefixes": the effective prefix list, "graph": the
     three-key dict}; the entry is trusted only when its "graph" is a dict
     AND its "prefixes" still match, so changing asset_url_prefixes rebuilds
-    the graph even when the file content is unchanged.
+    the graph even when the file content is unchanged. ``persist`` controls
+    the cache write: batch callers pass False and save the section once.
     """
     full = os.path.join(root, path) if root else path
     try:
@@ -124,7 +120,8 @@ def analyze_template_graph(root, path, cache, cfg):
         "prefixes": list(prefixes),
         "graph": _graph_only(graph),
     }
-    cache.save_section("templates", section)
+    if persist:
+        cache.save_section("templates", section)
     return _graph_only(graph)
 
 
@@ -185,10 +182,11 @@ DEFAULT_ASSET_PREFIXES = ("{{ MEDIA_URL }}", "{{ STATIC_URL }}", "{% static '", 
 def _normalize_asset_ref(value, prefixes=None):
     """Normalize a template asset reference to a repo-relative path or None.
 
-    Strips template-variable prefixes, query/version strings, "./" leads.
-    Returns None for absolute/CDN URLs and for dynamic ({{ ... }}-only)
-    references: dynamic template asset references are ignored, not
-    resolved.
+    Strips template-variable prefixes, query/version strings, "./" leads and
+    a single leading "/" (so ``/static/js/app.js`` resolves like
+    ``static/js/app.js``). Returns None for absolute/CDN URLs, for dynamic
+    ({{ ... }}-only) references and for ".html" refs (template links, not
+    assets): these are ignored, not resolved.
     """
     s = value.strip()
     if prefixes is None:
@@ -205,7 +203,8 @@ def _normalize_asset_ref(value, prefixes=None):
         return None
     while s.startswith("./"):
         s = s[2:]
-    if not s or s.endswith(".html") and "templateUrl" not in value:
+    s = s.lstrip("/")
+    if not s or s.endswith(".html"):
         return None
     return s
 
@@ -336,7 +335,11 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
         template_files = [p for p in template_files if _glob_match_any(p, template_globs)]
     graphs = {}
     for path in template_files:
-        graphs[template_name_of(path) or path] = analyze_template_graph(root, path, cache, cfg)
+        graphs[template_name_of(path) or path] = analyze_template_graph(
+            root, path, cache, cfg, persist=False
+        )
+    if cache is not None:
+        cache.save_section("templates", cache.load_section("templates"))
     desc_map = {}
     for name in changed_names:
         for child, targets in descendants_of(name, graphs).items():
@@ -580,7 +583,7 @@ def _blank_literals(text, keep_export_names=True):
     return "".join(out)
 
 
-def analyze_frontend_graph(root, path, cache, tracked):
+def analyze_frontend_graph(root, path, cache, tracked, persist=True):
     """Return {"imports": [...], "exports": [...]} for one js/ts file.
 
     imports lists raw static specifiers (relative only resolved later);
@@ -589,7 +592,8 @@ def analyze_frontend_graph(root, path, cache, tracked):
     {"hash", "v", "graph"}; an entry is only trusted when its hash, its
     FRONTEND_GRAPH_VERSION marker and both graph values (lists) match.
     ``tracked`` is accepted for caller symmetry; extraction returns raw
-    specifiers and does not resolve them against it.
+    specifiers and does not resolve them against it. ``persist`` controls
+    the cache write: batch callers pass False and save the section once.
     """
     if not path:
         return {"imports": [], "exports": []}
@@ -639,7 +643,8 @@ def analyze_frontend_graph(root, path, cache, tracked):
     graph = {"imports": list(dict.fromkeys(imports)), "exports": sorted(set(exports))}
     if cache:
         section[path] = {"hash": digest, "v": FRONTEND_GRAPH_VERSION, "graph": graph}
-        cache.save_section("frontend", section)
+        if persist:
+            cache.save_section("frontend", section)
     return graph
 
 
@@ -756,7 +761,9 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
         cache.prune_section("frontend", tracked)
     graph = {}
     for path in tracked:
-        graph[path] = _resolve_imports_for_graph(root, path, cache, resolvable)
+        graph[path] = _resolve_imports_for_graph(root, path, cache, resolvable, persist=False)
+    if cache is not None:
+        cache.save_section("frontend", cache.load_section("frontend"))
     rows = []
     layers = {}
     unresolved = []
@@ -818,13 +825,13 @@ def _clean_for_exports(text):
     return _blank_literals(_strip_comments(text), keep_export_names=True)
 
 
-def _resolve_imports_for_graph(root, path, cache, resolvable):
+def _resolve_imports_for_graph(root, path, cache, resolvable, persist=True):
     """Return the resolved paths this file imports (graph edge list).
 
     ``resolvable`` is the set of tracked graph files plus any changed deleted
     paths, so a dangling import to a deleted module still forms an edge.
     """
-    graph = analyze_frontend_graph(root, path, cache, resolvable)
+    graph = analyze_frontend_graph(root, path, cache, resolvable, persist=persist)
     edges = []
     for spec in graph["imports"]:
         resolved = _resolve_specifier(spec, path, resolvable)
@@ -924,7 +931,9 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
         template_files = [p for p in template_files if _glob_match_any(p, template_globs)]
     graphs = {}
     for path in template_files:
-        graphs[path] = analyze_template_graph(root, path, cache, cfg)
+        graphs[path] = analyze_template_graph(root, path, cache, cfg, persist=False)
+    if cache is not None:
+        cache.save_section("templates", cache.load_section("templates"))
     prefixes = _asset_prefixes(cfg)
     for change in changed_js:
         matching = []

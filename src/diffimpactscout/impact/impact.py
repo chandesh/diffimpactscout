@@ -257,12 +257,7 @@ def _compose_rows(
     layers = {}
     for name, cats in (extra_layers or {}).items():
         layers.setdefault(name, set()).update(cats)
-    hidden_count = 0
-    for r in (extra_rows or []):
-        if r.get("tier") == reverse_mod.TIER_HEURISTIC and not show_all:
-            hidden_count += 1
-        else:
-            rows.append(r)
+    rows.extend(extra_rows or [])
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
     deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
@@ -285,7 +280,13 @@ def _compose_rows(
         )
         for hit in hits:
             layers[name].add("python")
-            rows.append(_python_row(hit, name, ent))
+            row = _python_row(hit, name, ent)
+            if name in pseudo:
+                # References to a reverse pseudo-entity (e.g. a URLconf
+                # binding to an affected view) are heuristic context, not a
+                # certain impact.
+                row["tier"] = reverse_mod.TIER_HEURISTIC
+            rows.append(row)
     routes = _routes(root, impact_cfg, profile, cfg)
     affected = _affected_routes(routes, analyses, entities, weak) if not fast else []
     template_refs, frontend_refs = _scoped_refs(root, impact_cfg, cfg, affected, fast)
@@ -305,6 +306,15 @@ def _compose_rows(
         if row is not None:
             rows.append(row)
     rows = _dedup_rows(rows)
+    hidden_count = 0
+    if not show_all:
+        kept = []
+        for r in rows:
+            if r.get("tier") == reverse_mod.TIER_HEURISTIC:
+                hidden_count += 1
+            else:
+                kept.append(r)
+        rows = kept
     rows.sort(key=_row_key)
     for row in rows:
         name = row.pop("_entity")

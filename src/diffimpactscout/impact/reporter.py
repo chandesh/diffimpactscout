@@ -178,17 +178,59 @@ def _unresolved_line(ref):
     return "%s (%s)" % (head, reason) if reason else head
 
 
-def _render_ascii(rows, endpoints, unresolved, changed_count):
+_TIER_LABELS = (
+    ("frontend", "Frontend impacts"),
+    ("backend", "Backend impacts - certain"),
+    ("heuristic", "Heuristic / transitive impacts"),
+)
+
+
+def _split_tiers(rows):
+    """Return (tiered, untiered); tiered maps each tier value to its rows."""
+    tiered = {"frontend": [], "backend": [], "heuristic": []}
+    untiered = []
+    for row in rows or []:
+        tier = row.get("tier")
+        if tier in tiered:
+            tiered[tier].append(row)
+        else:
+            untiered.append(row)
+    return tiered, untiered
+
+
+def _markdown_table(rows):
+    lines = [_HEADER, _SEPARATOR]
+    for i, row in enumerate(rows or [], start=1):
+        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
+        lines.append("| " + " | ".join(cells) + " |")
+    return lines
+
+
+def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False):
     lines = []
     lines.append("=" * 70)
     lines.append("  Impact Analysis Report")
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
-    lines.append("")
-    header, body = _ascii_table(rows)
-    lines.append(header)
-    for line in body:
-        lines.append(line)
+    tiered, untiered = _split_tiers(rows)
+    for tier, label in _TIER_LABELS:
+        if not tiered[tier]:
+            continue
+        lines.append("")
+        lines.append("  " + label)
+        lines.append("  " + "-" * 66)
+        header, body = _ascii_table(tiered[tier])
+        lines.append(header)
+        lines.extend(body)
+        if expand:
+            for row in tiered[tier]:
+                for rel in row.get("related") or []:
+                    lines.append("      - %s" % rel)
+    if untiered:
+        lines.append("")
+        header, body = _ascii_table(untiered)
+        lines.append(header)
+        lines.extend(body)
     if endpoints:
         lines.append("")
         lines.append("  Affected WebURL/API-URL endpoints:")
@@ -206,19 +248,38 @@ def _render_ascii(rows, endpoints, unresolved, changed_count):
     lines.append("")
     lines.append("-" * 70)
     lines.append("  " + _summary_line(rows, changed_count))
+    if hidden_count:
+        lines.append("  %d lower-confidence impacts hidden - use --all to expand" % hidden_count)
     lines.append("=" * 70)
     return "\n".join(lines) + "\n"
 
 
-def _render_markdown(rows, endpoints, unresolved, changed_count):
+def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False):
     lines = []
     lines.append("# Impact Analysis Report")
-    lines.append("")
-    lines.append(_HEADER)
-    lines.append(_SEPARATOR)
-    for i, row in enumerate(rows or [], start=1):
-        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
-        lines.append("| " + " | ".join(cells) + " |")
+    tiered, untiered = _split_tiers(rows)
+    for tier, label in _TIER_LABELS:
+        if not tiered[tier]:
+            continue
+        lines.append("")
+        lines.append("### " + label)
+        lines.append("")
+        lines.extend(_markdown_table(tiered[tier]))
+        if expand:
+            for row in tiered[tier]:
+                related = row.get("related") or []
+                if not related:
+                    continue
+                lines.append("")
+                lines.append("  <details><summary>%d templates</summary>" % len(related))
+                lines.append("")
+                for rel in related:
+                    lines.append("  - %s" % rel)
+                lines.append("")
+                lines.append("  </details>")
+    if untiered:
+        lines.append("")
+        lines.extend(_markdown_table(untiered))
     if endpoints:
         lines.append("")
         lines.append("## Affected WebURL/API-URL endpoints")
@@ -239,14 +300,18 @@ def _render_markdown(rows, endpoints, unresolved, changed_count):
             lines.append("- " + line.lstrip())
     lines.append("")
     lines.append(_summary_line(rows, changed_count))
+    if hidden_count:
+        lines.append("%d lower-confidence impacts hidden - use --all to expand" % hidden_count)
     return "\n".join(lines) + "\n"
 
 
 def render_report(rows, endpoints, unresolved, changed_count, markdown=False,
                   hidden_count=0, expand=False):
     if markdown:
-        return _render_markdown(rows, endpoints, unresolved, changed_count)
-    return _render_ascii(rows, endpoints, unresolved, changed_count)
+        return _render_markdown(rows, endpoints, unresolved, changed_count,
+                                hidden_count=hidden_count, expand=expand)
+    return _render_ascii(rows, endpoints, unresolved, changed_count,
+                         hidden_count=hidden_count, expand=expand)
 
 
 def interactive_tty():

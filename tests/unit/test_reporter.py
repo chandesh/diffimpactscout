@@ -384,3 +384,32 @@ def test_should_block_strict_falsy_values_not_strict(monkeypatch):
         block, reason = reporter.should_block(value, _fake_tty(monkeypatch, False))
         assert block is False
         assert "non-interactive" in reason
+
+
+def test_render_report_tier_sections_and_hidden_footer():
+    rows = [
+        {"path": "app/templates/base.html", "module": "app", "category": "template",
+         "ref": "changed - 10 templates directly extend it", "severity": "High",
+         "action": "review/verify", "tier": "frontend", "related": ["app/templates/a.html"]},
+        {"path": "app/views.py", "module": "app", "category": "python",
+         "ref": "renders 'base.html' (line 4)", "severity": "High",
+         "action": "review/verify", "tier": "backend"},
+    ]
+    out = reporter.render_report(rows, [], [], 1, hidden_count=42)
+    assert "Frontend impacts" in out
+    assert "Backend impacts" in out
+    assert "42 lower-confidence impacts hidden" in out
+
+
+def test_render_report_expand_lists_related():
+    rows = [
+        {"path": "app/templates/base.html", "module": "app", "category": "template",
+         "ref": "changed - 2 templates directly extend it", "severity": "High",
+         "action": "review/verify", "tier": "frontend",
+         "related": ["app/templates/a.html", "app/templates/b.html"]},
+    ]
+    out = reporter.render_report(rows, [], [], 1, expand=True)
+    assert "app/templates/a.html" in out
+    assert "app/templates/b.html" in out
+    md = reporter.render_report(rows, [], [], 1, markdown=True, expand=True)
+    assert "<details>" in md

@@ -595,9 +595,6 @@ def test_analyze_path_directory_returns_none(tmp_path):
     assert pa.analyze_path("adir", str(tmp_path), cache) is None
 
 
-ANALYSIS_VERSION = 2
-
-
 def _analyze(src):
     return pa.analyze_source(src)
 

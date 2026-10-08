@@ -198,6 +198,18 @@ def test_find_references_attr_name_matches_field_usage():
     ]
 
 
+def test_find_references_require_attr_base_drops_empty_base():
+    """Verifies require_attr_base drops attribute hits with no base chain."""
+    analyses = {
+        "a.py": _analysis("def read(store):\n    return store['a'].get('x')\n"),
+        "b.py": _analysis("def read2(obj):\n    return obj.get('x')\n"),
+    }
+    assert {h["path"] for h in pa.find_references(analyses, ["get"])} == {"a.py", "b.py"}
+    assert {
+        h["path"] for h in pa.find_references(analyses, ["get"], require_attr_base=True)
+    } == {"b.py"}
+
+
 def test_find_references_skips_attribute_base_names():
     """Verifies that attribute base object names are skipped as references."""
     analyses = {

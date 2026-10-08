@@ -102,6 +102,8 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 | `--staged` | Analyze the staged diff (base ref becomes `HEAD`). |
 | `--fast` | Skip template and frontend scanning; limit Python scanning to the changed files plus import-linked files. |
 | `--json` | Emit the report as JSON (`{changed_count, rows, unresolved}`) instead of a markdown table. |
+| `--expand` | Open rolled-up rows (e.g. "35 templates directly extend it") to list their child files. |
+| `--all` | Also show lower-confidence (heuristic/transitive) impacts. |
 
 ### `diffimpactscout guard-and-impact-check`
 
@@ -294,6 +296,17 @@ When the change-set touches no Python (or in addition to changed Python symbols)
 - **Asset chain:** a changed tracked JS/TS file is matched to the templates that load it (`script src`, `{% static %}`, `link href`), then to the views rendering those templates. A changed tracked asset with no referencing template lands in "unresolved"; untracked targets (bundles, CDNs) are ignored, never guessed.
 - **Import chain:** changed JS/TS exports are matched to other tracked frontend files that import them; deleted exports are flagged High. Minified and vendored files are excluded; unresolvable path aliases are skipped.
 - **Endpoint chain (experimental):** changed frontend HTTP literals are matched to Django routes, the handler view, and the service/utility functions it calls. Enable with `"experimental": true` in the `impact` section; advisory only, and never a sole grounds for blocking.
+
+Reverse reports are confidence-tiered: **frontend** impacts (the changed
+template/asset/export and its direct frontend references) are shown first,
+then **backend impacts that are certainly affected** (functions that render a
+changed template through a known render API). Transitive descendants, render
+sites of descendant templates, and route bindings are hidden by default and
+summarized as a hidden count.
+
+- `--expand` opens rolled-up rows (e.g. "35 templates directly extend it") to
+  list their child files.
+- `--all` additionally shows the lower-confidence (heuristic/transitive) tier.
 
 ## Checks reference
 

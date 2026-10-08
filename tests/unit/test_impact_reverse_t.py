@@ -296,3 +296,41 @@ def test_reverse_default_hides_heuristic_rows(tmp_path, capsys):
     out_all = json.loads(capsys.readouterr().out)
     assert out_all["hidden_count"] == 0
     assert any(r.get("tier") == "heuristic" for r in out_all["rows"])
+
+
+def test_reverse_report_is_tight_by_default(tmp_path, capsys):
+    """Default output is small; --all reveals the rest."""
+    root = str(tmp_path)
+    _git("init", cwd=root)
+    _git("symbolic-ref", "HEAD", "refs/heads/master", cwd=root)
+    os.makedirs(os.path.join(root, "app", "templates"))
+    with open(os.path.join(root, "app", "templates", "base.html"), "w") as fh:
+        fh.write("<html></html>\n")
+    for i in range(12):
+        with open(os.path.join(root, "app", "templates", "c%d.html" % i), "w") as fh:
+            fh.write("{% extends 'base.html' %}\n")
+    with open(os.path.join(root, "app", "templates", "grand.html"), "w") as fh:
+        fh.write("{% extends 'c0.html' %}\n")
+    with open(os.path.join(root, "app", "views.py"), "w") as fh:
+        fh.write("from django.shortcuts import render\n\ndef v(request):\n"
+                 "    return render(request, 'base.html')\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m0", cwd=root)
+    _git("remote", "add", "upstream", ".", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "app", "templates", "base.html"), "w") as fh:
+        fh.write("<html><body>x</body></html>\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert len(default["rows"]) <= 4
+    assert any(len(r.get("related") or []) == 12 for r in default["rows"])
+    assert default["hidden_count"] == 1
+    capsys.readouterr()
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
+    full = json.loads(capsys.readouterr().out)
+    assert full["hidden_count"] == 0
+    assert any(r.get("tier") == "heuristic" for r in full["rows"])

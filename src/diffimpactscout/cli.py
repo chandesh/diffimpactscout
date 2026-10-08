@@ -52,6 +52,14 @@ def _parser():
         action="store_true",
         help="emit a Markdown table instead of the plain ASCII table",
     )
+    p_impact.add_argument(
+        "--expand", action="store_true",
+        help="expand rolled-up frontend/backend rows to list their child files",
+    )
+    p_impact.add_argument(
+        "--all", action="store_true", dest="show_all",
+        help="also show lower-confidence (heuristic/transitive) impacts",
+    )
     p_impact.set_defaults(func=_cmd_impact)
 
     p_guard_impact = sub.add_parser(
@@ -65,6 +73,14 @@ def _parser():
         "--markdown",
         action="store_true",
         help="emit a Markdown table instead of the plain ASCII table",
+    )
+    p_guard_impact.add_argument(
+        "--expand", action="store_true",
+        help="expand rolled-up frontend/backend rows to list their child files",
+    )
+    p_guard_impact.add_argument(
+        "--all", action="store_true", dest="show_all",
+        help="also show lower-confidence (heuristic/transitive) impacts",
     )
     p_guard_impact.set_defaults(func=_cmd_guard_and_analyse_impact)
 
@@ -175,6 +191,8 @@ def _cmd_impact(args):
         fast=args.fast,
         json_out=args.json,
         markdown=args.markdown,
+        expand=args.expand,
+        show_all=args.show_all,
     )
 
 
@@ -195,6 +213,8 @@ def _cmd_guard_and_analyse_impact(args):
         fast=args.fast,
         json_out=args.json,
         markdown=args.markdown,
+        expand=args.expand,
+        show_all=args.show_all,
     )
     return guard_rc if guard_rc != 0 else impact_rc
 

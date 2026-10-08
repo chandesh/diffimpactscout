@@ -897,3 +897,11 @@ def test_init_unwritable_parent_returns_one(tmp_path, capsys, monkeypatch):
     assert cli.main(["init"]) == 1
     captured = capsys.readouterr()
     assert "cannot write" in captured.err
+
+
+def test_impact_help_lists_expand_and_all(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["impact", "--help"])
+    out = capsys.readouterr().out
+    assert "--expand" in out
+    assert "--all" in out

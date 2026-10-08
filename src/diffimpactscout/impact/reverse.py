@@ -104,7 +104,7 @@ def analyze_template_graph(root, path, cache, cfg, persist=True):
         return {"extends": [], "includes": [], "assets": []}
     digest = _digest(text)
     prefixes = _asset_prefixes(cfg)
-    section = cache.load_section("templates")
+    section = cache.load_section("templates") if cache else {}
     entry = section.get(path)
     if (
         isinstance(entry, dict)
@@ -120,7 +120,7 @@ def analyze_template_graph(root, path, cache, cfg, persist=True):
         "prefixes": list(prefixes),
         "graph": _graph_only(graph),
     }
-    if persist:
+    if cache and persist:
         cache.save_section("templates", section)
     return _graph_only(graph)
 

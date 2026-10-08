@@ -1124,3 +1124,31 @@ def test_path_for_module_resolves_package_init():
     analyses = {"shop/__init__.py": {"analysis": {}}}
     assert rev._path_for_module(analyses, "shop") == "shop/__init__.py"
 
+
+def test_frontend_chain_batches_cache_writes(tmp_path):
+    """The frontend cache section is written once per run, not once per file."""
+    root = _js_repo(tmp_path, {
+        "media/shop/src/app/a.ts": "export const a = 1;\n",
+        "media/shop/src/app/b.ts": "export const b = 1;\n",
+        "media/shop/src/app/c.ts": "export const c = 1;\n",
+    })
+    with open(os.path.join(root, "media/shop/src/app/a.ts"), "a") as fh:
+        fh.write("// touch\n")
+    _js_commit(root, "m1")
+    from diffimpactscout.impact.cache import SymbolCache
+
+    cache = SymbolCache(str(tmp_path / "cache.json"))
+    writes = []
+    original = cache.save_section
+
+    def counting(name, data):
+        writes.append(name)
+        return original(name, data)
+
+    cache.save_section = counting
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": [], "frontend_globs": []}}
+    rev.frontend_chain(root, cfg, cfg["impact"], _js_changes(root), {}, {}, cache,
+                       "refs/remotes/upstream/master", False, None, None)
+    assert writes.count("frontend") == 1
+

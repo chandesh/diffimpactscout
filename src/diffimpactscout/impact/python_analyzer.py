@@ -12,7 +12,7 @@ from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
 
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
-ANALYSIS_VERSION = 2
+ANALYSIS_VERSION = 3
 
 
 def analyze_source(src):
@@ -28,7 +28,9 @@ def analyze_source(src):
     defs covers functions, classes, methods, module fields and class
     fields. usages covers name loads ("name"), attribute loads ("attr"),
     imports ("import") and string constants in call args, kwarg values and
-    assignment values ("str" -- the string is stored in "name"). Definitions
+    assignment values ("str" -- the string is stored in "name"). A "str"
+    usage also records "callee" (the called function's leaf name) and, for a
+    keyword argument, "kwarg". Definitions
     and assignment targets are never recorded as usages. An attribute load
     records only the attribute name
     (obj.status -> name "status", kind "attr"); the base object name is
@@ -348,15 +350,33 @@ def _attr_base(node):
     return ".".join(reversed(parts))
 
 
+def _callee_name(func):
+    """Leaf name of a call target: Name -> id, Attribute -> attr, else None."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
 def _visit_call(node, scope, defs, usages):
+    callee = _callee_name(node.func)
     for arg in node.args:
         value = _str_const(arg)
         if value is not None:
-            usages.append(_usage(arg, value, "str", scope))
+            usage = _usage(arg, value, "str", scope)
+            if callee:
+                usage["callee"] = callee
+            usages.append(usage)
     for kw in node.keywords:
         value = _str_const(kw.value)
         if value is not None:
-            usages.append(_usage(kw.value, value, "str", scope))
+            usage = _usage(kw.value, value, "str", scope)
+            if callee:
+                usage["callee"] = callee
+            if kw.arg:
+                usage["kwarg"] = kw.arg
+            usages.append(usage)
     _walk(node, scope, defs, usages)
 
 

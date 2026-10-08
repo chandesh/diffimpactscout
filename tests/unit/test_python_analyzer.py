@@ -642,7 +642,7 @@ def test_docstring_not_recorded_as_str_usage():
 def test_analysis_version_bumped():
     """Verifies that analyses carry a version so old cache entries re-analyze."""
     a = _analyze("x = 1\n")
-    assert a.get("v") == ANALYSIS_VERSION
+    assert a.get("v") == 3
 
 
 def test_stale_version_cache_entry_reanalyzes(tmp_path):
@@ -656,3 +656,34 @@ def test_stale_version_cache_entry_reanalyzes(tmp_path):
     f.write_text(src)
     analysis = pa.analyze_path("mod.py", str(tmp_path), SymbolCache(str(cache_file)))
     assert any(u["kind"] == "str" and u["name"] == "app/page.html" for u in analysis["usages"])
+
+
+def test_str_usage_records_callee():
+    a = pa.analyze_source(
+        "def v(request):\n"
+        "    return render(request, 'app/page.html')\n"
+    )
+    strs = [u for u in a["usages"] if u["kind"] == "str"]
+    assert strs[0]["name"] == "app/page.html"
+    assert strs[0]["callee"] == "render"
+    assert "kwarg" not in strs[0]
+
+
+def test_str_usage_records_attribute_callee():
+    a = pa.analyze_source(
+        "from django import shortcuts\n"
+        "def v(request):\n"
+        "    return shortcuts.render(request, 'app/page.html')\n"
+    )
+    strs = [u for u in a["usages"] if u["kind"] == "str"]
+    assert strs[0]["callee"] == "render"
+
+
+def test_str_usage_records_template_name_kwarg():
+    a = pa.analyze_source(
+        "def v(request):\n"
+        "    return helper(request, template_name='app/page.html')\n"
+    )
+    strs = [u for u in a["usages"] if u["kind"] == "str"]
+    assert strs[0]["kwarg"] == "template_name"
+    assert strs[0]["callee"] == "helper"

@@ -76,7 +76,9 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     cache.save(cache.load())
     analyses = cache.load()
     reverse_rows, reverse_layers, reverse_unresolved = [], {}, []
+    pseudo_entities = set()
     if impact_cfg.get("reverse") and not fast:
+        real_names = set(entities)
         extra_t, rows_t, layers_t, unresolved_t = reverse_mod.template_chain(
             root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
         )
@@ -86,6 +88,13 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
             experimental=bool(impact_cfg.get("experimental")),
         )
         _merge_entities(entities, extra_f)
+        # Reverse render-site pseudo-entities exist to re-seed route/frontend
+        # linking, not to be reference-searched: their enclosing function's
+        # leaf name can be generic (e.g. "get"), which would explode
+        # find_references with unrelated same-name usages. The chains already
+        # emit their own rows; keep the entities (for _affected_routes) but
+        # skip reference search for the ones that are not real changed entities.
+        pseudo_entities = (set(extra_t) | set(extra_f)) - real_names
         reverse_rows = rows_t + rows_f
         reverse_layers = {**layers_t}
         for name, cats in layers_f.items():
@@ -96,6 +105,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         extra_rows=reverse_rows,
         extra_layers=reverse_layers,
         extra_unresolved=reverse_unresolved,
+        pseudo_entities=pseudo_entities,
     )
     changed_count = len(changes)
     if json_out:
@@ -213,7 +223,7 @@ def _entity_overlaps_changed(entity, changed_lines):
 
 def _compose_rows(
     root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
-    extra_rows=None, extra_layers=None, extra_unresolved=None,
+    extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
 ):
     rows = []
     layers = {}
@@ -226,7 +236,9 @@ def _compose_rows(
         name for name, ent in entities.items() if ent.get("kind") == "class_field"
     ]
     weak = set(weak_attr)
+    pseudo = set(pseudo_entities or ())
     for name, ent in entities.items():
+        layers.setdefault(name, set())
         kinds = _ENTITY_KINDS.get(ent["kind"], _DEFAULT_KINDS)
         hits = pa.find_references(
             analyses,
@@ -236,8 +248,8 @@ def _compose_rows(
             changed_paths=changed_paths,
             weak_attr=weak_attr,
             deleted=deleted,
+            require_attr_base=(name in pseudo),
         )
-        layers.setdefault(name, set())
         for hit in hits:
             layers[name].add("python")
             rows.append(_python_row(hit, name, ent))

@@ -220,3 +220,39 @@ def test_js_only_diff_surfaces_view_reference_rows(tmp_path, capsys):
     cats = {(r["path"], r["category"]) for r in out["rows"]}
     assert ("shop/views.py", "python") in cats
     assert ("shop/urls.py", "python") in cats
+
+
+def test_generic_render_site_name_does_not_explode_references(tmp_path, capsys):
+    """A render site with a generic leaf name must not surface unrelated
+    same-name attribute usages (empty-base ``.get()`` calls)."""
+    root = str(tmp_path)
+    _git("init", cwd=root)
+    _git("symbolic-ref", "HEAD", "refs/heads/master", cwd=root)
+    os.makedirs(os.path.join(root, "shop", "templates", "shop"))
+    os.makedirs(os.path.join(root, "other"))
+    with open(os.path.join(root, "shop", "views.py"), "w") as fh:
+        fh.write("from django.shortcuts import render\n\n"
+                 "def get(request):\n"
+                 "    return render(request, 'shop/product.html')\n")
+    with open(os.path.join(root, "other", "utils.py"), "w") as fh:
+        fh.write("def read(store):\n"
+                 "    return store['a'].get('x') + store['b'].get('y')\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "base.html"), "w") as fh:
+        fh.write("<html></html>\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "product.html"), "w") as fh:
+        fh.write("{% extends 'shop/base.html' %}\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m0", cwd=root)
+    _git("remote", "add", "upstream", ".", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "shop", "templates", "shop", "base.html"), "w") as fh:
+        fh.write("<html><body>x</body></html>\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    out = json.loads(capsys.readouterr().out)
+    paths = {r["path"] for r in out["rows"]}
+    assert "shop/views.py" in paths          # render-site row present
+    assert "other/utils.py" not in paths     # unrelated .get() usages excluded

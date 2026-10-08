@@ -99,6 +99,7 @@ def find_references(
     changed_paths=None,
     weak_attr=(),
     deleted=(),
+    require_attr_base=False,
 ):
     """Return reference hits for the given entity names, optionally by kind.
 
@@ -125,7 +126,10 @@ def find_references(
     entities removed or renamed in the change-set; their hits are bound to
     the defining modules even inside changed files so a same-name reference
     on a foreign object (e.g. ``service.create`` when ``create`` was a
-    deleted function) is pruned.
+    deleted function) is pruned. require_attr_base, when True, drops
+    attribute hits whose base chain is empty (unverifiable) — used for
+    reverse-chain pseudo-entities whose leaf name can be generic (e.g.
+    ``get``), where such hits are almost always unrelated.
 
     Caller contract:
       changed class_field    -> kinds={"attr"}
@@ -155,6 +159,8 @@ def find_references(
                 continue
             how = usage.get("kind", "name")
             if kinds is not None and how not in kinds:
+                continue
+            if require_attr_base and how == "attr" and not usage.get("base"):
                 continue
             if changed and name in mods:
                 if (name in gone or path not in changed) and not _usage_resolves(

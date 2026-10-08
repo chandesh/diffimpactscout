@@ -865,7 +865,7 @@ def js_internal_chain(root, cfg, impact_cfg, changes, cache, anchor, staged, fro
                     make_row(
                         importer, _dir_of(importer), "frontend",
                         "%s (imported from %s)" % (name, change.path), pseudo,
-                        deleted=name in deleted,
+                        deleted=name in deleted, tier=TIER_FRONTEND,
                     )
                 )
                 layers.setdefault(pseudo, set()).add("frontend")
@@ -1012,7 +1012,8 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
                     matching.append((path, ref))
         for tpath, ref in sorted(set(matching)):
             rows.append(
-                make_row(tpath, _dir_of(tpath), "template", "loads '%s'" % ref, "asset:%s" % change.path)
+                make_row(tpath, _dir_of(tpath), "template", "loads '%s'" % ref, "asset:%s" % change.path,
+                         tier=TIER_FRONTEND)
             )
             layers.setdefault("asset:%s" % change.path, set()).add("template")
         if not matching and change.path:
@@ -1032,7 +1033,8 @@ def frontend_chain(root, cfg, impact_cfg, changes, entities, analyses, cache, an
         ent["modules"].add(module)
         rows.append(
             make_row(hit["path"], module, "python",
-                     "renders '%s' (line %d)" % (hit["template"], hit["line"]), entity)
+                     "renders '%s' (line %d)" % (hit["template"], hit["line"]), entity,
+                     tier=TIER_HEURISTIC)
         )
         layers.setdefault(entity, set()).add("template")
     if experimental:
@@ -1128,7 +1130,8 @@ def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
         layers.setdefault(pseudo, set()).add("frontend")
         rows.append(
             make_row(hit["file"], _dir_of(hit["file"]), "frontend",
-                     "http %s '%s' -> %s" % (hit.get("method") or "get", hit["ref"], route.full), pseudo)
+                     "http %s '%s' -> %s" % (hit.get("method") or "get", hit["ref"], route.full), pseudo,
+                     tier=TIER_FRONTEND)
         )
         for path in _handler_roots(analyses, route, handler):
             callees = callee_closure(analyses, handler, path)
@@ -1139,7 +1142,8 @@ def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
                     layers.setdefault(pseudo_c, set()).add("python")
                     rows.append(
                         make_row(def_path, module, "python",
-                                 "%s() called from %s (via %s)" % (callee, handler, hit["ref"]), pseudo_c)
+                                 "%s() called from %s (via %s)" % (callee, handler, hit["ref"]), pseudo_c,
+                                 tier=TIER_HEURISTIC)
                     )
     return rows, layers, unresolved
 

@@ -1241,3 +1241,36 @@ def test_template_chain_inline_children_below_limit(tmp_path):
     assert refs == ["changed", "extends 'base.html'", "extends 'base.html'"]
     assert all("related" not in r for r in front)
 
+
+def test_asset_chain_rows_are_frontend_and_view_links_heuristic(tmp_path):
+    root = _repo(tmp_path, {
+        "media/shop/app.js": "console.log('x');\n",
+        "shop/templates/shop/base.html": "<script src=\"{{ MEDIA_URL }}shop/app.js\"></script>\n",
+        "shop/views.py": "from django.shortcuts import render\n\ndef base_view(request):\n    return render(request, 'shop/base.html')\n",
+    })
+    subprocess.check_call(["git", "init", "-q"], cwd=root)
+    subprocess.check_call(["git", "symbolic-ref", "HEAD", "refs/heads/master"], cwd=root)
+    subprocess.check_call(["git", "-C", root, "config", "user.name", "T"])
+    subprocess.check_call(["git", "-C", root, "config", "user.email", "t@e.co"])
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m0"])
+    subprocess.check_call(["git", "-C", root, "remote", "add", "upstream", "."])
+    subprocess.check_call(["git", "-C", root, "push", "-q", "upstream", "master"])
+    with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
+        fh.write("console.log('y');\n")
+    subprocess.check_call(["git", "-C", root, "add", "-A"])
+    subprocess.check_call(["git", "-C", root, "commit", "-q", "-m", "m1"])
+    changes = get_file_changes(root, "refs/remotes/upstream/master", False, None, None)
+    analyses = {"shop/views.py": {"analysis": {"defs": {}, "usages": [
+        {"line": 4, "name": "shop/base.html", "kind": "str", "callee": "render",
+         "ctx_qname": "base_view", "ctx_kind": "function"},
+    ]}}}
+    cfg = {"ignore_paths": [], "use_gitignore": False,
+           "impact": {"reverse": True, "template_globs": ["**/*.html"], "asset_url_prefixes": ["{{ MEDIA_URL }}"]}}
+    _e, rows, _l, _u = rev.frontend_chain(root, cfg, cfg["impact"], changes, {}, analyses, None,
+                                          "refs/remotes/upstream/master", False, None, None)
+    template_rows = [r for r in rows if r["category"] == "template"]
+    python_rows = [r for r in rows if r["category"] == "python"]
+    assert template_rows and all(r["tier"] == rev.TIER_FRONTEND for r in template_rows)
+    assert python_rows and all(r["tier"] == rev.TIER_HEURISTIC for r in python_rows)
+

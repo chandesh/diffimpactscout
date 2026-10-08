@@ -1208,6 +1208,7 @@ def test_template_chain_tiers_and_rollup(tmp_path):
         (3, "base.html", "render"),      # backend certain
         (4, "base.html", "mystery"),     # heuristic (non-render)
         (5, "grand.html", "render"),     # heuristic (descendant)
+        (6, "c0.html", "render"),        # heuristic (direct-child render site)
     ])
     _e, rows, _l, _u = rev.template_chain(root, cfg, cfg["impact"], changes, analyses, cache, None, False, None, None)
     by_tier = {}
@@ -1215,13 +1216,14 @@ def test_template_chain_tiers_and_rollup(tmp_path):
         by_tier.setdefault(r["tier"], []).append(r)
     front = by_tier[rev.TIER_FRONTEND]
     roll = next(r for r in front if r["path"].endswith("base.html"))
-    assert roll["ref"].startswith("changed — 10 templates")
+    assert roll["ref"].startswith("changed - 10 templates")
     assert len(roll["related"]) == 10
     backend = by_tier[rev.TIER_BACKEND]
     assert [r["ref"] for r in backend] == ["renders 'base.html' (line 3)"]
     heur = by_tier[rev.TIER_HEURISTIC]
-    assert any("line 4" in r["ref"] for r in heur)
-    assert any("grand.html" in r["ref"] for r in heur)
+    assert any("line 4" in r["ref"] for r in heur)          # non-render literal
+    assert any("grand.html" in r["ref"] for r in heur)      # descendant render site
+    assert any("c0.html" in r["ref"] for r in heur)         # direct-child render site
 
 
 def test_template_chain_inline_children_below_limit(tmp_path):

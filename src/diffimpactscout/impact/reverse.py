@@ -385,7 +385,7 @@ def template_chain(root, cfg, impact_cfg, changes, analyses, cache, anchor, stag
         if len(children) > INLINE_LIMIT:
             rows.append(make_row(
                 path, _dir_of(path), "template",
-                "changed — %d templates directly extend it" % len(children),
+                "changed - %d templates directly extend it" % len(children),
                 "changed:%s" % name, tier=TIER_FRONTEND,
                 related=[_path_for_name(template_files, c) for c in children],
             ))

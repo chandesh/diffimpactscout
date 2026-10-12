@@ -222,6 +222,46 @@ def test_js_only_diff_surfaces_view_reference_rows(tmp_path, capsys):
     assert ("shop/urls.py", "python") in cats
 
 
+def test_js_only_diff_hides_view_reference_rows_by_default(tmp_path, capsys):
+    """Reference rows of a reverse pseudo-entity (e.g. a urls.py binding to a
+    render-site view) are heuristic: hidden by default, revealed by --all."""
+    root = _repo(tmp_path)
+    os.makedirs(os.path.join(root, "media", "shop"))
+    with open(os.path.join(root, "media", "shop", "app.js"), "w") as fh:
+        fh.write("console.log(1);\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "product.html"), "w") as fh:
+        fh.write("<script src=\"{{ MEDIA_URL }}shop/app.js\"></script>\n")
+    with open(os.path.join(root, "shop", "urls.py"), "w") as fh:
+        fh.write("from shop.views import product_view\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "media", "shop", "app.js"), "a") as fh:
+        fh.write("console.log(2);\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m2", cwd=root)
+    cfg = config._defaults()
+    cfg["impact"]["reverse"] = True
+
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert ("shop/urls.py", "python") not in {
+        (r["path"], r["category"]) for r in default["rows"]
+    }
+    assert all(r.get("tier") != "heuristic" for r in default["rows"])
+    assert default["hidden_count"] >= 1
+
+    capsys.readouterr()
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
+    full = json.loads(capsys.readouterr().out)
+    urls_rows = [
+        r for r in full["rows"]
+        if r["path"] == "shop/urls.py" and r["category"] == "python"
+    ]
+    assert urls_rows
+    assert all(r.get("tier") == "heuristic" for r in urls_rows)
+
+
 def test_generic_render_site_name_does_not_explode_references(tmp_path, capsys):
     """A render site with a generic leaf name must not surface unrelated
     same-name attribute usages (empty-base ``.get()`` calls)."""

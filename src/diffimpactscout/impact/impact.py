@@ -298,11 +298,15 @@ def _compose_rows(
     )
     unresolved = list(extra_unresolved or [])
     for hit in template_matched:
-        row = _linked_row(hit, entities, layers, "template", changed_paths)
+        row = _tier_linked_row(
+            _linked_row(hit, entities, layers, "template", changed_paths), pseudo
+        )
         if row is not None:
             rows.append(row)
     for hit in frontend_matched:
-        row = _linked_row(hit, entities, layers, "frontend", changed_paths)
+        row = _tier_linked_row(
+            _linked_row(hit, entities, layers, "frontend", changed_paths), pseudo
+        )
         if row is not None:
             rows.append(row)
     rows = _dedup_rows(rows)
@@ -539,6 +543,18 @@ def _handler_entity(route, entities):
     if base in entities:
         return base
     return None
+
+
+def _tier_linked_row(row, pseudo):
+    """Tag a linked route row heuristic when its handler is a reverse pseudo-entity.
+
+    A route is bound to a reverse pseudo-entity only because its view renders a
+    changed template, so its template/frontend consumers are reached through the
+    template graph -- transitive context, hidden by default (shown with --all).
+    """
+    if row is not None and row.get("_entity") in pseudo:
+        row["tier"] = reverse_mod.TIER_HEURISTIC
+    return row
 
 
 def _linked_row(hit, entities, layers, category, changed_paths):

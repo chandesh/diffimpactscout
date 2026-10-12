@@ -262,6 +262,60 @@ def test_js_only_diff_hides_view_reference_rows_by_default(tmp_path, capsys):
     assert all(r.get("tier") == "heuristic" for r in urls_rows)
 
 
+def test_reverse_frontend_call_sites_are_heuristic(tmp_path, capsys):
+    """Frontend call sites of an endpoint whose view renders a changed template
+    are transitive: hidden by default, shown as heuristic under --all."""
+    root = str(tmp_path)
+    _git("init", cwd=root)
+    _git("symbolic-ref", "HEAD", "refs/heads/master", cwd=root)
+    os.makedirs(os.path.join(root, "shop", "templates", "shop"))
+    os.makedirs(os.path.join(root, "src"))
+    with open(os.path.join(root, "shop", "views.py"), "w") as fh:
+        fh.write("from django.shortcuts import render\n\n"
+                 "def orders_view(request):\n"
+                 "    return render(request, 'shop/base.html')\n")
+    with open(os.path.join(root, "shop", "urls.py"), "w") as fh:
+        fh.write("from django.urls import path\n"
+                 "from . import views\n\n"
+                 "urlpatterns = [\n"
+                 "    path('orders/', views.orders_view, name='orders'),\n"
+                 "]\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "base.html"), "w") as fh:
+        fh.write("<html></html>\n")
+    with open(os.path.join(root, "src", "orders.service.ts"), "w") as fh:
+        fh.write("import { HttpClient } from '@angular/common/http';\n"
+                 "this.http.get('/orders/');\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m0", cwd=root)
+    _git("remote", "add", "upstream", ".", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "shop", "templates", "shop", "base.html"), "w") as fh:
+        fh.write("<html><body>x</body></html>\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+
+    cfg = config._defaults()
+    cfg["impact"]["profile"] = "django"
+    cfg["impact"]["reverse"] = True
+    cfg["impact"]["urls_globs"] = ["**/urls.py"]
+    cfg["impact"]["template_globs"] = ["**/templates/**/*.html"]
+    cfg["impact"]["frontend_globs"] = ["**/src/**/*.ts"]
+
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert "src/orders.service.ts" not in {
+        r["path"] for r in default["rows"] if r["category"] == "frontend"
+    }
+    assert all(r.get("tier") != "heuristic" for r in default["rows"])
+    assert default["hidden_count"] >= 1
+
+    capsys.readouterr()
+    assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
+    full = json.loads(capsys.readouterr().out)
+    fe = [r for r in full["rows"] if r["path"] == "src/orders.service.ts"]
+    assert fe and all(r.get("tier") == "heuristic" for r in fe)
+
+
 def test_generic_render_site_name_does_not_explode_references(tmp_path, capsys):
     """A render site with a generic leaf name must not surface unrelated
     same-name attribute usages (empty-base ``.get()`` calls)."""

@@ -3,7 +3,8 @@
     "profile": "django",
     "urls_globs": ["**/urls.py"],
     "template_globs": ["**/templates/**/*.html"],
-    "frontend_globs": ["**/src/**/*.ts", "**/app/**/*.js"]
+    "frontend_globs": ["**/src/**/*.ts", "**/app/**/*.js"],
+    "reverse": true
   },
   "guard": {
     "checks": [

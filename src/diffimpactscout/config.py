@@ -57,6 +57,9 @@ def _defaults():
             "cache_file": ".impact_analysis_cache.json",
             "fast_mode": False,
             "threads": 4,
+            "reverse": False,
+            "experimental": False,
+            "asset_url_prefixes": ["{{ MEDIA_URL }}", "{{ STATIC_URL }}"],
         },
     }
 

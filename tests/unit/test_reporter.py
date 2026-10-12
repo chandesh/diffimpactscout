@@ -246,6 +246,20 @@ def test_render_report_unresolved_section():
     assert "no-such-route" in out
 
 
+def test_render_report_unresolved_dict_entry():
+    """Verifies that reverse-chain unresolved dicts render readably."""
+    out = reporter.render_report(
+        [], [],
+        [{"file": "shop/templates/x.html", "reason": "dynamic include; manual check required"}],
+        1,
+    )
+    assert "shop/templates/x.html (dynamic include; manual check required)" in out
+    out_md = reporter.render_report(
+        [], [], [{"file": "a.ts", "ref": "/x/", "reason": "no matching route"}], 1, markdown=True
+    )
+    assert "a.ts: /x/ (no matching route)" in out_md
+
+
 def test_render_report_unresolved_omitted_when_empty():
     """Verifies that the unresolved section is omitted when there are none."""
     out = reporter.render_report([], [], [], 0)
@@ -370,3 +384,32 @@ def test_should_block_strict_falsy_values_not_strict(monkeypatch):
         block, reason = reporter.should_block(value, _fake_tty(monkeypatch, False))
         assert block is False
         assert "non-interactive" in reason
+
+
+def test_render_report_tier_sections_and_hidden_footer():
+    rows = [
+        {"path": "app/templates/base.html", "module": "app", "category": "template",
+         "ref": "changed - 10 templates directly extend it", "severity": "High",
+         "action": "review/verify", "tier": "frontend", "related": ["app/templates/a.html"]},
+        {"path": "app/views.py", "module": "app", "category": "python",
+         "ref": "renders 'base.html' (line 4)", "severity": "High",
+         "action": "review/verify", "tier": "backend"},
+    ]
+    out = reporter.render_report(rows, [], [], 1, hidden_count=42)
+    assert "Frontend impacts" in out
+    assert "Backend impacts" in out
+    assert "42 lower-confidence impacts hidden" in out
+
+
+def test_render_report_expand_lists_related():
+    rows = [
+        {"path": "app/templates/base.html", "module": "app", "category": "template",
+         "ref": "changed - 2 templates directly extend it", "severity": "High",
+         "action": "review/verify", "tier": "frontend",
+         "related": ["app/templates/a.html", "app/templates/b.html"]},
+    ]
+    out = reporter.render_report(rows, [], [], 1, expand=True)
+    assert "app/templates/a.html" in out
+    assert "app/templates/b.html" in out
+    md = reporter.render_report(rows, [], [], 1, markdown=True, expand=True)
+    assert "<details>" in md

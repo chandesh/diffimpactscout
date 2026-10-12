@@ -14,6 +14,7 @@ import diffimpactscout.gitrun as gitrun
 import diffimpactscout.scope as scope
 from diffimpactscout.config import is_excluded
 from diffimpactscout.impact import reporter
+from diffimpactscout.impact import reverse as reverse_mod
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
 from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
@@ -36,7 +37,8 @@ _ENTITY_KINDS = {
 _DEFAULT_KINDS = ("name",)
 
 
-def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False):
+def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False,
+               expand=False, show_all=False):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -74,8 +76,38 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     cache.prune(py_files)
     cache.save(cache.load())
     analyses = cache.load()
-    rows, endpoints, unresolved = _compose_rows(
-        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg
+    reverse_rows, reverse_layers, reverse_unresolved = [], {}, []
+    pseudo_entities = set()
+    if impact_cfg.get("reverse") and not fast:
+        real_names = set(entities)
+        extra_t, rows_t, layers_t, unresolved_t = reverse_mod.template_chain(
+            root, cfg, impact_cfg, changes, analyses, cache, old_ref, staged, from_ref, to_ref
+        )
+        _merge_entities(entities, extra_t)
+        extra_f, rows_f, layers_f, unresolved_f = reverse_mod.frontend_chain(
+            root, cfg, impact_cfg, changes, entities, analyses, cache, old_ref, staged, from_ref, to_ref,
+            experimental=bool(impact_cfg.get("experimental")),
+        )
+        _merge_entities(entities, extra_f)
+        # Reverse render-site pseudo-entities exist to re-seed route/frontend
+        # linking, not to be reference-searched: their enclosing function's
+        # leaf name can be generic (e.g. "get"), which would explode
+        # find_references with unrelated same-name usages. The chains already
+        # emit their own rows; keep the entities (for _affected_routes) but
+        # skip reference search for the ones that are not real changed entities.
+        pseudo_entities = (set(extra_t) | set(extra_f)) - real_names
+        reverse_rows = rows_t + rows_f
+        reverse_layers = {**layers_t}
+        for name, cats in layers_f.items():
+            reverse_layers.setdefault(name, set()).update(cats)
+        reverse_unresolved = unresolved_t + unresolved_f
+    rows, endpoints, unresolved, hidden_count = _compose_rows(
+        root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg,
+        extra_rows=reverse_rows,
+        extra_layers=reverse_layers,
+        extra_unresolved=reverse_unresolved,
+        pseudo_entities=pseudo_entities,
+        show_all=show_all,
     )
     changed_count = len(changes)
     if json_out:
@@ -86,6 +118,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
                     "rows": rows,
                     "endpoints": endpoints,
                     "unresolved": unresolved,
+                    "hidden_count": hidden_count,
                 }
             )
             + "\n"
@@ -93,7 +126,8 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     else:
         sys.stdout.write(
             reporter.render_report(
-                rows, endpoints, unresolved, changed_count, markdown=markdown
+                rows, endpoints, unresolved, changed_count,
+                markdown=markdown, hidden_count=hidden_count, expand=(expand or show_all),
             )
         )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")
@@ -158,6 +192,19 @@ def _changed_entities(
     return entities
 
 
+def _merge_entities(entities, extra):
+    for name, ent in (extra or {}).items():
+        existing = entities.get(name)
+        if existing is None:
+            entities[name] = {
+                "kind": ent.get("kind", "function"),
+                "deleted": bool(ent.get("deleted")),
+                "modules": set(ent.get("modules") or ()),
+            }
+            continue
+        existing.setdefault("modules", set()).update(ent.get("modules") or ())
+
+
 def _module_of(path):
     if not path:
         return ""
@@ -178,18 +225,48 @@ def _entity_overlaps_changed(entity, changed_lines):
     return False
 
 
+def _row_severity(row, layers, delrow, changed_paths):
+    """Return (severity, reason) for a row, honoring its confidence tier.
+
+    Untiered rows (the Python-symbol pipeline) keep the historical rules.
+    Reverse rows never reach High from the >=2-layers rule: frontend changed
+    rows are High, deleted/renamed stays High, backend-certain is Medium, and
+    structural/heuristic rows are capped at Medium.
+    """
+    base = reporter.classify_severity(layers, delrow, changed_paths, row.get("path"))
+    tier = row.get("tier")
+    if tier is None:
+        return base, reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
+    if delrow:
+        return "High", reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
+    if tier == reverse_mod.TIER_FRONTEND and (row.get("ref") or "").startswith("changed"):
+        return "High", "the file itself is in the change-set"
+    if tier == reverse_mod.TIER_BACKEND:
+        return "Medium", "renders a changed template"
+    if base == "High":
+        return "Medium", "reachable through the template/import graph"
+    return base, reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
+
+
 def _compose_rows(
-    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None
+    root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
+    extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
+    show_all=False,
 ):
     rows = []
     layers = {}
+    for name, cats in (extra_layers or {}).items():
+        layers.setdefault(name, set()).update(cats)
+    rows.extend(extra_rows or [])
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
     deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
         name for name, ent in entities.items() if ent.get("kind") == "class_field"
     ]
     weak = set(weak_attr)
+    pseudo = set(pseudo_entities or ())
     for name, ent in entities.items():
+        layers.setdefault(name, set())
         kinds = _ENTITY_KINDS.get(ent["kind"], _DEFAULT_KINDS)
         hits = pa.find_references(
             analyses,
@@ -199,11 +276,17 @@ def _compose_rows(
             changed_paths=changed_paths,
             weak_attr=weak_attr,
             deleted=deleted,
+            require_attr_base=(name in pseudo),
         )
-        layers.setdefault(name, set())
         for hit in hits:
             layers[name].add("python")
-            rows.append(_python_row(hit, name, ent))
+            row = _python_row(hit, name, ent)
+            if name in pseudo:
+                # References to a reverse pseudo-entity (e.g. a URLconf
+                # binding to an affected view) are heuristic context, not a
+                # certain impact.
+                row["tier"] = reverse_mod.TIER_HEURISTIC
+            rows.append(row)
     routes = _routes(root, impact_cfg, profile, cfg)
     affected = _affected_routes(routes, analyses, entities, weak) if not fast else []
     template_refs, frontend_refs = _scoped_refs(root, impact_cfg, cfg, affected, fast)
@@ -213,29 +296,41 @@ def _compose_rows(
     frontend_matched, _frontend_unresolved = route_linker.match_endpoints(
         frontend_refs, affected
     )
-    unresolved = []
+    unresolved = list(extra_unresolved or [])
     for hit in template_matched:
-        row = _linked_row(hit, entities, layers, "template", changed_paths)
+        row = _tier_linked_row(
+            _linked_row(hit, entities, layers, "template", changed_paths),
+            pseudo, changed_paths,
+        )
         if row is not None:
             rows.append(row)
     for hit in frontend_matched:
-        row = _linked_row(hit, entities, layers, "frontend", changed_paths)
+        row = _tier_linked_row(
+            _linked_row(hit, entities, layers, "frontend", changed_paths),
+            pseudo, changed_paths,
+        )
         if row is not None:
             rows.append(row)
     rows = _dedup_rows(rows)
+    hidden_count = 0
+    if not show_all:
+        kept = []
+        for r in rows:
+            if r.get("tier") == reverse_mod.TIER_HEURISTIC:
+                hidden_count += 1
+            else:
+                kept.append(r)
+        rows = kept
     rows.sort(key=_row_key)
     for row in rows:
         name = row.pop("_entity")
         delrow = row.pop("_deleted")
-        row["severity"] = reporter.classify_severity(
-            layers.get(name) or (), delrow, changed_paths, row.get("path")
-        )
-        row["reason"] = reporter.severity_reason(
-            layers.get(name) or (), delrow, changed_paths, row.get("path")
-        )
-        row["action"] = _action(row["severity"], delrow)
+        severity, reason = _row_severity(row, layers.get(name) or (), delrow, changed_paths)
+        row["severity"] = severity
+        row["reason"] = reason
+        row["action"] = _action(severity, delrow)
     endpoints = _endpoint_rows(affected)
-    return rows, endpoints, unresolved
+    return rows, endpoints, unresolved, hidden_count
 
 
 def _endpoint_rows(routes):
@@ -273,6 +368,8 @@ def _usage_index(analyses):
 def _hop_callers(index, name, mods, weak):
     callers = {}
     for path, analysis, u in index.get(name, []):
+        if u.get("kind") == "str":
+            continue
         if u.get("kind") == "attr" and not u.get("base"):
             continue
         if not pa._usage_resolves(analysis, u, name, mods, path, weak):
@@ -306,6 +403,8 @@ def _route_binds_handler(urls_entry, handler, mods, path, weak):
         return True
     for u in analysis.get("usages") or []:
         if u.get("name") != handler:
+            continue
+        if u.get("kind") == "str":
             continue
         if pa._usage_resolves(analysis, u, handler, mods, path, weak):
             return True
@@ -446,6 +545,23 @@ def _handler_entity(route, entities):
     if base in entities:
         return base
     return None
+
+
+def _tier_linked_row(row, pseudo, changed_paths):
+    """Tag a linked route row heuristic when its handler is a reverse pseudo-entity.
+
+    A route is bound to a reverse pseudo-entity only because its view renders a
+    changed template, so its template/frontend consumers are reached through the
+    template graph -- transitive context, hidden by default (shown with --all).
+    A row whose own file is in the change-set stays visible regardless.
+    """
+    if (
+        row is not None
+        and row.get("_entity") in pseudo
+        and row.get("path") not in changed_paths
+    ):
+        row["tier"] = reverse_mod.TIER_HEURISTIC
+    return row
 
 
 def _linked_row(hit, entities, layers, category, changed_paths):

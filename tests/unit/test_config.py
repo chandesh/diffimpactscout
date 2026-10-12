@@ -290,3 +290,27 @@ def test_deep_merge_list_vs_scalar():
 def test_deep_merge_nested_scalar_override():
     """Checks that a scalar overrides a nested dict during deep merge."""
     assert config._deep_merge({"n": {"x": 1}}, {"n": 5}) == {"n": 5}
+
+
+def test_defaults_include_reverse_keys():
+    """Verifies that reverse-analysis keys exist with safe defaults."""
+    cfg = config._defaults()
+    impact = cfg["impact"]
+    assert impact["reverse"] is False
+    assert impact["experimental"] is False
+    assert impact["asset_url_prefixes"] == ["{{ MEDIA_URL }}", "{{ STATIC_URL }}"]
+
+
+def test_django_profile_enables_reverse(tmp_path):
+    """Verifies that the django profile seeds reverse=True."""
+    cfg = config.load_config(str(tmp_path / "no-such-repo"))
+    assert cfg["impact"]["reverse"] is False  # generic default stays off
+    cfg = config._deep_merge(config._defaults(), config.load_profile("django"))
+    assert cfg["impact"]["reverse"] is True
+    assert cfg["impact"]["experimental"] is False
+
+
+def test_frontend_profile_enables_reverse():
+    """Verifies that the frontend profile seeds reverse=True."""
+    cfg = config._deep_merge(config._defaults(), config.load_profile("frontend"))
+    assert cfg["impact"]["reverse"] is True

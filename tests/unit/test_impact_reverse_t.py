@@ -282,6 +282,8 @@ def test_reverse_frontend_call_sites_are_heuristic(tmp_path, capsys):
                  "]\n")
     with open(os.path.join(root, "shop", "templates", "shop", "base.html"), "w") as fh:
         fh.write("<html></html>\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "consumer.html"), "w") as fh:
+        fh.write("<a href=\"{% url 'orders' %}\">orders</a>\n")
     with open(os.path.join(root, "src", "orders.service.ts"), "w") as fh:
         fh.write("import { HttpClient } from '@angular/common/http';\n"
                  "this.http.get('/orders/');\n")
@@ -303,17 +305,64 @@ def test_reverse_frontend_call_sites_are_heuristic(tmp_path, capsys):
 
     assert impact_module.run_impact(root, cfg, json_out=True) == 0
     default = json.loads(capsys.readouterr().out)
-    assert "src/orders.service.ts" not in {
-        r["path"] for r in default["rows"] if r["category"] == "frontend"
-    }
+    default_paths = {(r["path"], r["category"]) for r in default["rows"]}
+    assert ("src/orders.service.ts", "frontend") not in default_paths
+    assert ("shop/templates/shop/consumer.html", "template") not in default_paths
     assert all(r.get("tier") != "heuristic" for r in default["rows"])
-    assert default["hidden_count"] >= 1
+    assert default["hidden_count"] >= 2
 
     capsys.readouterr()
     assert impact_module.run_impact(root, cfg, json_out=True, show_all=True) == 0
     full = json.loads(capsys.readouterr().out)
     fe = [r for r in full["rows"] if r["path"] == "src/orders.service.ts"]
     assert fe and all(r.get("tier") == "heuristic" for r in fe)
+    tmpl = [r for r in full["rows"] if r["path"] == "shop/templates/shop/consumer.html"]
+    assert tmpl and all(r.get("tier") == "heuristic" for r in tmpl)
+
+
+def test_reverse_changed_frontend_file_stays_visible(tmp_path, capsys):
+    """A changed JS file that is also a route consumer must stay visible even
+    when the route's handler is a reverse pseudo-entity."""
+    root = str(tmp_path)
+    _git("init", cwd=root)
+    _git("symbolic-ref", "HEAD", "refs/heads/master", cwd=root)
+    os.makedirs(os.path.join(root, "shop", "templates", "shop"))
+    os.makedirs(os.path.join(root, "src"))
+    with open(os.path.join(root, "shop", "views.py"), "w") as fh:
+        fh.write("from django.shortcuts import render\n\n"
+                 "def orders_view(request):\n"
+                 "    return render(request, 'shop/page.html')\n")
+    with open(os.path.join(root, "shop", "urls.py"), "w") as fh:
+        fh.write("from django.urls import path\n"
+                 "from . import views\n\n"
+                 "urlpatterns = [\n"
+                 "    path('orders/', views.orders_view, name='orders'),\n"
+                 "]\n")
+    with open(os.path.join(root, "shop", "templates", "shop", "page.html"), "w") as fh:
+        fh.write("<script src=\"{{ STATIC_URL }}orders.service.js\"></script>\n")
+    with open(os.path.join(root, "src", "orders.service.js"), "w") as fh:
+        fh.write("this.http.get('/orders/');\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m0", cwd=root)
+    _git("remote", "add", "upstream", ".", cwd=root)
+    _git("push", "-q", "upstream", "master", cwd=root)
+    with open(os.path.join(root, "src", "orders.service.js"), "a") as fh:
+        fh.write("this.http.get('/orders/');\n")
+    _git("add", "-A", cwd=root)
+    _git("commit", "-m", "m1", cwd=root)
+
+    cfg = config._defaults()
+    cfg["impact"]["profile"] = "django"
+    cfg["impact"]["reverse"] = True
+    cfg["impact"]["urls_globs"] = ["**/urls.py"]
+    cfg["impact"]["template_globs"] = ["**/templates/**/*.html"]
+    cfg["impact"]["frontend_globs"] = ["**/src/**/*.js"]
+
+    assert impact_module.run_impact(root, cfg, json_out=True) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert ("src/orders.service.js", "frontend") in {
+        (r["path"], r["category"]) for r in default["rows"]
+    }
 
 
 def test_generic_render_site_name_does_not_explode_references(tmp_path, capsys):

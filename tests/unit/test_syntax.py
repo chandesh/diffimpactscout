@@ -1,7 +1,6 @@
 import os
 import warnings
 
-import diffimpactscout.checks.syntax as syntax
 from diffimpactscout.checks.base import (
     REGISTRY,
     CheckContext,

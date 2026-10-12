@@ -13,3 +13,5 @@ dist/
 .planning/
 *.md
 !README.md
+!AGENTS.md
+!CODING_STANDARDS.md

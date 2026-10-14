@@ -41,6 +41,7 @@ _DEFAULT_KINDS = ("name",)
 def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
                     top_n=20, expand=False):
     """Build the JSON payload; additive shown/hidden_counts, backward compatible."""
+    rows = list(rows or [])
     shown_count, hidden_counts = reporter.top_n_counts(rows, top_n=top_n, expand=expand)
     return {
         "changed_count": changed_count,
@@ -49,7 +50,6 @@ def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
         "unresolved": unresolved,
         "hidden_count": hidden_count,
         "shown_count": shown_count,
-        "shown": shown_count,
         "hidden_counts": hidden_counts,
     }
 

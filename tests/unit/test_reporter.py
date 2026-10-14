@@ -511,7 +511,7 @@ def test_summary_extra_none_falls_back_to_computed():
 
 
 def test_top_n_limits_rendered_lines():
-    """top_n controls how many Top lines render, including 0 and 1."""
+    """Body cap stays decoupled from the summary Top-5 header."""
     def _row(path, severity):
         return {"path": path, "module": "m", "category": "python",
                 "ref": "x", "severity": severity, "action": "a", "owner": "t"}
@@ -519,10 +519,17 @@ def test_top_n_limits_rendered_lines():
     rows = [_row("f%d.py" % i, "High") for i in range(5)]
     out1 = reporter.render_report(rows, [], [], 1, top_n=1)
     top1 = [l for l in out1.splitlines() if l.strip().startswith("- ")]
-    assert len(top1) == 1
+    assert len(top1) == 5
+    assert out1.count("... +") >= 1
     out0 = reporter.render_report(rows, [], [], 1, top_n=0)
     top0 = [l for l in out0.splitlines() if l.strip().startswith("- ")]
-    assert top0 == []
+    assert len(top0) == 5
+    out_big = reporter.render_report(rows, [], [], 1, top_n=20)
+    top_big = [l for l in out_big.splitlines() if l.strip().startswith("- ")]
+    assert len(top_big) == 5
+    out_none = reporter.render_report(rows, [], [], 1, top_n=None)
+    top_none = [l for l in out_none.splitlines() if l.strip().startswith("- ")]
+    assert len(top_none) == 5
 
 
 def test_top_impacted_paths_dedupes_duplicate_paths():

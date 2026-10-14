@@ -295,6 +295,8 @@ def _table_cap(top_n, expand):
         return None
     if top_n is None:
         return 20
+    if isinstance(top_n, bool):
+        return 20
     try:
         cap = int(top_n)
     except (TypeError, ValueError):
@@ -368,7 +370,7 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  Impact Analysis Report")
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
-    limit = 5 if top_n is None else top_n
+    limit = 5
     if summary_extra is not None:
         _risk = summary_extra.get("risk")
         risk = _risk if _risk is not None else compute_summary_risk_score(rows)

@@ -908,11 +908,16 @@ def test_impact_help_lists_expand_and_all(capsys):
 
 
 def test_top_flag_caps_rows():
+    import re
+
     from diffimpactscout.impact import reporter
     rows = [{"path": "m%d.py" % i, "module": "m", "category": "python",
              "ref": "r", "severity": "Medium", "action": "verify",
              "section": "Direct", "badge": "Impacted", "key": "m%d.py:1" % i}
             for i in range(30)]
     out = reporter.render_report(rows, [], [], 1, top_n=5)
-    data_lines = [l for l in out.splitlines() if "m%d.py" % 0 in l or ".py" in l]
     assert out.count("... +") >= 1
+    badge_lines = [l for l in out.splitlines() if l.strip().endswith("Impacted")]
+    assert len(badge_lines) == 5
+    overflow = [int(n) for n in re.findall(r"\.\.\. \+(\d+) more", out)]
+    assert sum(overflow) == 25

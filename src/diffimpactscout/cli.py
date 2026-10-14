@@ -191,6 +191,8 @@ def _cmd_guard(args):
 
 
 def _cmd_impact(args):
+    if args.top is not None and args.top < 0:
+        _parser().error("--top must be >= 0")
     root = _require_repo()
     if root is None:
         return 1
@@ -209,6 +211,8 @@ def _cmd_impact(args):
 
 
 def _cmd_guard_and_analyse_impact(args):
+    if args.top is not None and args.top < 0:
+        _parser().error("--top must be >= 0")
     root = _require_repo()
     if root is None:
         return 1

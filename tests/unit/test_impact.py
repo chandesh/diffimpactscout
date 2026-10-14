@@ -1092,3 +1092,15 @@ def test_stoplist_pruned_stay_hidden_with_all():
         show_all=True,
     )
     assert rows == []
+
+
+def test_high_fan_in_ranks_first():
+    from diffimpactscout.impact import impact as m
+    rows = [
+        {"path": "single.py", "ref": "helper", "severity": "Medium",
+         "fan_in": 1, "missing_test": 0, "churn": 0},
+        {"path": "used.py", "ref": "util", "severity": "Medium",
+         "fan_in": 10, "missing_test": 0, "churn": 0},
+    ]
+    ranked = m.rank_rows(rows, max_fan_in=10)
+    assert ranked[0]["ref"] == "util"

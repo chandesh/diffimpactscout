@@ -16,6 +16,8 @@ import diffimpactscout.scope as scope
 from diffimpactscout.config import is_excluded
 from diffimpactscout.impact import reporter
 from diffimpactscout.impact import reverse as reverse_mod
+from diffimpactscout.impact import owners as owners_mod
+from diffimpactscout.impact import risk as risk_mod
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
 from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
@@ -434,7 +436,18 @@ def _compose_rows(
             else:
                 kept.append(r)
         rows = kept
-    rows.sort(key=_row_key)
+    fan_in_by_entity = {}
+    for r in rows:
+        fan_in_by_entity.setdefault(r.get("_entity"), set()).add(r.get("path") or "")
+    max_fan_in = max([len(paths) for paths in fan_in_by_entity.values()] + [1])
+    for row in rows:
+        row["fan_in"] = len(fan_in_by_entity.get(row.get("_entity")) or ())
+        row["missing_test"] = 0 if _test_path_for_row(root, row.get("path")) else 1
+        # FileChange carries path/status only (no hunk spans), and the
+        # per-file changed-line sets from get_changed_lines are not threaded
+        # through _compose_rows, so churn defaults to 0 here.
+        row["churn"] = 0
+        row["owner"] = owners_mod.owner_for(row.get("path") or "", root or "")
     for row in rows:
         name = row.pop("_entity")
         delrow = row.pop("_deleted")
@@ -457,6 +470,7 @@ def _compose_rows(
                 deleted=delrow,
                 test_path=_test_path_for_row(root, row.get("path")),
             ))
+    rows = rank_rows(rows, max_fan_in=max_fan_in)
     endpoints = _endpoint_rows(affected)
     return rows, endpoints, unresolved, hidden_count
 
@@ -621,6 +635,36 @@ def _dedup_rows(rows):
 def _row_key(row):
     """Sort key for deterministic row order: path, category, ref."""
     return (row.get("path") or "", row.get("category") or "", row.get("ref") or "")
+
+
+def rank_rows(rows, max_fan_in=1):
+    """Attach risk scores and sort by descending risk, path as tiebreak.
+
+    Each row carries ``severity`` plus ``fan_in`` (raw distinct-file count),
+    ``missing_test`` (0/1) and ``churn`` (0-1); ``fan_in`` is normalized by
+    ``max_fan_in`` (floored at 1) and every term is clamped 0-1 in
+    ``risk.score``. Returns a new sorted list; the ``risk`` field is
+    additive-only for JSON consumers.
+    """
+    scored = list(rows or [])
+    try:
+        denom = float(max_fan_in)
+    except (TypeError, ValueError):
+        denom = 1.0
+    if denom < 1.0:
+        denom = 1.0
+    for row in scored:
+        try:
+            fan_in = float(row.get("fan_in") or 0) / denom
+        except (TypeError, ValueError):
+            fan_in = 0.0
+        row["risk"] = risk_mod.score(
+            row.get("severity"),
+            fan_in,
+            row.get("missing_test") or 0,
+            row.get("churn") or 0,
+        )
+    return sorted(scored, key=lambda r: (-r["risk"], r.get("path") or ""))
 
 
 def _line_of(row):

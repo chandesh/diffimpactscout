@@ -18,9 +18,26 @@ _SEVERITY_MAP = {
 }
 
 
+def clamp01(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if number < 0.0:
+        return 0.0
+    if number > 1.0:
+        return 1.0
+    return number
+
+
 def score(severity, fan_in, missing_test, churn):
     try:
         sev = _SEVERITY_MAP[severity]
     except KeyError:
         raise ValueError("unknown severity: %r" % (severity,))
-    return W_SEVERITY * sev + W_FAN_IN * fan_in + W_MISSING_TEST * missing_test + W_CHURN * churn
+    return (
+        W_SEVERITY * sev
+        + W_FAN_IN * clamp01(fan_in)
+        + W_MISSING_TEST * clamp01(missing_test)
+        + W_CHURN * clamp01(churn)
+    )

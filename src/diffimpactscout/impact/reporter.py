@@ -90,6 +90,11 @@ def compute_summary_risk_score(rows):
 _SEVERITY_RANK = {"High": 0, "Medium": 1, "Low": 2}
 
 
+def _risk_fallback(severity):
+    """Severity-only risk proxy for rows without a risk score."""
+    return -_SEVERITY_RANK.get(severity, 99)
+
+
 def _impacted_count(rows, changed_paths=None):
     """Count distinct impacted paths excluding the changed set."""
     changed = set(changed_paths or ())
@@ -105,16 +110,23 @@ def _impacted_count(rows, changed_paths=None):
 def _top_impacted_paths(rows, limit=5, changed_paths=None):
     """Rank the top impacted files for the summary header.
 
-    Returns up to ``limit`` ``(path, owner)`` pairs ordered by severity
-    rank (High, Medium, Low) then path. Paths in ``changed_paths`` are
-    excluded so the Top list only contains impacted files, consistent
-    with ``_impacted_count`` (Phase-A placeholder ranking).
+    Returns up to ``limit`` ``(path, owner)`` pairs ordered by descending
+    risk then path. Rows without a ``risk`` score (pre-Phase-B callers)
+    fall back to severity rank (High, Medium, Low) then path. Paths in
+    ``changed_paths`` are excluded so the Top list only contains impacted
+    files, consistent with ``_impacted_count``.
     """
     changed = set(changed_paths or ())
 
     def _key(row):
+        try:
+            risk = float(row.get("risk")) if isinstance(row, dict) else None
+        except (TypeError, ValueError):
+            risk = None
+        if risk is not None:
+            return (-risk, _cell(row, "path") or "")
         sev = _cell(row, "severity")
-        return (_SEVERITY_RANK.get(sev, 99), _cell(row, "path") or "")
+        return (-_risk_fallback(sev), _cell(row, "path") or "")
 
     top = []
     seen = set()

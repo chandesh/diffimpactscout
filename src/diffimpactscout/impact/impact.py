@@ -7,6 +7,7 @@ referencing its old name.
 import ast
 import json
 import os
+import re
 import sys
 
 import diffimpactscout.env as env
@@ -329,6 +330,12 @@ def _compose_rows(
         row["severity"] = severity
         row["reason"] = reason
         row["action"] = _action(severity, delrow)
+        hint = "transitive" if row.get("tier") == reverse_mod.TIER_HEURISTIC else "direct"
+        finished = finish_row(
+            row, severity=severity, layers=layers.get(name) or (),
+            changed_paths=changed_paths, section_hint=hint, deleted=delrow,
+        )
+        row.update(finished)
     endpoints = _endpoint_rows(affected)
     return rows, endpoints, unresolved, hidden_count
 
@@ -491,7 +498,45 @@ def _dedup_rows(rows):
 
 
 def _row_key(row):
+    """Sort key for deterministic row order: path, category, ref."""
     return (row.get("path") or "", row.get("category") or "", row.get("ref") or "")
+
+
+def _line_of(row):
+    """Extract the 1-based line number from a row's ref text.
+
+    Parses ``at <N>`` (python/frontend rows) and ``line <N>`` (render-site
+    rows); falls back to the row's ``line`` field, else 0.
+    """
+    ref = row.get("ref") or ""
+    m = re.search(r"at (\d+)", ref)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"line (\d+)", ref)
+    if m:
+        return int(m.group(1))
+    return row.get("line") or 0
+
+
+def finish_row(row, severity, layers, changed_paths, section_hint=None, deleted=False):
+    """Attach display fields to a composed row: severity, badge, section, key.
+
+    ``badge`` is ``Changed`` when the row's path is in the change-set, else
+    ``Impacted``. ``section`` is ``Breaking`` for deleted/high rows,
+    ``Transitive`` when ``section_hint`` is ``transitive``, else ``Direct``.
+    ``key`` is the stable ``path:line`` string. Returns a new dict.
+    """
+    row = dict(row)
+    row["severity"] = severity
+    row["badge"] = "Changed" if (row.get("path") in (changed_paths or ())) else "Impacted"
+    if deleted or severity == "High":
+        row["section"] = "Breaking"
+    elif section_hint == "transitive":
+        row["section"] = "Transitive"
+    else:
+        row["section"] = "Direct"
+    row["key"] = "%s:%s" % (row.get("path") or "", _line_of(row))
+    return row
 
 
 def _python_row(hit, name, ent):

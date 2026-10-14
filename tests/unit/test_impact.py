@@ -900,3 +900,17 @@ def test_route_binds_handler_ignores_str_usage():
     assert not impact._route_binds_handler(
         urls, "create", {"app.views"}, "app/urls.py", set()
     )
+
+
+def test_section_and_badge_assignment():
+    """Verifies that finish_row assigns section and Changed/Impacted badge."""
+    from diffimpactscout.impact import impact as m
+    row = m._python_row(
+        {"path": "b.py", "name": "x", "how": "name", "line": 3, "ctx_qname": ""},
+        "x", {"deleted": False},
+    )
+    row2 = m.finish_row(row, severity="Medium", layers={"python"},
+                        changed_paths={"a.py"}, section_hint="direct")
+    assert row2["badge"] in ("Changed", "Impacted")
+    assert row2["section"] in ("Breaking", "Direct", "Transitive")
+    assert row2["badge"] == "Impacted"

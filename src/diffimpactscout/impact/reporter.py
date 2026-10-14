@@ -242,6 +242,22 @@ _TIER_LABELS = (
 )
 
 
+_SECTION_ORDER = ("Breaking", "Direct", "Transitive")
+
+
+def _section_rank(row):
+    """Rank a row for section display order: Breaking, Direct, Transitive."""
+    try:
+        return _SECTION_ORDER.index((row or {}).get("section"))
+    except ValueError:
+        return len(_SECTION_ORDER)
+
+
+def _order_by_section(rows):
+    """Stable-sort rows by section order for rendering; tiers stay as data."""
+    return sorted(rows or [], key=_section_rank)
+
+
 def _split_tiers(rows):
     """Return (tiered, untiered); tiered maps each tier value to its rows."""
     tiered = {"frontend": [], "backend": [], "heuristic": []}
@@ -289,6 +305,9 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     for path, owner in (top or [])[:limit]:
         lines.append("  - %s (%s)" % (path, owner or "unowned"))
     tiered, untiered = _split_tiers(rows)
+    for tier in tiered:
+        tiered[tier] = _order_by_section(tiered[tier])
+    untiered = _order_by_section(untiered)
     ordered = []
     start = 1
     for tier, label in _TIER_LABELS:
@@ -339,6 +358,9 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
     lines = []
     lines.append("# Impact Analysis Report")
     tiered, untiered = _split_tiers(rows)
+    for tier in tiered:
+        tiered[tier] = _order_by_section(tiered[tier])
+    untiered = _order_by_section(untiered)
     ordered = []
     start = 1
     for tier, label in _TIER_LABELS:

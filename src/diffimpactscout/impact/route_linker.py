@@ -32,6 +32,13 @@ QUOTED_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 URL_TAG_RE = re.compile(r"{%\s*url\s+['\"]([^'\"]+)['\"]\s*%}")
 URL_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 
+_TS_IMPORT = re.compile(r"import\s+\{([^}]+)\}\s+from\s+['\"]([^'\"]+)['\"]")
+_TS_REQUIRE = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(['\"]([^'\"]+)['\"]\)")
+_TS_EXPORT = re.compile(r"export\s+(?:const|let|var|function|class)\s+(\w+)")
+
+_TS_EXTS = (".ts", ".js", ".tsx", ".jsx")
+_TS_DEFAULT_GLOBS = ("**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx")
+
 _URL_ASSET_EXTS = (
     ".js",
     ".ts",
@@ -492,6 +499,62 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
             ref = _url_ref(posix, line, lit, None, seen)
             if ref is not None:
                 refs.append(ref)
+    return refs
+
+
+def _ts_import_names(block):
+    """Extract imported binding names from a named-import clause.
+
+    ``X as Y`` yields the original name ``X`` (the changed symbol); a bare
+    ``X`` yields ``X``. A leading ``type`` modifier is ignored.
+    """
+    names = set()
+    for part in block.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        token = re.split(r"\s+as\s+", token, maxsplit=1)[0].strip()
+        if token.startswith("type "):
+            token = token[len("type "):].strip()
+        if token:
+            names.add(token)
+    return names
+
+
+def extract_ts_symbol_refs(root, changed_names, frontend_globs=None, cfg=None):
+    """Link changed symbol names to TS/JS files that import, require, or export them.
+
+    A changed Python symbol may be referenced by name in a frontend module
+    (``import { CustomTag } from './models'``); this emits a ``frontend-symbol``
+    row per (file, name) so those consumers surface instead of silence.
+    """
+    names_wanted = set(changed_names or ())
+    refs = []
+    if not names_wanted:
+        return refs
+    globs = frontend_globs or _TS_DEFAULT_GLOBS
+    for posix in _iter_files(root, globs, _TS_EXTS, cfg=cfg):
+        full = os.path.join(root, posix) if root else posix
+        text = _read_text(full)
+        if text is None:
+            continue
+        text = _strip_comments(text)
+        found = set()
+        for m in _TS_IMPORT.finditer(text):
+            found.update(_ts_import_names(m.group(1)))
+        for m in _TS_REQUIRE.finditer(text):
+            found.add(m.group(1))
+        for m in _TS_EXPORT.finditer(text):
+            found.add(m.group(1))
+        for name in sorted(found & names_wanted):
+            refs.append(
+                {
+                    "file": posix,
+                    "ref": name,
+                    "category": "frontend-symbol",
+                    "confidence": "medium",
+                }
+            )
     return refs
 
 

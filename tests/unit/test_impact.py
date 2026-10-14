@@ -1094,6 +1094,41 @@ def test_stoplist_pruned_stay_hidden_with_all():
     assert rows == []
 
 
+def test_compose_rows_links_ts_symbol_refs(tmp_path):
+    """Verifies changed symbol names link to TS imports as frontend-symbol rows."""
+    _write(
+        str(tmp_path),
+        "src/app.ts",
+        "import { CustomTag } from './models';\nconsole.log(CustomTag);\n",
+    )
+    entities = {"CustomTag": {"kind": "function", "deleted": False, "modules": set()}}
+    rows, _e, _u, _h = impact._compose_rows(
+        str(tmp_path), {"frontend_globs": ["**/*.ts"]}, "generic",
+        entities, {}, ["app/models.py"], False,
+    )
+    sym = [r for r in rows if r.get("category") == "frontend-symbol"]
+    assert len(sym) == 1
+    assert sym[0]["path"] == "src/app.ts"
+    assert sym[0]["confidence"] == "medium"
+    assert "CustomTag" in sym[0]["ref"]
+    assert sym[0]["severity"] in ("Medium", "High")
+
+
+def test_compose_rows_fast_skips_ts_symbol_refs(tmp_path):
+    """Verifies fast mode skips TS symbol linking (consistent with _scoped_refs)."""
+    _write(
+        str(tmp_path),
+        "src/app.ts",
+        "import { CustomTag } from './models';\n",
+    )
+    entities = {"CustomTag": {"kind": "function", "deleted": False, "modules": set()}}
+    rows, _e, _u, _h = impact._compose_rows(
+        str(tmp_path), {"frontend_globs": ["**/*.ts"]}, "generic",
+        entities, {}, ["app/models.py"], True,
+    )
+    assert not [r for r in rows if r.get("category") == "frontend-symbol"]
+
+
 def test_breaking_detectors():
     from diffimpactscout.impact import impact as m
     rows = m.detect_breaking([

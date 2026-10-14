@@ -468,6 +468,26 @@ def _compose_rows(
                 row["confidence"] = conf
                 row["evidence"] = ev
             rows.append(row)
+    if not fast:
+        # REQ-14: a changed symbol may be consumed by name in a TS/JS module
+        # (import/require/export), which the HTTP-call scan above cannot see.
+        for ref in route_linker.extract_ts_symbol_refs(
+            root, list(entities.keys()), impact_cfg.get("frontend_globs"), cfg=cfg
+        ):
+            name = ref.get("ref")
+            ent = entities.get(name) or {"kind": "function", "deleted": False}
+            layers.setdefault(name, set()).add("frontend-symbol")
+            rows.append(
+                {
+                    "path": ref.get("file") or "",
+                    "module": _dir_of(ref.get("file") or ""),
+                    "category": "frontend-symbol",
+                    "ref": "%s (imported symbol)" % (name,),
+                    "confidence": "medium",
+                    "_entity": name,
+                    "_deleted": bool(ent.get("deleted")),
+                }
+            )
     rows = _dedup_rows(rows)
     hidden_count = 0
     if not show_all:

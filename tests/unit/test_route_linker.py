@@ -315,6 +315,55 @@ def test_extract_frontend_refs_block_comment_preserves_lines(tmp_path):
     assert [(r["line"], r["method"]) for r in static] == [(3, "get")]
 
 
+def test_ts_import_links_changed_symbol(tmp_path):
+    """Verifies that a TS import of a changed symbol yields a frontend-symbol ref."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import { CustomTag } from './models';\nconsole.log(CustomTag);\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"})
+    assert any(r["file"].endswith("app.ts") for r in rows)
+    assert all(r["category"] == "frontend-symbol" for r in rows)
+    assert all(r["confidence"] == "medium" for r in rows)
+
+
+def test_ts_import_alias_require_and_export(tmp_path):
+    """Checks alias imports, require() bindings, and local exports are collected."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import { Original as Alias } from './m';\n"
+        "const Req = require('./r');\n"
+        "export const Exported = 1;\n",
+    )
+    rows = rl.extract_ts_symbol_refs(
+        str(tmp_path), {"Original", "Req", "Exported", "Alias"}
+    )
+    names = {r["ref"] for r in rows}
+    assert names == {"Original", "Req", "Exported"}
+
+
+def test_ts_import_ignores_unrelated_and_comments(tmp_path):
+    """Checks unrelated names and commented imports produce no refs."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "// import { CustomTag } from './models';\n"
+        "import { Other } from './other';\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"})
+    assert rows == []
+
+
+def test_ts_import_respects_frontend_globs(tmp_path):
+    """Checks that frontend_globs scope which TS files are scanned."""
+    _write(str(tmp_path), "app.ts", "import { CustomTag } from './m';\n")
+    _write(str(tmp_path), "vendor/lib.ts", "import { CustomTag } from './m';\n")
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}, ["app.ts"])
+    assert {r["file"] for r in rows} == {"app.ts"}
+
+
 def test_match_endpoints_wildcard_and_prefix(tmp_path):
     """Verifies that refs match routes via wildcard and prefix patterns."""
     routes = [Route("item-detail", "/api/v1/orders/<int:id>/", "items", "u.py")]

@@ -855,14 +855,14 @@ def _br_ratio_from_diff(root, change, anchor=None, from_ref=None,
 
     Ratio is len(old hunk lines) / total old file lines; old hunks come
     from get_changed_lines, total lines from the old blob at the old ref
-    (staged -> HEAD, anchor -> anchor, from_ref -> from_ref, else HEAD).
-    Returns 0.0 when hunks or the old blob are unavailable.
+    (staged -> HEAD, anchor -> anchor, from_ref+to_ref -> from_ref,
+    else HEAD). Returns 0.0 when hunks or the old blob are unavailable.
     """
     try:
         old_lines, _new_lines = get_changed_lines(
             root, change, anchor, from_ref, to_ref, staged
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError, TypeError, IndexError):
         return 0.0
     if not old_lines:
         return 0.0
@@ -870,7 +870,7 @@ def _br_ratio_from_diff(root, change, anchor=None, from_ref=None,
         old_ref = "HEAD"
     elif anchor:
         old_ref = anchor
-    elif from_ref:
+    elif from_ref and to_ref:
         old_ref = from_ref
     else:
         old_ref = "HEAD"

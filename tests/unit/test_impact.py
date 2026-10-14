@@ -1152,6 +1152,19 @@ def test_breaking_rule1_threshold():
     assert api_rows[0]["ref"] == "breaking API change: helper"
 
 
+def test_breaking_dict_change_with_root_no_crash():
+    """Regression: dict change with root set must not crash the diff ratio.
+
+    _br_ratio_from_diff calls get_changed_lines, which needs
+    change.status/change.path attributes; a plain dict raises
+    AttributeError. The helper must swallow it and return no rows.
+    """
+    from diffimpactscout.impact import impact as m
+    assert m.detect_breaking(
+        [{"path": "tests/test_x.py", "touched": True}], root="/tmp"
+    ) == []
+
+
 def test_breaking_migration_infra_matchers():
     """Verifies lockfile and CI matchers fire as migration/infra rows."""
     from diffimpactscout.impact import impact as m

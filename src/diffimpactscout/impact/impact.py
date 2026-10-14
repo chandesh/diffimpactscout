@@ -332,7 +332,7 @@ def _compose_rows(
         row["action"] = _action(severity, delrow)
         hint = "transitive" if row.get("tier") == reverse_mod.TIER_HEURISTIC else "direct"
         finished = finish_row(
-            row, severity=severity, layers=layers.get(name) or (),
+            row, severity=severity,
             changed_paths=changed_paths, section_hint=hint, deleted=delrow,
         )
         row.update(finished)
@@ -518,7 +518,7 @@ def _line_of(row):
     return row.get("line") or 0
 
 
-def finish_row(row, severity, layers, changed_paths, section_hint=None, deleted=False):
+def finish_row(row, severity, changed_paths, section_hint=None, deleted=False):
     """Attach display fields to a composed row: severity, badge, section, key.
 
     ``badge`` is ``Changed`` when the row's path is in the change-set, else

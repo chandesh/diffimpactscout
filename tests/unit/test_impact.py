@@ -905,12 +905,30 @@ def test_route_binds_handler_ignores_str_usage():
 def test_section_and_badge_assignment():
     """Verifies that finish_row assigns section and Changed/Impacted badge."""
     from diffimpactscout.impact import impact as m
+    from diffimpactscout.impact import reporter
     row = m._python_row(
         {"path": "b.py", "name": "x", "how": "name", "line": 3, "ctx_qname": ""},
         "x", {"deleted": False},
     )
-    row2 = m.finish_row(row, severity="Medium", layers={"python"},
+    row2 = m.finish_row(row, severity="Medium",
                         changed_paths={"a.py"}, section_hint="direct")
     assert row2["badge"] in ("Changed", "Impacted")
     assert row2["section"] in ("Breaking", "Direct", "Transitive")
     assert row2["badge"] == "Impacted"
+    assert row2["key"] == "b.py:3"
+    # Changed branch: path in the change-set renders Changed.
+    row_changed = m.finish_row(row, severity="Medium",
+                               changed_paths={"b.py"}, section_hint="direct")
+    assert row_changed["badge"] == "Changed"
+    # Section rules.
+    assert m.finish_row(row, severity="High", changed_paths={"a.py"})["section"] == "Breaking"
+    assert m.finish_row(row, severity="Medium", changed_paths={"a.py"},
+                        deleted=True)["section"] == "Breaking"
+    assert m.finish_row(row, severity="Medium", changed_paths={"a.py"},
+                        section_hint="transitive")["section"] == "Transitive"
+    # Global section order: Breaking -> Direct -> Transitive.
+    breaking = dict(row2, path="br.py", section="Breaking")
+    direct = dict(row2, path="di.py", section="Direct")
+    transitive = dict(row2, path="tr.py", section="Transitive")
+    ordered = reporter._order_by_section([transitive, breaking, direct])
+    assert [r["section"] for r in ordered] == ["Breaking", "Direct", "Transitive"]

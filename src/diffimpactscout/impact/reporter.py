@@ -12,10 +12,10 @@ import sys
 
 import diffimpactscout.env as env
 
-_HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |"
-_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- |"
-_COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required")
-_COLUMN_WIDTHS = (2, 38, 20, 8, 38, 8, 26)
+_HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required | Badge |"
+_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+_COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required", "Badge")
+_COLUMN_WIDTHS = (2, 38, 20, 8, 38, 8, 26, 8)
 
 
 def classify_severity(layers, deleted_renamed, changed_paths, ref_path):
@@ -54,7 +54,7 @@ def _cell(row, key):
 
 
 def _row_values(row, index):
-    return [str(index)] + [_cell(row, k) for k in ("path", "module", "category", "ref", "severity", "action")]
+    return [str(index)] + [_cell(row, k) for k in ("path", "module", "category", "ref", "severity", "action", "badge")]
 
 
 def _counts(rows):
@@ -244,13 +244,31 @@ _TIER_LABELS = (
 
 _SECTION_ORDER = ("Breaking", "Direct", "Transitive")
 
+_SECTION_LABELS = {
+    "Breaking": "Breaking",
+    "Direct": "Direct consumers",
+    "Transitive": "Transitive (collapsed)",
+}
+
+
+def _normalized_section(row):
+    """Map a row to its display section; missing/unknown goes to Direct."""
+    sec = _cell(row, "section")
+    if sec in _SECTION_ORDER:
+        return sec
+    return "Direct"
+
 
 def _section_rank(row):
-    """Rank a row for section display order: Breaking, Direct, Transitive."""
-    try:
-        return _SECTION_ORDER.index((row or {}).get("section"))
-    except ValueError:
-        return len(_SECTION_ORDER)
+    """Rank a row for section display order: Breaking, Direct, Transitive.
+
+    Rows with missing/unknown section sort last under Direct (after known
+    Direct rows, before Transitive).
+    """
+    sec = _cell(row, "section")
+    if sec in _SECTION_ORDER:
+        return (_SECTION_ORDER.index(sec), 0)
+    return (_SECTION_ORDER.index("Direct"), 1)
 
 
 def _order_by_section(rows):
@@ -274,7 +292,7 @@ def _split_tiers(rows):
 def _markdown_table(rows, start=1):
     lines = [_HEADER, _SEPARATOR]
     for i, row in enumerate(rows or [], start=start):
-        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
+        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action", "badge")]
         lines.append("| " + " | ".join(cells) + " |")
     return lines
 
@@ -310,27 +328,40 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     untiered = _order_by_section(untiered)
     ordered = []
     start = 1
-    for tier, label in _TIER_LABELS:
-        if not tiered[tier]:
+    for section in _SECTION_ORDER:
+        section_label = _SECTION_LABELS[section]
+        section_buckets = {
+            tier: [r for r in tiered[tier] if _normalized_section(r) == section]
+            for tier in tiered
+        }
+        section_untiered = [r for r in untiered if _normalized_section(r) == section]
+        if not any(section_buckets.values()) and not section_untiered:
             continue
         lines.append("")
-        lines.append("  " + label)
+        lines.append("  " + section_label)
         lines.append("  " + "-" * 66)
-        header, body = _ascii_table(tiered[tier], start)
-        start += len(tiered[tier])
-        lines.append(header)
-        lines.extend(body)
-        ordered.extend(tiered[tier])
-        if expand:
-            for row in tiered[tier]:
-                for rel in row.get("related") or []:
-                    lines.append("      - %s" % rel)
-    if untiered:
-        lines.append("")
-        header, body = _ascii_table(untiered, start)
-        lines.append(header)
-        lines.extend(body)
-        ordered.extend(untiered)
+        for tier, tier_label in _TIER_LABELS:
+            bucket = section_buckets.get(tier) or []
+            if not bucket:
+                continue
+            lines.append("")
+            lines.append("  " + tier_label)
+            lines.append("  " + "-" * 66)
+            header, body = _ascii_table(bucket, start)
+            start += len(bucket)
+            lines.append(header)
+            lines.extend(body)
+            ordered.extend(bucket)
+            if expand:
+                for row in bucket:
+                    for rel in row.get("related") or []:
+                        lines.append("      - %s" % rel)
+        if section_untiered:
+            header, body = _ascii_table(section_untiered, start)
+            start += len(section_untiered)
+            lines.append(header)
+            lines.extend(body)
+            ordered.extend(section_untiered)
     if endpoints:
         lines.append("")
         lines.append("  Affected WebURL/API-URL endpoints:")
@@ -363,31 +394,44 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
     untiered = _order_by_section(untiered)
     ordered = []
     start = 1
-    for tier, label in _TIER_LABELS:
-        if not tiered[tier]:
+    for section in _SECTION_ORDER:
+        section_label = _SECTION_LABELS[section]
+        section_buckets = {
+            tier: [r for r in tiered[tier] if _normalized_section(r) == section]
+            for tier in tiered
+        }
+        section_untiered = [r for r in untiered if _normalized_section(r) == section]
+        if not any(section_buckets.values()) and not section_untiered:
             continue
         lines.append("")
-        lines.append("### " + label)
+        lines.append("### " + section_label)
         lines.append("")
-        lines.extend(_markdown_table(tiered[tier], start))
-        start += len(tiered[tier])
-        ordered.extend(tiered[tier])
-        if expand:
-            for row in tiered[tier]:
-                related = row.get("related") or []
-                if not related:
-                    continue
-                lines.append("")
-                lines.append("  <details><summary>%d templates</summary>" % len(related))
-                lines.append("")
-                for rel in related:
-                    lines.append("  - %s" % rel)
-                lines.append("")
-                lines.append("  </details>")
-    if untiered:
-        lines.append("")
-        lines.extend(_markdown_table(untiered, start))
-        ordered.extend(untiered)
+        for tier, tier_label in _TIER_LABELS:
+            bucket = section_buckets.get(tier) or []
+            if not bucket:
+                continue
+            lines.append("### " + tier_label)
+            lines.append("")
+            lines.extend(_markdown_table(bucket, start))
+            start += len(bucket)
+            ordered.extend(bucket)
+            if expand:
+                for row in bucket:
+                    related = row.get("related") or []
+                    if not related:
+                        continue
+                    lines.append("")
+                    lines.append("  <details><summary>%d templates</summary>" % len(related))
+                    lines.append("")
+                    for rel in related:
+                        lines.append("  - %s" % rel)
+                    lines.append("")
+                    lines.append("  </details>")
+        if section_untiered:
+            lines.append("")
+            lines.extend(_markdown_table(section_untiered, start))
+            start += len(section_untiered)
+            ordered.extend(section_untiered)
     if endpoints:
         lines.append("")
         lines.append("## Affected WebURL/API-URL endpoints")

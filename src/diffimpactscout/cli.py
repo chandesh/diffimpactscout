@@ -68,6 +68,21 @@ def _parser():
         "--top", type=int, default=20,
         help="max ranked rows in the table body (overflow collapses per module)",
     )
+    p_impact.add_argument(
+        "--sarif", metavar="PATH", nargs="?", const="-", default=None,
+        help="emit SARIF 2.1.0 (to PATH, or stdout instead of the report "
+             "when bare)",
+    )
+    p_impact.add_argument(
+        "--fail-on", nargs="?", const="high", default=None,
+        choices=("high", "medium", "low"),
+        help="exit 1 when findings reach GATE (bare flag means high); "
+             "default with no flag is warn (exit 0)",
+    )
+    p_impact.add_argument(
+        "--advisory", action="store_true",
+        help="report the gate outcome but always exit 0",
+    )
     p_impact.set_defaults(func=_cmd_impact)
 
     p_guard_impact = sub.add_parser(
@@ -93,6 +108,21 @@ def _parser():
     p_guard_impact.add_argument(
         "--top", type=int, default=20,
         help="max ranked rows in the table body (overflow collapses per module)",
+    )
+    p_guard_impact.add_argument(
+        "--sarif", metavar="PATH", nargs="?", const="-", default=None,
+        help="emit SARIF 2.1.0 (to PATH, or stdout instead of the report "
+             "when bare)",
+    )
+    p_guard_impact.add_argument(
+        "--fail-on", nargs="?", const="high", default=None,
+        choices=("high", "medium", "low"),
+        help="exit 1 when findings reach GATE (bare flag means high); "
+             "default with no flag is warn (exit 0)",
+    )
+    p_guard_impact.add_argument(
+        "--advisory", action="store_true",
+        help="report the gate outcome but always exit 0",
     )
     p_guard_impact.set_defaults(func=_cmd_guard_and_analyse_impact)
 
@@ -148,6 +178,52 @@ def _parser():
 def main(argv=None):
     args = _parser().parse_args(argv)
     return args.func(args)
+
+
+def exit_for(severity_gate=None, highs=0, mediums=0, lows=0, advisory=False):
+    """Return the rollout-gate exit code (Phase B REQ-13).
+
+    ``severity_gate`` is one of None (no --fail-on flag: warn, exit 0),
+    "high" (exit 1 when highs > 0), "medium" (highs + mediums > 0) or
+    "low" (any findings). ``advisory`` prints
+    "advisory mode: N findings would block" (N counts the gate-relevant
+    findings) and forces exit 0. DIFFIMPACT_OK=1 logs an override note
+    and forces exit 0.
+    """
+    if env.is_true(os.environ.get("DIFFIMPACT_OK")):
+        sys.stderr.write(
+            "diffimpactscout: DIFFIMPACT_OK=1 override; forcing exit 0\n"
+        )
+        return 0
+    try:
+        highs = int(highs or 0)
+    except (TypeError, ValueError):
+        highs = 0
+    try:
+        mediums = int(mediums or 0)
+    except (TypeError, ValueError):
+        mediums = 0
+    try:
+        lows = int(lows or 0)
+    except (TypeError, ValueError):
+        lows = 0
+    gate = (severity_gate or "").lower() if severity_gate else None
+    if gate == "high":
+        blocked = highs > 0
+        total = highs
+    elif gate == "medium":
+        blocked = (highs + mediums) > 0
+        total = highs + mediums
+    elif gate == "low":
+        blocked = (highs + mediums + lows) > 0
+        total = highs + mediums + lows
+    else:
+        blocked = False
+        total = highs + mediums + lows
+    if blocked and advisory:
+        print("advisory mode: %d findings would block" % total)
+        return 0
+    return 1 if blocked else 0
 
 
 def _require_repo():
@@ -208,6 +284,9 @@ def _cmd_impact(args):
         expand=args.expand,
         show_all=args.show_all,
         top_n=args.top,
+        sarif_out=args.sarif,
+        fail_on=args.fail_on,
+        advisory=args.advisory,
     )
 
 
@@ -247,6 +326,9 @@ def _cmd_guard_and_analyse_impact(args):
         changes=changes,
         changed_paths=changed_paths,
         anchor=anchor,
+        sarif_out=args.sarif,
+        fail_on=args.fail_on,
+        advisory=args.advisory,
     )
     return guard_rc if guard_rc != 0 else impact_rc
 

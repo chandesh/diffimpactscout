@@ -18,6 +18,7 @@ from diffimpactscout.impact import reporter
 from diffimpactscout.impact import reverse as reverse_mod
 from diffimpactscout.impact import owners as owners_mod
 from diffimpactscout.impact import risk as risk_mod
+from diffimpactscout.impact import sarif as sarif_mod
 from diffimpactscout.impact import route_linker
 from diffimpactscout.impact import python_analyzer as pa
 from diffimpactscout.impact._parse import parse_quiet as _parse_quiet
@@ -58,7 +59,8 @@ def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
 
 def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False,
                expand=False, show_all=False, top_n=20, changes=None,
-               changed_paths=None, anchor=None):
+               changed_paths=None, anchor=None, sarif_out=None,
+               fail_on=None, advisory=False):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -137,7 +139,9 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     )
     changed_count = len(changes)
     effective_expand = bool(expand or show_all)
-    if json_out:
+    if sarif_out == "-":
+        sys.stdout.write(json.dumps(sarif_mod.to_sarif(rows), indent=2) + "\n")
+    elif json_out:
         sys.stdout.write(json.dumps(to_json_payload(
             rows, endpoints, unresolved, changed_count, hidden_count,
             top_n=top_n, expand=effective_expand,
@@ -149,6 +153,28 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
                 markdown=markdown, hidden_count=hidden_count, expand=effective_expand,
                 top_n=top_n,
             )
+        )
+    if sarif_out is not None and sarif_out != "-":
+        try:
+            with open(sarif_out, "w") as fh:
+                fh.write(json.dumps(sarif_mod.to_sarif(rows), indent=2) + "\n")
+        except OSError as exc:
+            sys.stderr.write(
+                "diffimpactscout: cannot write %s: %s\n" % (sarif_out, exc)
+            )
+            return 1
+    if fail_on is not None or advisory or env.is_true(
+            os.environ.get("DIFFIMPACT_OK")):
+        # Rollout flags take over the exit decision (strict/TTY prompting
+        # is skipped); with no flags the legacy warn/strict path below
+        # runs unchanged. Deferred import avoids a cli <-> impact cycle.
+        from diffimpactscout import cli as cli_mod
+        highs = sum(1 for r in rows if r.get("severity") == "High")
+        mediums = sum(1 for r in rows if r.get("severity") == "Medium")
+        lows = sum(1 for r in rows if r.get("severity") == "Low")
+        return cli_mod.exit_for(
+            severity_gate=fail_on, highs=highs, mediums=mediums,
+            lows=lows, advisory=advisory,
         )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")
     tty = reporter.interactive_tty()

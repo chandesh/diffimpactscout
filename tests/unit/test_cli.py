@@ -172,6 +172,7 @@ def _clean_env(monkeypatch):
         "IMPACT_CHECK_SKIP",
         "DIFFIMPACTSCOUT_SKIP",
         "IMPACT_CHECK_STRICT",
+        "DIFFIMPACT_OK",
         "PRE_COMMIT_FROM_REF",
         "PRE_COMMIT_TO_REF",
     ):
@@ -905,6 +906,12 @@ def test_impact_help_lists_expand_and_all(capsys):
     out = capsys.readouterr().out
     assert "--expand" in out
     assert "--all" in out
+
+
+def test_fail_on_matrix(capsys):
+    from diffimpactscout import cli
+    assert cli.exit_for(severity_gate="high", highs=1, advisory=True) == 0
+    assert cli.exit_for(severity_gate="high", highs=1, advisory=False) == 1
 
 
 def test_top_flag_caps_rows():

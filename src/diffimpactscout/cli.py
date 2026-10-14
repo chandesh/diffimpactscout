@@ -225,12 +225,14 @@ def _cmd_guard_and_analyse_impact(args):
     changes = diff_parser_module.get_file_changes(
         root, anchor, args.staged, from_ref, to_ref
     )
+    changes = [c for c in changes if not config.is_excluded(c.path, cfg, root)]
     changed_paths = [c.path for c in changes]
     guard_rc = guard.run_guard(
         root,
         cfg,
         staged=args.staged,
         changed_paths=changed_paths,
+        anchor=anchor,
     )
     impact_rc = impact_module.run_impact(
         root,
@@ -244,6 +246,7 @@ def _cmd_guard_and_analyse_impact(args):
         top_n=args.top,
         changes=changes,
         changed_paths=changed_paths,
+        anchor=anchor,
     )
     return guard_rc if guard_rc != 0 else impact_rc
 

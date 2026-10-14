@@ -546,3 +546,62 @@ def test_guard_impact_counts_agree(tmp_path, monkeypatch, capsys):
     assert payload is not None, "JSON payload missing"
     assert payload["changed_count"] == len(fakes)
     assert int(guard_counts[0]) == payload["changed_count"]
+
+
+def test_guard_impact_counts_agree_with_excluded_paths(tmp_path, monkeypatch, capsys):
+    """Verifies excluded paths are filtered once so guard/impact/JSON agree."""
+    import json
+    import re
+    import sys
+
+    import diffimpactscout.cli as cli
+    from diffimpactscout.impact import diff_parser as dp
+    from diffimpactscout.impact import impact as impact_mod
+
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    _anchor(repo)
+    _commit(repo, "a.txt", "hello\n", "dev")
+    with open(os.path.join(repo, ".diffimpactscout.json"), "w") as fh:
+        json.dump({"ignore_paths": ["*.txt"]}, fh)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    for key in (
+        "DIFFIMPACTSCOUT_SKIP",
+        "IMPACT_CHECK_SKIP",
+        "IMPACT_CHECK_STRICT",
+        "PRE_COMMIT_FROM_REF",
+        "PRE_COMMIT_TO_REF",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    fakes = [
+        dp.FileChange("a.txt", "M", None, "txt"),
+        dp.FileChange("b.py", "M", None, "py"),
+        dp.FileChange("c.txt", "M", None, "txt"),
+    ]
+
+    def fake_cli_source(*args, **kwargs):
+        return list(fakes)
+
+    def fake_impact_recount(*args, **kwargs):
+        raise AssertionError("impact must not recount")
+
+    monkeypatch.setattr(dp, "get_file_changes", fake_cli_source)
+    monkeypatch.setattr(impact_mod, "get_file_changes", fake_impact_recount)
+
+    assert cli.main(["guard-and-impact-check", "--json"]) == 0
+    out = capsys.readouterr().out
+    guard_counts = re.findall(r"(\d+) changed file\(s\)", out)
+    assert guard_counts, "guard header missing changed count"
+    assert len(set(guard_counts)) == 1, "guard/impact headers disagree"
+    assert int(guard_counts[0]) == 1
+    assert "Diff Base: none" not in out
+    payload = None
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            payload = json.loads(stripped)
+    assert payload is not None, "JSON payload missing"
+    assert payload["changed_count"] == 1
+    assert int(guard_counts[0]) == payload["changed_count"]

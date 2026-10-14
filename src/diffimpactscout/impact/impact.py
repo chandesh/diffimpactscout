@@ -56,14 +56,13 @@ def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
 
 def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False,
                expand=False, show_all=False, top_n=20, changes=None,
-               changed_paths=None):
+               changed_paths=None, anchor=None):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
     profile = impact_cfg.get("profile") or "generic"
     from_ref, to_ref = env.pre_commit_refs()
-    anchor = None
-    if not staged:
+    if anchor is None and not staged:
         anchor = scope.DevScope(root).scope_base(from_ref, to_ref)
     if changes is None:
         changes = get_file_changes(root, anchor, staged, from_ref, to_ref)

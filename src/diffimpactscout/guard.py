@@ -121,17 +121,18 @@ def _print_verdict(blocked, total_issues, mode, always_blocked):
 
 
 def run_guard(root, cfg, staged=False, all_files=False, files=None,
-              changed_paths=None):
+              changed_paths=None, anchor=None):
     if _skip_requested():
         return 0
 
     from_ref, to_ref = env.pre_commit_refs()
 
     dev_scope = scope.DevScope(root)
-    anchor = None
 
     if changed_paths is not None:
         file_set = list(changed_paths)
+        if anchor is None and not staged:
+            anchor = dev_scope.scope_base(from_ref, to_ref)
     elif files is not None:
         file_set = [files] if isinstance(files, str) else list(files)
     elif staged:
@@ -139,7 +140,8 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None,
     elif all_files:
         file_set = _all_files(root)
     else:
-        anchor = dev_scope.scope_base(from_ref, to_ref)
+        if anchor is None:
+            anchor = dev_scope.scope_base(from_ref, to_ref)
         file_set = dev_scope.dev_files(anchor, from_ref, to_ref)
 
     file_set = [p for p in file_set if not is_excluded(p, cfg, root)]

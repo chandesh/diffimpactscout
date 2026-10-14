@@ -364,6 +364,84 @@ def test_ts_import_respects_frontend_globs(tmp_path):
     assert {r["file"] for r in rows} == {"app.ts"}
 
 
+def test_ts_import_ignores_literals(tmp_path):
+    """Checks import-looking text in string/template literals yields no refs (CR-01)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "const s = \"import { CustomTag } from './models'\";\n"
+        "const t = `import { CustomTag } from './models'`;\n",
+    )
+    assert rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}) == []
+
+
+def test_ts_import_skips_vendor_and_minified(tmp_path):
+    """Checks dist bundles and minified files yield no refs (WR-01)."""
+    _write(str(tmp_path), "dist/bundle.js", "import { CustomTag } from './m';\n")
+    _write(str(tmp_path), "x.min.js", "import { CustomTag } from './m';\n")
+    _write(str(tmp_path), "src/app.ts", "import { CustomTag } from './m';\n")
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"})
+    assert {r["file"] for r in rows} == {"src/app.ts"}
+
+
+def test_ts_reexport_forms_collected(tmp_path):
+    """Checks re-export and export-declaration forms count as consumed names (WR-02)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "export { Alpha } from './a';\n"
+        "export { Beta };\n"
+        "export default Gamma;\n"
+        "export async function Delta() {}\n"
+        "export function* Epsilon() {}\n",
+    )
+    rows = rl.extract_ts_symbol_refs(
+        str(tmp_path), {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
+    )
+    assert {r["ref"] for r in rows} == {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
+
+
+def test_ts_import_no_space_and_require_destructure(tmp_path):
+    """Checks no-space imports and require destructuring are linked (WR-03)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import{CustomTag}from'./m';\n"
+        "const { Alpha, Beta } = require('./r');\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag", "Alpha", "Beta"})
+    assert {r["ref"] for r in rows} == {"CustomTag", "Alpha", "Beta"}
+
+
+def test_ts_import_symbols_carry_distinct_lines(tmp_path):
+    """Checks each symbol's import match carries its own line number (WR-05)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import { Alpha } from './a';\n"
+        "import { Beta } from './b';\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"Alpha", "Beta"})
+    assert {r["ref"]: r["line"] for r in rows} == {"Alpha": 1, "Beta": 2}
+
+
+def test_ts_import_empty_globs_scans_nothing(tmp_path):
+    """Checks an explicit empty glob list scans nothing (WR-06)."""
+    _write(str(tmp_path), "app.ts", "import { CustomTag } from './m';\n")
+    assert rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}, []) == []
+
+
+def test_ts_import_ignores_block_comments(tmp_path):
+    """Checks block-commented imports produce no refs (IN-03)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "/* import { CustomTag } from './m'; */\n"
+        "import { Other } from './o';\n",
+    )
+    assert rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}) == []
+
+
 def test_match_endpoints_wildcard_and_prefix(tmp_path):
     """Verifies that refs match routes via wildcard and prefix patterns."""
     routes = [Route("item-detail", "/api/v1/orders/<int:id>/", "items", "u.py")]

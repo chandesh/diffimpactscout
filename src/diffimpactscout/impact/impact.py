@@ -475,7 +475,6 @@ def _compose_rows(
             root, list(entities.keys()), impact_cfg.get("frontend_globs"), cfg=cfg
         ):
             name = ref.get("ref")
-            ent = entities.get(name) or {"kind": "function", "deleted": False}
             layers.setdefault(name, set()).add("frontend-symbol")
             rows.append(
                 {
@@ -483,9 +482,10 @@ def _compose_rows(
                     "module": _dir_of(ref.get("file") or ""),
                     "category": "frontend-symbol",
                     "ref": "%s (imported symbol)" % (name,),
+                    "line": ref.get("line") or 0,
                     "confidence": "medium",
                     "_entity": name,
-                    "_deleted": bool(ent.get("deleted")),
+                    "_deleted": bool(entities[name].get("deleted")),
                 }
             )
     rows = _dedup_rows(rows)

@@ -32,9 +32,37 @@ QUOTED_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 URL_TAG_RE = re.compile(r"{%\s*url\s+['\"]([^'\"]+)['\"]\s*%}")
 URL_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 
-_TS_IMPORT = re.compile(r"import\s+\{([^}]+)\}\s+from\s+['\"]([^'\"]+)['\"]")
-_TS_REQUIRE = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(['\"]([^'\"]+)['\"]\)")
-_TS_EXPORT = re.compile(r"export\s+(?:const|let|var|function|class)\s+(\w+)")
+# Matches the named-binding brace list of an ES/TS import, tolerant of
+# missing whitespace and a leading "type" modifier. Only the brace body is
+# captured; the module specifier is deliberately ignored here (reverse.py's
+# _IMPORT_SPEC_RE owns the module graph).
+#   Matches:  import { Alpha, Beta } from './m'   -> "Alpha, Beta"
+#             import{Alpha}from'./m'              -> "Alpha"
+#             import type { Shape } from './s'    -> "Shape"
+#             import { type Foo, Bar } from './m' -> "type Foo, Bar"
+#   Captures: group 1 = the text between the braces
+#   Skips:    import Foo from './m'              (default import; no brace)
+#             import './side'                     (side-effect import)
+#             import('./dyn')                     (dynamic import)
+#             obj.import { x }                    (lookbehind blocks the ".")
+#             reimport { x }                      (no word boundary before
+#                                                  "import")
+_TS_IMPORT_SYMBOLS_RE = re.compile(r"(?<![\w$.])import\s*(?:type\s+)?\{([^}]*)\}")
+
+# Matches CommonJS require() bindings: a destructured brace list or a single
+# default binding. The module specifier is ignored (see _TS_IMPORT_SYMBOLS_RE).
+#   Matches:  const { Alpha, Beta } = require('./m') -> group 1 "Alpha, Beta"
+#             const {Alpha} = require('./m')         -> group 1 "Alpha"
+#             const Req = require('./r')             -> group 2 "Req"
+#             let x = require('./x')                 -> group 2 "x"
+#   Captures: group 1 = destructured brace body (or None)
+#             group 2 = default binding name (or None)
+#   Skips:    foo.require('./m')                        (no keyword before)
+#             const x = import('./m')                   (ESM dynamic import)
+_TS_REQUIRE_SYMBOLS_RE = re.compile(
+    r"(?:const|let|var)\s+(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))\s*=\s*"
+    r"require\s*\(\s*['\"][^'\"]*['\"]\s*\)"
+)
 
 _TS_EXTS = (".ts", ".js", ".tsx", ".jsx")
 _TS_DEFAULT_GLOBS = ("**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx")
@@ -521,36 +549,77 @@ def _ts_import_names(block):
     return names
 
 
+def _ts_import_symbol_lines(text):
+    """Map each imported/required symbol name to its 1-based line number.
+
+    Covers ES named imports and CommonJS require bindings; reuses
+    ``_ts_import_names`` for the binding grammar (alias left-hand side, the
+    ``type`` modifier) on both the import brace list and a require brace list.
+    Exported names are handled separately by ``reverse._export_lines`` so this
+    helper stays import-only.
+    """
+    out = {}
+    for m in _TS_IMPORT_SYMBOLS_RE.finditer(text):
+        line = text[:m.start()].count("\n") + 1
+        for name in _ts_import_names(m.group(1)):
+            out.setdefault(name, line)
+    for m in _TS_REQUIRE_SYMBOLS_RE.finditer(text):
+        line = text[:m.start()].count("\n") + 1
+        if m.group(1) is not None:
+            for name in _ts_import_names(m.group(1)):
+                out.setdefault(name, line)
+        elif m.group(2):
+            out.setdefault(m.group(2), line)
+    return out
+
+
 def extract_ts_symbol_refs(root, changed_names, frontend_globs=None, cfg=None):
     """Link changed symbol names to TS/JS files that import, require, or export them.
 
     A changed Python symbol may be referenced by name in a frontend module
     (``import { CustomTag } from './models'``); this emits a ``frontend-symbol``
-    row per (file, name) so those consumers surface instead of silence.
+    ref per (file, name, line) so those consumers surface instead of silence.
+
+    Shared lexer: this reuses reverse.py's stdlib TS/JS lexer rather than a
+    second parser. ``_strip_comments`` then ``_blank_literals`` blank
+    string/template literals so import-looking text inside them cannot match;
+    ``reverse._export_lines`` (wrapping ``_EXPORT_NAMED_RE`` /
+    ``_EXPORT_BRACE_RE``) supplies exported names; ``reverse._is_graph_file``
+    drops minified/bundled files. The only new logic is symbol-name extraction
+    from import/require braces: reverse's graph tracks MODULE specifiers,
+    whereas this links changed SYMBOL names to the files that bind them, so
+    the two are intentionally distinct.
+
+    Globs: ``frontend_globs is None`` scans the built-in ``_TS_DEFAULT_GLOBS``;
+    an explicit list -- including ``[]`` -- is honored verbatim, so the generic
+    profile's ``frontend_globs: []`` scans nothing (matching
+    ``extract_frontend_refs``).
     """
     names_wanted = set(changed_names or ())
     refs = []
     if not names_wanted:
         return refs
-    globs = frontend_globs or _TS_DEFAULT_GLOBS
-    for posix in _iter_files(root, globs, _TS_EXTS, cfg=cfg):
+    from diffimpactscout.impact import reverse
+
+    globs = _TS_DEFAULT_GLOBS if frontend_globs is None else frontend_globs
+    for posix in _iter_files(root, globs, _TS_EXTS, cfg=cfg, vendor=True):
+        if not reverse._is_graph_file(posix):
+            continue
         full = os.path.join(root, posix) if root else posix
         text = _read_text(full)
         if text is None:
             continue
         text = _strip_comments(text)
-        found = set()
-        for m in _TS_IMPORT.finditer(text):
-            found.update(_ts_import_names(m.group(1)))
-        for m in _TS_REQUIRE.finditer(text):
-            found.add(m.group(1))
-        for m in _TS_EXPORT.finditer(text):
-            found.add(m.group(1))
-        for name in sorted(found & names_wanted):
+        text = reverse._blank_literals(text, keep_export_names=False)
+        found = _ts_import_symbol_lines(text)
+        for name, line in reverse._export_lines(text).items():
+            found.setdefault(name, line)
+        for name in sorted(found.keys() & names_wanted):
             refs.append(
                 {
                     "file": posix,
                     "ref": name,
+                    "line": found[name],
                     "category": "frontend-symbol",
                     "confidence": "medium",
                 }

@@ -1111,7 +1111,28 @@ def test_compose_rows_links_ts_symbol_refs(tmp_path):
     assert sym[0]["path"] == "src/app.ts"
     assert sym[0]["confidence"] == "medium"
     assert "CustomTag" in sym[0]["ref"]
-    assert sym[0]["severity"] in ("Medium", "High")
+    assert sym[0]["severity"] == "Medium"
+
+
+def test_compose_rows_ts_symbol_rows_have_distinct_keys(tmp_path):
+    """Verifies two symbols imported in one file produce distinct path:line keys (WR-05)."""
+    _write(
+        str(tmp_path),
+        "src/app.ts",
+        "import { Alpha } from './a';\n"
+        "import { Beta } from './b';\n",
+    )
+    entities = {
+        "Alpha": {"kind": "function", "deleted": False, "modules": set()},
+        "Beta": {"kind": "function", "deleted": False, "modules": set()},
+    }
+    rows, _e, _u, _h = impact._compose_rows(
+        str(tmp_path), {"frontend_globs": ["**/*.ts"]}, "generic",
+        entities, {}, ["app/models.py"], False,
+    )
+    sym = [r for r in rows if r.get("category") == "frontend-symbol"]
+    assert len(sym) == 2
+    assert {r["key"] for r in sym} == {"src/app.ts:1", "src/app.ts:2"}
 
 
 def test_compose_rows_fast_skips_ts_symbol_refs(tmp_path):

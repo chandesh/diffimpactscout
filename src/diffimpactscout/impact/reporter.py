@@ -80,11 +80,6 @@ def compute_summary_risk_score(rows):
         100.0 * (counts["High"] * 1.0 + counts["Medium"] * 0.5) / total)))
 
 
-def _risk_simple(rows):
-    """Backward-compatible alias for compute_summary_risk_score."""
-    return compute_summary_risk_score(rows)
-
-
 _SEVERITY_RANK = {"High": 0, "Medium": 1, "Low": 2}
 
 
@@ -100,19 +95,34 @@ def _impacted_count(rows, changed_paths=None):
     return len(seen)
 
 
-def _summary_top(rows, limit=5):
-    """Top impacted paths by severity rank then path (Phase-A placeholder)."""
+def _top_impacted_paths(rows, limit=5, changed_paths=None):
+    """Rank the top impacted files for the summary header.
+
+    Returns up to ``limit`` ``(path, owner)`` pairs ordered by severity
+    rank (High, Medium, Low) then path. Paths in ``changed_paths`` are
+    excluded so the Top list only contains impacted files, consistent
+    with ``_impacted_count`` (Phase-A placeholder ranking).
+    """
+    changed = set(changed_paths or ())
+
     def _key(row):
         sev = _cell(row, "severity")
         return (_SEVERITY_RANK.get(sev, 99), _cell(row, "path") or "")
 
     top = []
-    for row in sorted(rows or [], key=_key)[:limit]:
+    for row in sorted(rows or [], key=_key):
+        if len(top) >= limit:
+            break
         path = _cell(row, "path")
-        if not path:
+        if not path or path in changed:
             continue
         top.append((path, _cell(row, "owner") or ""))
     return top
+
+
+def _summary_top(rows, limit=5, changed_paths=None):
+    """Backward-compatible wrapper for _top_impacted_paths."""
+    return _top_impacted_paths(rows, limit=limit, changed_paths=changed_paths)
 
 
 def _summary_line(rows, changed_count):
@@ -263,19 +273,20 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  Impact Analysis Report")
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
+    limit = top_n or 5
     if summary_extra is not None:
-        risk = summary_extra.get("risk", compute_summary_risk_score(rows))
-        impacted = summary_extra.get("impacted_count", _impacted_count(rows, changed_paths))
-        top = summary_extra.get("top", _summary_top(rows))
+        risk = summary_extra.get("risk") or compute_summary_risk_score(rows)
+        impacted = summary_extra.get("impacted_count") or _impacted_count(rows, changed_paths)
+        top = summary_extra.get("top") or _top_impacted_paths(rows, limit, changed_paths)
     else:
         risk = compute_summary_risk_score(rows)
         impacted = _impacted_count(rows, changed_paths)
-        top = _summary_top(rows)
+        top = _top_impacted_paths(rows, limit, changed_paths)
     counts = _counts(rows or [])
     lines.append("  Risk: %d/100 (High*1.0 + Medium*0.5 over rows; Phase-B replaces with fan_in formula)" % risk)
     lines.append("  High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
     lines.append("  changed %d files vs impacted %d files" % (changed_count, impacted))
-    for path, owner in (top or [])[:5]:
+    for path, owner in (top or [])[:limit]:
         lines.append("  - %s (%s)" % (path, owner or "unowned"))
     tiered, untiered = _split_tiers(rows)
     ordered = []

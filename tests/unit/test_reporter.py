@@ -415,6 +415,49 @@ def test_render_report_expand_lists_related():
     assert "<details>" in md
 
 
+def test_summary_block_computed_path():
+    from diffimpactscout.impact import reporter
+    changed_paths = {"src/changed_a.py", "src/changed_b.py"}
+
+    def _row(path, severity, owner):
+        return {
+            "path": path, "module": "m", "category": "python",
+            "ref": "sym (name at 1)", "severity": severity,
+            "action": "review/verify", "owner": owner,
+        }
+
+    rows = []
+    for i in range(8):
+        rows.append(_row("imp/high_%02d.py" % i, "High", "team-h%d" % i))
+    for i in range(20):
+        rows.append(_row("imp/med_%02d.py" % i, "Medium", "team-m%d" % i))
+    for i in range(12):
+        rows.append(_row("imp/low_%02d.py" % i, "Low", "team-l%d" % i))
+    # Rows on changed files: counted in severity totals but excluded
+    # from impacted count and Top-5.
+    rows.append(_row("src/changed_a.py", "High", "team-c"))
+    rows.append(_row("src/changed_a.py", "High", "team-c"))
+    for i in range(3):
+        rows.append(_row("src/changed_b.py", "Medium", "team-c"))
+    for i in range(5):
+        rows.append(_row("src/changed_a.py", "Low", "team-c"))
+    assert len(rows) == 50
+
+    expected_risk = reporter.compute_summary_risk_score(rows)
+    assert expected_risk == 43  # 100*(10 + 23*0.5)/50
+    out = reporter.render_report(rows, [], [], 2, changed_paths=changed_paths)
+    head = "\n".join(out.splitlines()[:25])
+    assert "Risk: 43/100" in head
+    assert "High: 10, Medium: 23, Low: 17" in head
+    assert "changed 2 files vs impacted 40 files" in head
+    for i in range(5):
+        assert "imp/high_%02d.py (team-h%d)" % (i, i) in head
+    # Changed files must not appear in the Top-5 lines themselves.
+    top_lines = [l for l in out.splitlines()[:25] if l.strip().startswith("- ")]
+    assert len(top_lines) == 5
+    assert not any("src/changed_" in l for l in top_lines)
+
+
 def test_summary_block_first_25_lines():
     from diffimpactscout.impact import reporter
     rows = [

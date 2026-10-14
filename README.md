@@ -101,9 +101,10 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 | --- | --- |
 | `--staged` | Analyze the staged diff (base ref becomes `HEAD`). |
 | `--fast` | Skip template and frontend scanning; limit Python scanning to the changed files plus import-linked files. |
-| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, hidden_count}`) instead of a markdown table. |
+| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, hidden_count, shown_count, hidden_counts}`) instead of a table; see [Report format](#report-format). |
 | `--expand` | Open rolled-up rows (e.g. "35 templates directly extend it") to list their child files. |
 | `--all` | Also show lower-confidence (heuristic/transitive) impacts. |
+| `--top N` | Cap the table body at N ranked rows (default: 20); overflow collapses to one line per module. `--all` and `--expand` bypass the cap. |
 
 ### `diffimpactscout guard-and-impact-check`
 
@@ -117,6 +118,7 @@ Runs the `guard` checks first, then always falls through to the `impact` blast-r
 | `--markdown` | Passes through to `impact` (emit a Markdown table). |
 | `--expand` | Passes through to `impact` (open rolled-up rows to list their child files). |
 | `--all` | Passes through to `impact` (also show lower-confidence impacts). |
+| `--top N` | Passes through to `impact` (cap the table body at N ranked rows). |
 
 ### `diffimpactscout dependency-check`
 
@@ -277,11 +279,19 @@ Actions follow severity: High rows say `review/verify`, Medium rows `verify`, Lo
 
 ```
 # Impact Analysis Report
-| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | app/views/dashboard.py | app/views | python | render_dashboard (import at dashboard.py:12) | Medium | verify |
-| 2 | app/templates/dashboard.html | app/templates | template | {% url 'dashboard' %} at app/templates/dashboard.html:8 | High | review/verify |
-| 3 | frontend/src/api.ts | frontend/src | frontend | http.get("/dashboard/") at api.ts:41 | Medium | verify |
+
+### Breaking
+
+| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required | Badge |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | app/templates/dashboard.html | app/templates | template | {% url 'dashboard' %} at app/templates/dashboard.html:8 | High | review/verify | Impacted |
+
+### Direct consumers
+
+| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required | Badge |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | app/views/dashboard.py | app/views | python | render_dashboard (import at dashboard.py:12) | Medium | verify | Changed |
+| 3 | frontend/src/api.ts | frontend/src | frontend | http.get("/dashboard/") at api.ts:41 | Medium | verify | Changed |
 
 ## Unresolved references (manual check required)
 - {'file': 'frontend/src/api.ts', 'path': '/account/settings', 'dynamic': False}
@@ -290,6 +300,17 @@ Summary: 3 changed file(s); High: 1, Medium: 2, Low: 0
 ```
 
 In a terminal, `impact` then asks `Proceed with push? (Y/n)`. On a non-interactive run (for example after a CI trigger), the report is shown as a warning and the push is not blocked unless `IMPACT_CHECK_STRICT` is set.
+
+### Report format
+
+The default report is a plain ASCII table: no emoji, no Findings section, and severity is a plain table cell (High/Medium/Low), never a bracketed tag. `--markdown` renders the same columns and sections as Markdown tables instead.
+
+- **Sections.** Body rows are grouped under section headers, always in this order: `Breaking` (deleted/renamed symbols and other High-severity rows), then `Direct consumers`, then `Transitive (collapsed)`. Empty sections are omitted. Rows inside a section keep severity rank.
+- **Badge column.** Every row carries a `Badge`: `Changed` when the impacted file is itself in the change-set, else `Impacted`.
+- **Row keys.** Each body row ends with an unbroken `path:line` key (e.g. `app/views/dashboard.py:12`) that never wraps across lines, so scripts can rejoin wrapped rows by matching the trailing token.
+- **Top-N cap.** `--top N` limits the body to the N highest-ranked rows (default: 20); hidden rows collapse to one overflow line per module (`... +3 more in app/views (1 High)`). The header severity counts and the top impacted paths are computed over all rows, so they do not change with `--top`. `--all` and `--expand` bypass the cap.
+- **JSON surface.** `--json` emits `{changed_count, rows, endpoints, unresolved, hidden_count, shown_count, hidden_counts}` for scripting. Each entry in `rows` carries the same `section`, `badge`, and `key` fields shown in the table; `shown_count` is the body row count after the Top-N cap, and `hidden_counts` maps each overflowed module to its hidden row count. The original five keys are unchanged, so existing scripts keep working.
+- **Empty JSON files.** The `syntax/json-syntax` guard check skips empty `.json` files with a warning instead of failing them.
 
 ### Reverse chains
 

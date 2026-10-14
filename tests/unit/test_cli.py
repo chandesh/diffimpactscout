@@ -917,7 +917,12 @@ def test_top_flag_caps_rows():
             for i in range(30)]
     out = reporter.render_report(rows, [], [], 1, top_n=5)
     assert out.count("... +") >= 1
-    badge_lines = [l for l in out.splitlines() if l.strip().endswith("Impacted")]
+    badge_lines = [
+        l for l in out.splitlines()
+        if "Impacted" in l and ".py:" in l
+        and not l.strip().startswith("#")
+        and "... +" not in l
+    ]
     assert len(badge_lines) == 5
     overflow = [int(n) for n in re.findall(r"\.\.\. \+(\d+) more", out)]
     assert sum(overflow) == 25

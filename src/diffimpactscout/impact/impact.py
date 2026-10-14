@@ -442,15 +442,29 @@ def _compose_rows(
     max_fan_in = max([len(paths) for paths in fan_in_by_entity.values()] + [1])
     for row in rows:
         row["fan_in"] = len(fan_in_by_entity.get(row.get("_entity")) or ())
-        row["missing_test"] = 0 if _test_path_for_row(root, row.get("path")) else 1
+        # Non-python rows have no tests/test_<stem>.py convention, so they
+        # score missing_test=0 explicitly (avoids a systematic +0.2 bias).
+        # Scanning test imports of the referenced module is deferred:
+        # the analyses cache holds per-file imports but _compose_rows does
+        # not consult them today.
+        if row.get("category") != "python":
+            row["missing_test"] = 0
+            row["_test_path"] = None
+        else:
+            test_path = _test_path_for_row(root, row.get("path"))
+            row["missing_test"] = 0 if test_path else 1
+            row["_test_path"] = test_path
         # FileChange carries path/status only (no hunk spans), and the
         # per-file changed-line sets from get_changed_lines are not threaded
         # through _compose_rows, so churn defaults to 0 here.
+        # Follow-up: thread per-entity hunk overlap (_changed_entities ->
+        # _compose_rows, normalized 0-1) and add a churn-ranking test.
         row["churn"] = 0
         row["owner"] = owners_mod.owner_for(row.get("path") or "", root or "")
     for row in rows:
         name = row.pop("_entity")
         delrow = row.pop("_deleted")
+        test_path = row.pop("_test_path", None)
         severity, reason = _row_severity(row, layers.get(name) or (), delrow, changed_paths)
         row["severity"] = severity
         row["reason"] = reason
@@ -468,7 +482,7 @@ def _compose_rows(
             row.update(attach_why_action(
                 row, symbol=name, import_chain=list(chain),
                 deleted=delrow,
-                test_path=_test_path_for_row(root, row.get("path")),
+                test_path=test_path,
             ))
     rows = rank_rows(rows, max_fan_in=max_fan_in)
     endpoints = _endpoint_rows(affected)
@@ -632,11 +646,6 @@ def _dedup_rows(rows):
     return out
 
 
-def _row_key(row):
-    """Sort key for deterministic row order: path, category, ref."""
-    return (row.get("path") or "", row.get("category") or "", row.get("ref") or "")
-
-
 def rank_rows(rows, max_fan_in=1):
     """Attach risk scores and sort by descending risk, path as tiebreak.
 
@@ -644,7 +653,8 @@ def rank_rows(rows, max_fan_in=1):
     ``missing_test`` (0/1) and ``churn`` (0-1); ``fan_in`` is normalized by
     ``max_fan_in`` (floored at 1) and every term is clamped 0-1 in
     ``risk.score``. Returns a new sorted list; the ``risk`` field is
-    additive-only for JSON consumers.
+    additive-only for JSON consumers. Attaches ``risk`` to each row dict
+    in place.
     """
     scored = list(rows or [])
     try:
@@ -654,6 +664,11 @@ def rank_rows(rows, max_fan_in=1):
     if denom < 1.0:
         denom = 1.0
     for row in scored:
+        sev = row.get("severity")
+        if sev not in ("High", "Medium", "Low"):
+            raise ValueError(
+                "rank_rows requires severity High/Medium/Low, got %r" % (sev,)
+            )
         try:
             fan_in = float(row.get("fan_in") or 0) / denom
         except (TypeError, ValueError):

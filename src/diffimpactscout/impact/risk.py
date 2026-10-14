@@ -2,7 +2,14 @@
 
 All terms are 0-1. severity maps High=1.0, Medium=0.5, Low=0.0.
 fan_in = distinct referencing files for the symbol, normalized by max fan_in.
-missing_test = 1 when no test file imports the referenced module, else 0.
+missing_test = 1 when no conventional tests/test_<stem>.py exists for the
+impacted file, else 0. This is an existence proxy for "no test imports the
+module": the caller does not scan test imports today (the analyses cache
+holds per-file imports but _compose_rows does not consult them), so a
+coincidentally-named test file scores 0 and an untested module without one
+scores 1. Follow-up: scan collected test files for imports of the
+referenced module. Non-python rows always score 0 (no python test
+convention applies).
 churn = hunk-line overlap for the entity, normalized 0-1.
 """
 

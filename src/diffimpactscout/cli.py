@@ -81,7 +81,8 @@ def _parser():
     )
     p_impact.add_argument(
         "--advisory", action="store_true",
-        help="report the gate outcome but always exit 0",
+        help="report the gate outcome to stderr but always exit 0; with no "
+             "--fail-on, counts all findings",
     )
     p_impact.set_defaults(func=_cmd_impact)
 
@@ -122,7 +123,8 @@ def _parser():
     )
     p_guard_impact.add_argument(
         "--advisory", action="store_true",
-        help="report the gate outcome but always exit 0",
+        help="report the gate outcome to stderr but always exit 0; with no "
+             "--fail-on, counts all findings",
     )
     p_guard_impact.set_defaults(func=_cmd_guard_and_analyse_impact)
 
@@ -185,10 +187,10 @@ def exit_for(severity_gate=None, highs=0, mediums=0, lows=0, advisory=False):
 
     ``severity_gate`` is one of None (no --fail-on flag: warn, exit 0),
     "high" (exit 1 when highs > 0), "medium" (highs + mediums > 0) or
-    "low" (any findings). ``advisory`` prints
-    "advisory mode: N findings would block" (N counts the gate-relevant
-    findings) and forces exit 0. DIFFIMPACT_OK=1 logs an override note
-    and forces exit 0.
+    "low" (any findings). ``advisory`` always emits
+    "advisory mode: N findings would block" to stderr (N counts the
+    gate-relevant findings; with no gate, all findings) and forces
+    exit 0. DIFFIMPACT_OK=1 logs an override note and forces exit 0.
     """
     if env.is_true(os.environ.get("DIFFIMPACT_OK")):
         sys.stderr.write(
@@ -220,8 +222,13 @@ def exit_for(severity_gate=None, highs=0, mediums=0, lows=0, advisory=False):
     else:
         blocked = False
         total = highs + mediums + lows
-    if blocked and advisory:
-        print("advisory mode: %d findings would block" % total)
+    if advisory:
+        # stderr, not stdout: a bare --sarif writes the SARIF JSON to
+        # stdout and a banner there would corrupt it (REQ-13).
+        print(
+            "advisory mode: %d findings would block" % total,
+            file=sys.stderr,
+        )
         return 0
     return 1 if blocked else 0
 

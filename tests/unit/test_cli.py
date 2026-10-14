@@ -908,10 +908,48 @@ def test_impact_help_lists_expand_and_all(capsys):
     assert "--all" in out
 
 
-def test_fail_on_matrix(capsys):
+def test_fail_on_matrix(capsys, monkeypatch):
     from diffimpactscout import cli
-    assert cli.exit_for(severity_gate="high", highs=1, advisory=True) == 0
+    # Guard against a leaked override from the ambient environment.
+    monkeypatch.delenv("DIFFIMPACT_OK", raising=False)
+    # high gate: tripped -> 1; advisory -> 0.
     assert cli.exit_for(severity_gate="high", highs=1, advisory=False) == 1
+    assert cli.exit_for(severity_gate="high", highs=1, advisory=True) == 0
+    # medium gate: high or medium trips it; low alone does not.
+    assert cli.exit_for(severity_gate="medium", highs=0, mediums=1) == 1
+    assert cli.exit_for(severity_gate="medium", highs=0, mediums=0, lows=5) == 0
+    # low gate: any finding trips it.
+    assert cli.exit_for(severity_gate="low", highs=0, mediums=0, lows=1) == 1
+    # gate not tripped -> 0.
+    assert cli.exit_for(severity_gate="high", highs=0) == 0
+    # no flag default -> warn, exit 0 even with findings.
+    assert cli.exit_for(highs=5, mediums=5, lows=5) == 0
+    # advisory banner (stderr) counts the gate-relevant findings.
+    assert cli.exit_for(severity_gate="high", highs=2, advisory=True) == 0
+    assert "advisory mode: 2 findings would block" in capsys.readouterr().err
+    # advisory with no gate counts all findings.
+    assert cli.exit_for(highs=1, mediums=2, lows=3, advisory=True) == 0
+    assert "advisory mode: 6 findings would block" in capsys.readouterr().err
+    # DIFFIMPACT_OK override forces exit 0 and notes it.
+    monkeypatch.setenv("DIFFIMPACT_OK", "1")
+    assert cli.exit_for(severity_gate="high", highs=9) == 0
+    assert "DIFFIMPACT_OK" in capsys.readouterr().err
+
+
+def test_sarif_bare_stdout_pure_json_with_advisory_banner(
+    tmp_path, capsys, monkeypatch
+):
+    """BL-02: bare --sarif + --advisory keeps stdout pure JSON; banner on stderr."""
+    repo, base, _head = _build_django_repo(tmp_path)
+    _anchor(repo, base)
+    monkeypatch.chdir(repo)
+    assert cli.main(["impact", "--sarif", "--fail-on", "low", "--advisory"]) == 0
+    captured = capsys.readouterr()
+    doc = json.loads(captured.out)
+    assert doc["version"] == "2.1.0"
+    assert doc["runs"][0]["results"]
+    assert "advisory mode:" in captured.err
+    assert "advisory mode:" not in captured.out
 
 
 def test_top_flag_caps_rows():

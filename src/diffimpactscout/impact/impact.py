@@ -139,8 +139,20 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     )
     changed_count = len(changes)
     effective_expand = bool(expand or show_all)
+    sarif_doc = None
+    if sarif_out is not None:
+        # Build and validate the SARIF document before any output so an
+        # invalid document never reaches stdout or a file (REQ-13).
+        sarif_doc = sarif_mod.to_sarif(rows)
+        problems = sarif_mod.validate(sarif_doc)
+        if problems:
+            sys.stderr.write(
+                "diffimpactscout: invalid SARIF output: %s\n"
+                % "; ".join(problems)
+            )
+            return 1
     if sarif_out == "-":
-        sys.stdout.write(json.dumps(sarif_mod.to_sarif(rows), indent=2) + "\n")
+        sys.stdout.write(json.dumps(sarif_doc, indent=2) + "\n")
     elif json_out:
         sys.stdout.write(json.dumps(to_json_payload(
             rows, endpoints, unresolved, changed_count, hidden_count,
@@ -156,8 +168,8 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         )
     if sarif_out is not None and sarif_out != "-":
         try:
-            with open(sarif_out, "w") as fh:
-                fh.write(json.dumps(sarif_mod.to_sarif(rows), indent=2) + "\n")
+            with open(sarif_out, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(sarif_doc, indent=2) + "\n")
         except OSError as exc:
             sys.stderr.write(
                 "diffimpactscout: cannot write %s: %s\n" % (sarif_out, exc)

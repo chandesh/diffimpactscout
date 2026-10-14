@@ -19,5 +19,8 @@ _SEVERITY_MAP = {
 
 
 def score(severity, fan_in, missing_test, churn):
-    sev = _SEVERITY_MAP[severity]
+    try:
+        sev = _SEVERITY_MAP[severity]
+    except KeyError:
+        raise ValueError("unknown severity: %r" % (severity,))
     return W_SEVERITY * sev + W_FAN_IN * fan_in + W_MISSING_TEST * missing_test + W_CHURN * churn

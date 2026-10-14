@@ -4,3 +4,4 @@ def test_owner_last_match_wins(tmp_path):
     assert owners.owner_for("apps/orders/views.py", str(tmp_path)) == "team-b"
     assert owners.owner_for("other.py", str(tmp_path)) == "team-a"
     assert owners.owner_for("x.py", "/nonexistent") == ""
+    assert owners.owner_for("Makefile", str(tmp_path)) == ""

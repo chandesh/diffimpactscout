@@ -9,10 +9,10 @@ def _matches(pattern, path):
     pat = pattern.replace("**", "*").strip("/")
     target = path.replace(os.sep, "/").strip("/")
     base = target.rsplit("/", 1)[-1] if "/" in target else target
-    if fnmatch.fnmatch(target, pat):
+    if fnmatch.fnmatchcase(target, pat):
         return True
     # Patterns without a slash match against the basename as well.
-    if "/" not in pat and fnmatch.fnmatch(base, pat):
+    if "/" not in pat and fnmatch.fnmatchcase(base, pat):
         return True
     return False
 
@@ -23,9 +23,9 @@ def owner_for(path, root):
     if not os.path.isfile(owners_path):
         return ""
     try:
-        with open(owners_path, "r") as handle:
+        with open(owners_path, "r", encoding="utf-8") as handle:
             lines = handle.read().splitlines()
-    except OSError:
+    except (OSError, ValueError):
         return ""
     owner = ""
     for raw in lines:

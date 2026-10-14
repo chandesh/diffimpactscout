@@ -474,3 +474,62 @@ def test_summary_block_first_25_lines():
     assert "High:" in head and "Medium:" in head and "Low:" in head
     assert "changed" in head and "impacted" in head
     assert "b.py (team-a)" in head
+
+
+def test_summary_extra_zero_overrides_respected():
+    """Explicit 0/[] overrides must not be clobbered by or-fallbacks."""
+    rows = [
+        {"path": "b.py", "module": "b", "category": "python",
+         "ref": "x (name at 1)", "severity": "High", "action": "review/verify",
+         "owner": "team-a"},
+    ]
+    out = reporter.render_report(rows, [], [], 1, summary_extra={
+        "risk": 0, "impacted_count": 0, "top": [],
+    })
+    assert "Risk: 0/100" in out
+    assert "impacted 0 files" in out
+    top_lines = [l for l in out.splitlines() if l.strip().startswith("- ")]
+    assert top_lines == []
+
+
+def test_summary_extra_none_falls_back_to_computed():
+    """Explicit None in summary_extra falls back to computed values."""
+    rows = [
+        {"path": "b.py", "module": "b", "category": "python",
+         "ref": "x (name at 1)", "severity": "High", "action": "review/verify",
+         "owner": "team-a"},
+    ]
+    expected_risk = reporter.compute_summary_risk_score(rows)
+    assert expected_risk == 100
+    out = reporter.render_report(rows, [], [], 1, summary_extra={
+        "risk": None, "impacted_count": None, "top": None,
+    })
+    assert ("Risk: %d/100" % expected_risk) in out
+    assert "impacted 1 files" in out
+    assert "b.py (team-a)" in out
+
+
+def test_top_n_limits_rendered_lines():
+    """top_n controls how many Top lines render, including 0 and 1."""
+    def _row(path, severity):
+        return {"path": path, "module": "m", "category": "python",
+                "ref": "x", "severity": severity, "action": "a", "owner": "t"}
+
+    rows = [_row("f%d.py" % i, "High") for i in range(5)]
+    out1 = reporter.render_report(rows, [], [], 1, top_n=1)
+    top1 = [l for l in out1.splitlines() if l.strip().startswith("- ")]
+    assert len(top1) == 1
+    out0 = reporter.render_report(rows, [], [], 1, top_n=0)
+    top0 = [l for l in out0.splitlines() if l.strip().startswith("- ")]
+    assert top0 == []
+
+
+def test_top_impacted_paths_dedupes_duplicate_paths():
+    """Duplicate rows for one path yield it once in Top-5."""
+    def _row(ref):
+        return {"path": "dup.py", "module": "m", "category": "python",
+                "ref": ref, "severity": "High", "action": "a", "owner": "t"}
+
+    rows = [_row("x"), _row("y")]
+    assert reporter._impacted_count(rows, None) == 1
+    assert reporter._top_impacted_paths(rows, 5, None) == [("dup.py", "t")]

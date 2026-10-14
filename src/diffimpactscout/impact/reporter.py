@@ -110,19 +110,16 @@ def _top_impacted_paths(rows, limit=5, changed_paths=None):
         return (_SEVERITY_RANK.get(sev, 99), _cell(row, "path") or "")
 
     top = []
+    seen = set()
     for row in sorted(rows or [], key=_key):
         if len(top) >= limit:
             break
         path = _cell(row, "path")
-        if not path or path in changed:
+        if not path or path in changed or path in seen:
             continue
+        seen.add(path)
         top.append((path, _cell(row, "owner") or ""))
     return top
-
-
-def _summary_top(rows, limit=5, changed_paths=None):
-    """Backward-compatible wrapper for _top_impacted_paths."""
-    return _top_impacted_paths(rows, limit=limit, changed_paths=changed_paths)
 
 
 def _summary_line(rows, changed_count):
@@ -273,11 +270,14 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  Impact Analysis Report")
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
-    limit = top_n or 5
+    limit = 5 if top_n is None else top_n
     if summary_extra is not None:
-        risk = summary_extra.get("risk") or compute_summary_risk_score(rows)
-        impacted = summary_extra.get("impacted_count") or _impacted_count(rows, changed_paths)
-        top = summary_extra.get("top") or _top_impacted_paths(rows, limit, changed_paths)
+        _risk = summary_extra.get("risk")
+        risk = _risk if _risk is not None else compute_summary_risk_score(rows)
+        _impacted = summary_extra.get("impacted_count")
+        impacted = _impacted if _impacted is not None else _impacted_count(rows, changed_paths)
+        _top = summary_extra.get("top")
+        top = _top if _top is not None else _top_impacted_paths(rows, limit, changed_paths)
     else:
         risk = compute_summary_risk_score(rows)
         impacted = _impacted_count(rows, changed_paths)

@@ -53,8 +53,10 @@ MODELS_HEAD = (
 )
 
 DESCRIBE = (
-    "def describe(book):\n"
-    "    return book.status\n"
+    "from app.models import Book\n"
+    "\n"
+    "def describe():\n"
+    "    return Book.status\n"
 )
 
 UTILS = (
@@ -412,7 +414,7 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "status (attr at 2)" in out
+    assert "status (attr at 4)" in out
     assert "Medium" in out
     assert "verify" in out
     assert "referenced from a file outside the change-set" in out

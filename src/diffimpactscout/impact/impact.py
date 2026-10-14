@@ -276,7 +276,11 @@ def _compose_rows(
     weak_attr = [
         name for name, ent in entities.items() if ent.get("kind") == "class_field"
     ]
-    weak = set(weak_attr)
+    weak = (
+        set(weak_attr)
+        | set(pa.DEFAULT_IGNORE_SYMBOLS)
+        | set(impact_cfg.get("ignore_symbols") or ())
+    )
     pseudo = set(pseudo_entities or ())
     for name, ent in entities.items():
         layers.setdefault(name, set())
@@ -287,7 +291,7 @@ def _compose_rows(
             kinds=kinds,
             modules=modules,
             changed_paths=changed_paths,
-            weak_attr=weak_attr,
+            weak_attr=sorted(weak),
             deleted=deleted,
             require_attr_base=(name in pseudo),
         )

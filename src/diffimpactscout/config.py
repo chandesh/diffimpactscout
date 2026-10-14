@@ -59,6 +59,7 @@ def _defaults():
             "threads": 4,
             "reverse": False,
             "experimental": False,
+            "ignore_symbols": [],
             "asset_url_prefixes": ["{{ MEDIA_URL }}", "{{ STATIC_URL }}"],
         },
     }

@@ -507,6 +507,27 @@ def test_find_references_deleted_entity_keeps_same_module_class_attr_usage():
     ]
 
 
+GENERIC = {"id", "name", "status", "update", "uuid", "client_id"}
+
+
+def test_unqualified_generic_attr_dropped():
+    """Verifies that an unqualified generic attr usage does not resolve."""
+    analysis = _analysis("value = obj.status\n")
+    usage = [u for u in analysis["usages"] if u["name"] == "status"][0]
+    assert pa._usage_resolves(
+        analysis, usage, "status", {"changed_mod"}, "other.py", GENERIC
+    ) is False
+
+
+def test_import_qualified_generic_kept():
+    """Verifies that an import-qualified generic attr usage still resolves."""
+    analysis = _analysis("from changed_mod import X\n\nvalue = X.status\n")
+    usage = [u for u in analysis["usages"] if u["kind"] == "attr"][0]
+    assert pa._usage_resolves(
+        analysis, usage, "status", {"changed_mod"}, "other.py", GENERIC
+    ) is True
+
+
 def test_analyze_path_analyzes_and_stores(tmp_path):
     """Verifies that analyze_path analyzes a file and stores the result in the cache."""
     _write(str(tmp_path / "mod.py"), "import widget\n")

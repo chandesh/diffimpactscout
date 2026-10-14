@@ -55,7 +55,8 @@ def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
 
 
 def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False,
-               expand=False, show_all=False, top_n=20):
+               expand=False, show_all=False, top_n=20, changes=None,
+               changed_paths=None):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -64,8 +65,10 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     anchor = None
     if not staged:
         anchor = scope.DevScope(root).scope_base(from_ref, to_ref)
-    changes = get_file_changes(root, anchor, staged, from_ref, to_ref)
-    changed_paths = [c.path for c in changes]
+    if changes is None:
+        changes = get_file_changes(root, anchor, staged, from_ref, to_ref)
+    if changed_paths is None:
+        changed_paths = [c.path for c in changes]
     if staged:
         old_ref = "HEAD"
     elif anchor:

@@ -485,3 +485,64 @@ def test_external_check_always_block_blocks_in_warn_mode(tmp_path, capsys):
     assert guard.run_guard(repo, cfg, files=["a.txt"]) == 1
     captured = capsys.readouterr()
     assert "ext/fail" in captured.out
+
+
+def test_guard_impact_counts_agree(tmp_path, monkeypatch, capsys):
+    """Verifies guard header, impact header, and JSON share one change source."""
+    import json
+    import re
+    import sys
+
+    import diffimpactscout.cli as cli
+    from diffimpactscout.impact import diff_parser as dp
+    from diffimpactscout.impact import impact as impact_mod
+
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    _anchor(repo)
+    _commit(repo, "a.txt", "hello\n", "dev")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    for key in (
+        "DIFFIMPACTSCOUT_SKIP",
+        "IMPACT_CHECK_SKIP",
+        "IMPACT_CHECK_STRICT",
+        "PRE_COMMIT_FROM_REF",
+        "PRE_COMMIT_TO_REF",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    fakes = [
+        dp.FileChange("a.txt", "M", None, "txt"),
+        dp.FileChange("b.py", "M", None, "py"),
+        dp.FileChange("c.txt", "M", None, "txt"),
+    ]
+    calls = {"cli_source": 0, "impact_recount": 0}
+
+    def fake_cli_source(*args, **kwargs):
+        calls["cli_source"] += 1
+        return list(fakes)
+
+    def fake_impact_recount(*args, **kwargs):
+        calls["impact_recount"] += 1
+        return list(fakes)
+
+    monkeypatch.setattr(dp, "get_file_changes", fake_cli_source)
+    monkeypatch.setattr(impact_mod, "get_file_changes", fake_impact_recount)
+
+    assert cli.main(["guard-and-impact-check", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert calls["cli_source"] == 1, "cli must compute changes once"
+    assert calls["impact_recount"] == 0, "impact must not recount"
+    guard_counts = re.findall(r"(\d+) changed file\(s\)", out)
+    assert guard_counts, "guard header missing changed count"
+    assert len(set(guard_counts)) == 1, "guard/impact headers disagree"
+    assert int(guard_counts[0]) == len(fakes)
+    payload = None
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            payload = json.loads(stripped)
+    assert payload is not None, "JSON payload missing"
+    assert payload["changed_count"] == len(fakes)
+    assert int(guard_counts[0]) == payload["changed_count"]

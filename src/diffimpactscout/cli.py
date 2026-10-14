@@ -15,6 +15,7 @@ import diffimpactscout.launcher as launcher
 import diffimpactscout.scope as scope
 from diffimpactscout import __version__
 from diffimpactscout.checks.base import CheckContext, make_check
+from diffimpactscout.impact import diff_parser as diff_parser_module
 from diffimpactscout.impact import impact as impact_module
 
 
@@ -217,10 +218,19 @@ def _cmd_guard_and_analyse_impact(args):
     if root is None:
         return 1
     cfg = config.load_config(root)
+    from_ref, to_ref = env.pre_commit_refs()
+    anchor = None
+    if not args.staged:
+        anchor = scope.DevScope(root).scope_base(from_ref, to_ref)
+    changes = diff_parser_module.get_file_changes(
+        root, anchor, args.staged, from_ref, to_ref
+    )
+    changed_paths = [c.path for c in changes]
     guard_rc = guard.run_guard(
         root,
         cfg,
         staged=args.staged,
+        changed_paths=changed_paths,
     )
     impact_rc = impact_module.run_impact(
         root,
@@ -232,6 +242,8 @@ def _cmd_guard_and_analyse_impact(args):
         expand=args.expand,
         show_all=args.show_all,
         top_n=args.top,
+        changes=changes,
+        changed_paths=changed_paths,
     )
     return guard_rc if guard_rc != 0 else impact_rc
 

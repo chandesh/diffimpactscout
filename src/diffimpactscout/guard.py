@@ -120,7 +120,8 @@ def _print_verdict(blocked, total_issues, mode, always_blocked):
     print("=" * 70)
 
 
-def run_guard(root, cfg, staged=False, all_files=False, files=None):
+def run_guard(root, cfg, staged=False, all_files=False, files=None,
+              changed_paths=None):
     if _skip_requested():
         return 0
 
@@ -129,7 +130,9 @@ def run_guard(root, cfg, staged=False, all_files=False, files=None):
     dev_scope = scope.DevScope(root)
     anchor = None
 
-    if files is not None:
+    if changed_paths is not None:
+        file_set = list(changed_paths)
+    elif files is not None:
         file_set = [files] if isinstance(files, str) else list(files)
     elif staged:
         file_set = _staged_files(root)

@@ -202,8 +202,8 @@ def test_render_report_ascii_columns_aligned():
 def test_render_report_markdown_rows_numbered_and_columns():
     """Verifies that markdown rows are numbered and display the expected columns."""
     out = reporter.render_report(ROWS, [], [], 2, markdown=True)
-    assert "| 1 | apps/orders/views.py | apps.orders | python | OrderList | High | Review & test |" in out
-    assert "| 2 | templates/orders.html | orders | template | order-list | Medium | Verify template |" in out
+    assert "| 1 | apps/orders/views.py | apps.orders | python | OrderList | High | Review & test |  |" in out
+    assert "| 2 | templates/orders.html | orders | template | order-list | Medium | Verify template |  |" in out
 
 
 def test_render_report_markdown_escapes_pipe_in_cell():
@@ -216,13 +216,14 @@ def test_render_report_markdown_escapes_pipe_in_cell():
             "ref": "A | B",
             "severity": "Low",
             "action": "Review",
+            "badge": "Impacted",
         }
     ]
     out = reporter.render_report(rows, [], [], 1, markdown=True)
     line = [l for l in out.splitlines() if l.startswith("| ") and l.lstrip("| ")[0].isdigit()][0]
     assert "A \\| B" in line
     cells = [p.strip() for p in re.split(r"(?<!\\)\|", line) if p.strip()]
-    assert len(cells) == 7
+    assert len(cells) == 8
     assert cells[4] == "A \\| B"
 
 

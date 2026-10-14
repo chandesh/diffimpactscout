@@ -129,6 +129,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         extra_unresolved=reverse_unresolved,
         pseudo_entities=pseudo_entities,
         show_all=show_all,
+        changes=changes,
     )
     changed_count = len(changes)
     effective_expand = bool(expand or show_all)
@@ -334,7 +335,7 @@ def _confidence_for_tiered_row(row):
 def _compose_rows(
     root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
     extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
-    show_all=False,
+    show_all=False, changes=None,
 ):
     rows = []
     layers = {}
@@ -484,6 +485,10 @@ def _compose_rows(
                 deleted=delrow,
                 test_path=test_path,
             ))
+    rows.extend(detect_breaking(
+        changes or [], entities=entities, root=root,
+        changed_paths=changed_paths,
+    ))
     rows = rank_rows(rows, max_fan_in=max_fan_in)
     endpoints = _endpoint_rows(affected)
     return rows, endpoints, unresolved, hidden_count
@@ -696,6 +701,193 @@ def _line_of(row):
     if m:
         return int(m.group(1))
     return row.get("line") or 0
+
+
+def _br_get(change, key, default=None):
+    if isinstance(change, dict):
+        return change.get(key, default)
+    return getattr(change, key, default)
+
+
+def _br_path(change):
+    if isinstance(change, dict):
+        return change.get("path") or ""
+    return getattr(change, "path", "") or ""
+
+
+def _br_old_path(change):
+    if isinstance(change, dict):
+        return change.get("old_path") or ""
+    return getattr(change, "old_path", "") or ""
+
+
+def _br_status(change):
+    if isinstance(change, dict):
+        return change.get("status") or ""
+    return getattr(change, "status", "") or ""
+
+
+def _is_test_path(path):
+    if not path:
+        return False
+    norm = (path or "").replace("\\", "/")
+    base = norm.rsplit("/", 1)[-1]
+    if base.startswith("test_") or base.startswith("tests_"):
+        return True
+    if norm == "tests" or norm.startswith("tests/"):
+        return True
+    if "/tests/" in norm:
+        return True
+    return False
+
+
+def _br_is_added(change):
+    if _br_get(change, "added_only", False):
+        return True
+    status = _br_status(change)
+    return bool(status) and status[0] == "A"
+
+
+def _br_is_deleted(change):
+    status = _br_status(change)
+    return bool(status) and status[0] == "D"
+
+
+def _br_removed_ratio(change):
+    try:
+        ratio = float(_br_get(change, "removed_ratio", 0) or 0)
+    except (TypeError, ValueError):
+        ratio = 0.0
+    if _br_is_deleted(change) and ratio < 1.0:
+        ratio = 1.0
+    return ratio
+
+
+def _br_deleted_export(change, entities):
+    direct = _br_get(change, "removed_export", None)
+    if direct:
+        return direct
+    if not entities:
+        return None
+    path = _br_path(change)
+    if not path.endswith(".py"):
+        return None
+    mods = set([_module_of(path)])
+    old = _br_old_path(change)
+    if old:
+        mods.add(_module_of(old))
+    for name in sorted(entities):
+        ent = entities.get(name) or {}
+        if not ent.get("deleted"):
+            continue
+        if mods & set(ent.get("modules") or ()):
+            return name
+    return None
+
+
+def _br_finish(path, ref, rule_action, symbol, root, changed_paths):
+    base = {
+        "path": path,
+        "module": _dir_of(path),
+        "category": "breaking",
+        "ref": ref,
+        "line": 0,
+    }
+    finished = finish_row(
+        base, severity="High", changed_paths=changed_paths,
+        section_hint=None, deleted=True,
+    )
+    chain = [path] if path else []
+    explained = attach_why_action(
+        finished, symbol=symbol, import_chain=chain,
+        deleted=False, test_path=None,
+    )
+    explained["confidence"] = "high"
+    explained["evidence"] = {"import_chain": chain}
+    explained["suggested_action"] = rule_action
+    explained["action"] = rule_action
+    explained["fan_in"] = 1
+    explained["missing_test"] = 0
+    explained["churn"] = 0
+    explained["owner"] = owners_mod.owner_for(path, root or "")
+    return explained
+
+
+def detect_breaking(changes, entities=None, root="", changed_paths=None):
+    """Breaking-change detectors (REQ-12): one High row per matching change.
+
+    Rules, in order (first match wins per change):
+    test deletion: test path (tests/ dir or test_*.py) that is deleted
+    (status D), touched, or has removed content, OR any file with
+    removed_ratio > 0.5 -> "deleted test coverage" / High /
+    "restore or justify removal".
+    breaking API: removed_export set (dict key, FileChange attr, or a
+    deleted entity from _changed_entities whose module matches the
+    change) or signature_changed set -> "breaking API change" / High.
+    migration/infra: "migrations/" or ".github/" in path, or a
+    .lock/.toml suffix -> "migration/infra change" / High /
+    "add rollout note".
+    Pure-addition changes (status A / added_only) emit no rows.
+
+    Data sources: FileChange carries path/status/old_path/ext only, so
+    removed_ratio comes from the synthetic "removed_ratio" key (dicts and
+    tests) with status D implying 1.0; per-hunk removed ratios for
+    modified files are NOT computed from get_changed_lines here.
+    Signature diffs are NOT AST-compared; only an explicit
+    "signature_changed" flag fires that branch. Rows are finished with
+    finish_row + attach_why_action (action then overridden per rule),
+    carry confidence high with import_chain evidence, and are ranked
+    with normal rows by the caller.
+
+    ASCII note: the plan text uses an em-dash in the migration ref; this
+    codebase is ASCII-only (no em-dash in src), so the ref uses a hyphen:
+    "migration/infra change - needs rollout note".
+    """
+    changes = list(changes or [])
+    if changed_paths is None:
+        changed_paths = [p for p in (_br_path(c) for c in changes) if p]
+    rows = []
+    for change in changes:
+        path = _br_path(change)
+        if not path:
+            continue
+        ratio = _br_removed_ratio(change)
+        touched = bool(_br_get(change, "touched", False))
+        added = _br_is_added(change)
+        deleted = _br_is_deleted(change)
+        if ((_is_test_path(path) and not added
+                and (deleted or touched or ratio > 0))
+                or ratio > 0.5):
+            row = _br_finish(
+                path, "deleted test coverage",
+                "restore or justify removal", path, root, changed_paths,
+            )
+            row["reason"] = "deleted test coverage in this change-set"
+            rows.append(row)
+            continue
+        removed_export = _br_deleted_export(change, entities)
+        sig = bool(_br_get(change, "signature_changed", False))
+        if removed_export or sig:
+            label = removed_export or "signature changed"
+            row = _br_finish(
+                path, "breaking API change: %s" % (label,),
+                "restore export or justify breaking change",
+                label, root, changed_paths,
+            )
+            row["reason"] = "export removed or signature changed in this change-set"
+            rows.append(row)
+            continue
+        flat = path.replace("\\", "/")
+        if ("migrations/" in flat or ".github/" in flat
+                or path.endswith((".lock", ".toml"))):
+            row = _br_finish(
+                path, "migration/infra change - needs rollout note",
+                "add rollout note", path, root, changed_paths,
+            )
+            row["reason"] = "migration or infra file touched; needs rollout note"
+            rows.append(row)
+            continue
+    return rows
 
 
 def finish_row(row, severity, changed_paths, section_hint=None, deleted=False):

@@ -1094,6 +1094,27 @@ def test_stoplist_pruned_stay_hidden_with_all():
     assert rows == []
 
 
+def test_breaking_detectors():
+    from diffimpactscout.impact import impact as m
+    rows = m.detect_breaking([
+        {"path": "tests/test_x.py", "removed_ratio": 0.8},
+        {"path": "pkg/mod.py", "removed_export": "foo"},
+        {"path": "pkg/migrations/0001.py", "touched": True},
+        {"path": "pkg/added.py", "added_only": True},
+    ])
+    assert len([r for r in rows if r["severity"] == "High"]) == 3
+    assert any("restore or justify removal" in r["suggested_action"] for r in rows)
+
+
+def test_breaking_pure_addition_yields_no_high():
+    from diffimpactscout.impact import impact as m
+    rows = m.detect_breaking([
+        {"path": "pkg/added.py", "added_only": True},
+        {"path": "pkg/other.py", "added_only": True},
+    ])
+    assert [r for r in rows if r["severity"] == "High"] == []
+
+
 def test_high_fan_in_ranks_first():
     from diffimpactscout.impact import impact as m
     rows = [

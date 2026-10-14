@@ -413,3 +413,21 @@ def test_render_report_expand_lists_related():
     assert "app/templates/b.html" in out
     md = reporter.render_report(rows, [], [], 1, markdown=True, expand=True)
     assert "<details>" in md
+
+
+def test_summary_block_first_25_lines():
+    from diffimpactscout.impact import reporter
+    rows = [
+        {"path": "b.py", "module": "b", "category": "python",
+         "ref": "x (name at 1)", "severity": "High", "action": "review/verify",
+         "section": "Breaking", "badge": "Impacted", "owner": "team-a"},
+    ]
+    out = reporter.render_report(rows, [], [], 2, summary_extra={
+        "risk": 72, "impacted_count": 1,
+        "top": [("b.py", "team-a")],
+    })
+    head = "\n".join(out.splitlines()[:25])
+    assert "Risk:" in head
+    assert "High:" in head and "Medium:" in head and "Low:" in head
+    assert "changed" in head and "impacted" in head
+    assert "b.py (team-a)" in head

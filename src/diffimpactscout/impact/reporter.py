@@ -66,6 +66,55 @@ def _counts(rows):
     return counts
 
 
+def compute_summary_risk_score(rows):
+    """Phase-A placeholder risk score (0-100) from severity counts.
+
+    Weights High as 1.0 and Medium as 0.5 over all counted rows;
+    Phase-B replaces this with the fan_in formula.
+    """
+    counts = _counts(rows or [])
+    total = counts["High"] + counts["Medium"] + counts["Low"]
+    if not total:
+        return 0
+    return min(100, int(round(
+        100.0 * (counts["High"] * 1.0 + counts["Medium"] * 0.5) / total)))
+
+
+def _risk_simple(rows):
+    """Backward-compatible alias for compute_summary_risk_score."""
+    return compute_summary_risk_score(rows)
+
+
+_SEVERITY_RANK = {"High": 0, "Medium": 1, "Low": 2}
+
+
+def _impacted_count(rows, changed_paths=None):
+    """Count distinct impacted paths excluding the changed set."""
+    changed = set(changed_paths or ())
+    seen = set()
+    for row in rows or []:
+        path = _cell(row, "path")
+        if not path or path in changed:
+            continue
+        seen.add(path)
+    return len(seen)
+
+
+def _summary_top(rows, limit=5):
+    """Top impacted paths by severity rank then path (Phase-A placeholder)."""
+    def _key(row):
+        sev = _cell(row, "severity")
+        return (_SEVERITY_RANK.get(sev, 99), _cell(row, "path") or "")
+
+    top = []
+    for row in sorted(rows or [], key=_key)[:limit]:
+        path = _cell(row, "path")
+        if not path:
+            continue
+        top.append((path, _cell(row, "owner") or ""))
+    return top
+
+
 def _summary_line(rows, changed_count):
     counts = _counts(rows or [])
     return "Summary: High: %d, Medium: %d, Low: %d (%d changed file(s))" % (
@@ -207,12 +256,27 @@ def _markdown_table(rows, start=1):
     return lines
 
 
-def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False):
+def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False,
+                  summary_extra=None, top_n=None, changed_paths=None):
     lines = []
     lines.append("=" * 70)
     lines.append("  Impact Analysis Report")
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
+    if summary_extra is not None:
+        risk = summary_extra.get("risk", compute_summary_risk_score(rows))
+        impacted = summary_extra.get("impacted_count", _impacted_count(rows, changed_paths))
+        top = summary_extra.get("top", _summary_top(rows))
+    else:
+        risk = compute_summary_risk_score(rows)
+        impacted = _impacted_count(rows, changed_paths)
+        top = _summary_top(rows)
+    counts = _counts(rows or [])
+    lines.append("  Risk: %d/100 (High*1.0 + Medium*0.5 over rows; Phase-B replaces with fan_in formula)" % risk)
+    lines.append("  High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
+    lines.append("  changed %d files vs impacted %d files" % (changed_count, impacted))
+    for path, owner in (top or [])[:5]:
+        lines.append("  - %s (%s)" % (path, owner or "unowned"))
     tiered, untiered = _split_tiers(rows)
     ordered = []
     start = 1
@@ -317,12 +381,15 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
 
 
 def render_report(rows, endpoints, unresolved, changed_count, markdown=False,
-                  hidden_count=0, expand=False):
+                  hidden_count=0, expand=False, summary_extra=None, top_n=None,
+                  changed_paths=None):
     if markdown:
         return _render_markdown(rows, endpoints, unresolved, changed_count,
                                 hidden_count=hidden_count, expand=expand)
     return _render_ascii(rows, endpoints, unresolved, changed_count,
-                         hidden_count=hidden_count, expand=expand)
+                         hidden_count=hidden_count, expand=expand,
+                         summary_extra=summary_extra, top_n=top_n,
+                         changed_paths=changed_paths)
 
 
 def interactive_tty():

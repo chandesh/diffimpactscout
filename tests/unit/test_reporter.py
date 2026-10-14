@@ -541,3 +541,54 @@ def test_top_impacted_paths_dedupes_duplicate_paths():
     rows = [_row("x"), _row("y")]
     assert reporter._impacted_count(rows, None) == 1
     assert reporter._top_impacted_paths(rows, 5, None) == [("dup.py", "t")]
+
+
+def test_ascii_never_truncates_path():
+    from diffimpactscout.impact import reporter
+    long_path = "apps/" + "verylongdirname/" * 8 + "views.py"
+    rows = [{"path": long_path, "module": "m", "category": "python",
+             "ref": "x (name at 101)", "severity": "Medium", "action": "verify",
+             "section": "Direct", "badge": "Impacted", "key": long_path + ":101"}]
+    out = reporter.render_report(rows, [], [], 1)
+    assert long_path in out.replace("\n", "")
+    assert (long_path + ":101").replace("\n", "") in out.replace("\n", "")
+
+
+def test_ascii_row_keys_strict_parser_zero_broken():
+    """Strict parser rejoins every logical row via unbroken key tokens.
+
+    120-row fixture with long wrapped paths (path column width 38 simulates
+    a narrow 80-col terminal): each row's stable ``path:line`` key must
+    appear as an unbroken whitespace-delimited token, and exactly one
+    physical line per logical row may end with a known key (0 broken rows).
+    """
+    from diffimpactscout.impact import reporter
+    sections = ("Breaking", "Direct", "Transitive")
+    severities = ("High", "Medium", "Low")
+    rows = []
+    expected = set()
+    for i in range(120):
+        if i % 3 == 0:
+            path = "apps/" + "verylongdirname/" * 6 + "mod%03d/views.py" % i
+        else:
+            path = "apps/service%03d/views.py" % i
+        line = 10 + i
+        key = "%s:%d" % (path, line)
+        expected.add(key)
+        rows.append({"path": path, "module": "apps.service%03d" % i,
+                     "category": "python",
+                     "ref": "sym%d (name at %d)" % (i, line),
+                     "severity": severities[i % 3], "action": "verify",
+                     "section": sections[i % 3], "badge": "Impacted",
+                     "key": key})
+    out = reporter.render_report(rows, [], [], len(rows), top_n=200)
+    # Fixture must actually wrap: long paths span more physical lines than rows.
+    assert sum(1 for l in out.splitlines() if "verylongdirname" in l) > 40
+    tokens = set()
+    for phys in out.splitlines():
+        tokens.update(phys.split())
+    missing = sorted(k for k in expected if k not in tokens)
+    assert missing == []
+    starts = sum(1 for phys in out.splitlines()
+                 if phys.split() and phys.split()[-1] in expected)
+    assert starts == len(rows)

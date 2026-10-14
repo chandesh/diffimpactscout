@@ -4,10 +4,17 @@ The terminal/stdout default is a plain aligned ASCII table that matches the
 guard report's visual style; a Markdown table is available via an explicit
 `--markdown` output mode for piping into PR comments or docs pages.
 
+For scripting, prefer `--json` output: it carries the stable per-row fields
+(`path`, `line`, `section`, `badge`, `key`) unbroken. The ASCII table wraps
+long `path`/`module` cells for display and repeats each row's stable
+`path:line` key as an unbroken trailing token on the first physical line of
+that logical row so parsers can rejoin wrapped rows.
+
 Example: a changed view referenced from a template and a frontend service
 gets High severity, while a reference inside the changed file gets Low.
 """
 
+import re
 import sys
 
 import diffimpactscout.env as env
@@ -190,19 +197,46 @@ def _split_token(token, width):
     return [token[i : i + width] for i in range(0, len(token), width)]
 
 
+def _row_key(row):
+    """Return the stable ``path:line`` key for an ASCII row suffix token.
+
+    Prefers the row's ``key`` field (set by ``finish_row``); falls back to
+    ``path`` plus the line parsed from ``ref`` (``at <N>``/``line <N>``)
+    or the row's ``line`` field, else 0. The token is emitted unbroken so
+    parsers can rejoin wrapped rows; never wrap or truncate it here.
+    """
+    key = _cell(row, "key")
+    if key:
+        return key
+    path = _cell(row, "path")
+    ref = _cell(row, "ref")
+    match = re.search(r"at (\d+)", ref)
+    if match:
+        return "%s:%s" % (path, match.group(1))
+    match = re.search(r"line (\d+)", ref)
+    if match:
+        return "%s:%s" % (path, match.group(1))
+    line = row.get("line") if isinstance(row, dict) else getattr(row, "line", None)
+    return "%s:%s" % (path, line or 0)
+
+
 def _ascii_table(rows, start=1):
     widths = list(_COLUMN_WIDTHS)
     header = "  " + "  ".join(c.ljust(widths[i]) for i, c in enumerate(_COLUMNS))
     body = []
     for i, row in enumerate(rows or [], start=start):
         cells = [_wrap(v, widths[j]) for j, v in enumerate(_row_values(row, i))]
+        key = _row_key(row)
         height = max(len(c) for c in cells)
         for line_idx in range(height):
             parts = []
             for j, cell_lines in enumerate(cells):
                 value = cell_lines[line_idx] if line_idx < len(cell_lines) else ""
                 parts.append(value.ljust(widths[j]))
-            body.append("  " + "  ".join(parts))
+            line = "  " + "  ".join(parts)
+            if line_idx == 0 and key and _cell(row, "path"):
+                line = line.rstrip() + "  " + key
+            body.append(line)
     return header, body
 
 

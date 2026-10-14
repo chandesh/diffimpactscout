@@ -1,6 +1,8 @@
 import ast
 import os
 
+import pytest
+
 import diffimpactscout.impact.route_linker as rl
 from diffimpactscout.impact.route_linker import Route
 
@@ -313,6 +315,59 @@ def test_extract_frontend_refs_block_comment_preserves_lines(tmp_path):
     refs = rl.extract_frontend_refs(str(tmp_path), ["**/*.ts"])
     static = [r for r in refs if not r["dynamic"]]
     assert [(r["line"], r["method"]) for r in static] == [(3, "get")]
+
+
+@pytest.mark.parametrize(
+    "snippet,method,url",
+    [
+        ("fetch('/api/orders')", "get", "/api/orders"),
+        ("axios.post('/api/orders')", "post", "/api/orders"),
+        ("this.$http.get('/api/orders')", "get", "/api/orders"),
+        ("useQuery(['orders'], () => fetch('/api/orders'))", "get", "/api/orders"),
+        ("useMutation((d) => axios.post('/api/orders', d))", "post", "/api/orders"),
+    ],
+)
+def test_call_styles_link(tmp_path, snippet, method, url):
+    """Verifies each frontend call style yields its (method, URL) pair (REQ-15)."""
+    (tmp_path / "a.ts").write_text(snippet + "\n")
+    pairs = rl.extract_call_pairs(str(tmp_path))
+    assert (method, url) in pairs
+
+
+def test_axios_bare_defaults_to_get(tmp_path):
+    """Checks a bare axios() call defaults to the GET method (REQ-15)."""
+    (tmp_path / "a.ts").write_text("axios('/api/orders')\n")
+    assert ("get", "/api/orders") in rl.extract_call_pairs(str(tmp_path))
+
+
+def test_fetch_method_option_override(tmp_path):
+    """Checks a fetch() options object overrides the default GET method (REQ-15)."""
+    (tmp_path / "a.ts").write_text("fetch('/api/orders', { method: 'POST' })\n")
+    assert ("post", "/api/orders") in rl.extract_call_pairs(str(tmp_path))
+
+
+def test_non_literal_url_yields_no_pair(tmp_path):
+    """Checks a non-literal URL never produces a call pair (REQ-15)."""
+    (tmp_path / "a.ts").write_text("fetch(apiUrl)\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_extract_frontend_refs_call_styles(tmp_path):
+    """Checks fetch/axios call styles link through extract_frontend_refs (REQ-15)."""
+    _write(str(tmp_path), "app.ts", "fetch('/api/orders')\naxios.post('/api/orders')\n")
+    refs = rl.extract_frontend_refs(str(tmp_path), ["**/*.ts"])
+    pairs = {(r["ref"], r["method"]) for r in refs}
+    assert ("/api/orders", "get") in pairs
+    assert ("/api/orders", "post") in pairs
+
+
+def test_match_endpoints_unknown_url_reason(tmp_path):
+    """Checks an unmatched URL ref lands in unresolved with reason unknown-url (REQ-15)."""
+    routes = [Route("order-list", "/api/v1/orders/", "OrderList.as_view", "u.py")]
+    refs = [_ref("f.ts", "/api/v1/unknown/")]
+    matched, unresolved = rl.match_endpoints(refs, routes)
+    assert matched == []
+    assert unresolved[0]["reason"] == "unknown-url"
 
 
 def test_ts_import_links_changed_symbol(tmp_path):

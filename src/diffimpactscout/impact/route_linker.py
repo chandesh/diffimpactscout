@@ -29,6 +29,36 @@ HTTP_CALL_RE = re.compile(
     r"(\$http|HttpClient|http)\s*\.\s*(" + _HTTP_METHOD_RE_SRC + r")\s*\("
 )
 QUOTED_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
+
+# Matches a frontend HTTP call head across call styles so the URL literal that
+# follows can be linked to a route. Dotted calls carry an explicit method;
+# bare fetch()/axios() default to GET (an options object may override it).
+#   Matches:  http.get(   HttpClient.post(   $http.delete(   axios.put(
+#             axios(      fetch(
+#   Captures: group 1 = explicit method (get|post|put|delete|patch) or None
+#             group 2 = bare callee name ("fetch" | "axios") or None
+#   Skips:    myfetch(          (lookbehind blocks a word run before it)
+#             response.fetch(   (lookbehind blocks the ".")
+#             fetch = 1         (no "(" after the callee)
+#             fetchMore(        (no word boundary before "fetch")
+_CALL_HEAD_RE = re.compile(
+    r"(?:\$http|HttpClient|http|axios)\s*\.\s*("
+    + _HTTP_METHOD_RE_SRC
+    + r")\s*\(|(?<![\w$.])(fetch|axios)\s*\("
+)
+
+# Matches an explicit method override inside a fetch()/axios() options object.
+#   Matches:  { method: 'POST' }   -> "POST"
+#             {method:"delete"}    -> "delete"
+#   Captures: group 1 = the HTTP method name
+#   Skips:    method: verb          (non-literal value)
+#             methodName: 'post'     (no word boundary before "method")
+_METHOD_OPTION_RE = re.compile(
+    r"\bmethod\s*:\s*['\"](get|post|put|delete|patch)['\"]", re.IGNORECASE
+)
+
+# Bound for the argument window scanned after a call head for its URL literal.
+_CALL_WINDOW = 300
 URL_TAG_RE = re.compile(r"{%\s*url\s+['\"]([^'\"]+)['\"]\s*%}")
 URL_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 
@@ -489,6 +519,51 @@ def _url_ref(file, line, value, method, seen):
     }
 
 
+def _call_method(match, window):
+    """Resolve a call head's method: explicit dotted name, options override, or GET."""
+    explicit = match.group(1)
+    if explicit:
+        return explicit
+    opt = _METHOD_OPTION_RE.search(window)
+    if opt:
+        return opt.group(1).lower()
+    return "get"
+
+
+def _call_url(window):
+    """Return the URL literal opening a call argument list, else None.
+
+    A quoted first argument is preferred; otherwise the first quoted literal
+    in the window is used so a concatenated fragment (``base + '/path/'``)
+    still resolves. A non-literal call has no literal to return and yields
+    None, so it never becomes a pair or a false link.
+    """
+    stripped = window.lstrip()
+    if stripped[:1] in ("'", '"'):
+        lit = QUOTED_LITERAL_RE.match(stripped)
+        if lit:
+            return lit.group(2)
+    litm = QUOTED_LITERAL_RE.search(window)
+    return litm.group(2) if litm else None
+
+
+def _iter_call_refs(text):
+    """Yield (line, method, url) for each frontend HTTP call in ``text``.
+
+    Call-head positions are located on a literal-blanked copy so a call that
+    appears inside a string/template literal cannot match; the URL itself is
+    read from the original text (blanking preserves length and newlines, so
+    offsets and line numbers stay aligned).
+    """
+    from diffimpactscout.impact import reverse
+
+    blanked = reverse._blank_literals(text, keep_export_names=False)
+    for m in _CALL_HEAD_RE.finditer(blanked):
+        window = text[m.end():m.end() + _CALL_WINDOW]
+        line = text[:m.start()].count("\n") + 1
+        yield line, _call_method(m, window), _call_url(window)
+
+
 def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=None):
     refs = []
     for posix in _iter_files(
@@ -502,21 +577,8 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
             continue
         text = _strip_comments(text)
         seen = set()
-        for m in HTTP_CALL_RE.finditer(text):
-            line = text[:m.start()].count("\n") + 1
-            method = m.group(2)
-            window = text[m.end():m.end() + 300]
-            stripped = window.lstrip()
-            if stripped[:1] in ("'", '"'):
-                lit = QUOTED_LITERAL_RE.match(stripped)
-                if lit:
-                    ref = _url_ref(posix, line, lit.group(2), method, seen)
-                    if ref is not None:
-                        refs.append(ref)
-                    continue
-            litm = QUOTED_LITERAL_RE.search(window)
-            literal = litm.group(2) if litm else None
-            ref = _url_ref(posix, line, literal, method, seen)
+        for line, method, url in _iter_call_refs(text):
+            ref = _url_ref(posix, line, url, method, seen)
             if ref is not None:
                 refs.append(ref)
         for m in URL_LITERAL_RE.finditer(text):
@@ -528,6 +590,35 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
             if ref is not None:
                 refs.append(ref)
     return refs
+
+
+def extract_call_pairs(root, frontend_globs=None, cfg=None):
+    """Return ``(method, url)`` pairs for frontend HTTP calls across call styles.
+
+    A thin projection over the same call-head scan as
+    ``extract_frontend_refs`` (dotted http/HttpClient/$http/axios, bare
+    fetch/axios, and their React Query wrappers), so every pair is also a
+    linkable ref. Only URL-like string literals produce a pair; a non-literal
+    call yields none and can never false-link.
+    """
+    globs = _TS_DEFAULT_GLOBS if frontend_globs is None else frontend_globs
+    pairs = []
+    seen = set()
+    for posix in _iter_files(root, globs, _TS_EXTS, cfg=cfg, vendor=True):
+        full = os.path.join(root, posix) if root else posix
+        text = _read_text(full)
+        if text is None:
+            continue
+        text = _strip_comments(text)
+        for _line, method, url in _iter_call_refs(text):
+            if not _is_url_like(url):
+                continue
+            key = (method, url)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append(key)
+    return pairs
 
 
 def _ts_import_names(block):
@@ -704,7 +795,14 @@ def match_endpoints(refs, routes):
                     }
                 )
             else:
-                unresolved.append({"file": file, "path": path, "dynamic": True})
+                unresolved.append(
+                    {
+                        "file": file,
+                        "path": path,
+                        "dynamic": True,
+                        "reason": "dynamic-ref",
+                    }
+                )
             continue
         hit = _best_route_match(path, routes)
         if hit is not None:
@@ -718,7 +816,14 @@ def match_endpoints(refs, routes):
                 }
             )
         else:
-            unresolved.append({"file": file, "path": path, "dynamic": False})
+            unresolved.append(
+                {
+                    "file": file,
+                    "path": path,
+                    "dynamic": False,
+                    "reason": "unknown-url",
+                }
+            )
     return matched, unresolved
 
 

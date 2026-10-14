@@ -63,6 +63,10 @@ def _parser():
         "--all", action="store_true", dest="show_all",
         help="also show lower-confidence (heuristic/transitive) impacts",
     )
+    p_impact.add_argument(
+        "--top", type=int, default=20,
+        help="max ranked rows in the table body (overflow collapses per module)",
+    )
     p_impact.set_defaults(func=_cmd_impact)
 
     p_guard_impact = sub.add_parser(
@@ -84,6 +88,10 @@ def _parser():
     p_guard_impact.add_argument(
         "--all", action="store_true", dest="show_all",
         help="also show lower-confidence (heuristic/transitive) impacts",
+    )
+    p_guard_impact.add_argument(
+        "--top", type=int, default=20,
+        help="max ranked rows in the table body (overflow collapses per module)",
     )
     p_guard_impact.set_defaults(func=_cmd_guard_and_analyse_impact)
 
@@ -196,6 +204,7 @@ def _cmd_impact(args):
         markdown=args.markdown,
         expand=args.expand,
         show_all=args.show_all,
+        top_n=args.top,
     )
 
 
@@ -218,6 +227,7 @@ def _cmd_guard_and_analyse_impact(args):
         markdown=args.markdown,
         expand=args.expand,
         show_all=args.show_all,
+        top_n=args.top,
     )
     return guard_rc if guard_rc != 0 else impact_rc
 

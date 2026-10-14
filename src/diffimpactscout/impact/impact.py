@@ -38,8 +38,24 @@ _ENTITY_KINDS = {
 _DEFAULT_KINDS = ("name",)
 
 
+def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
+                    top_n=20, expand=False):
+    """Build the JSON payload; additive shown/hidden_counts, backward compatible."""
+    shown_count, hidden_counts = reporter.top_n_counts(rows, top_n=top_n, expand=expand)
+    return {
+        "changed_count": changed_count,
+        "rows": rows,
+        "endpoints": endpoints,
+        "unresolved": unresolved,
+        "hidden_count": hidden_count,
+        "shown_count": shown_count,
+        "shown": shown_count,
+        "hidden_counts": hidden_counts,
+    }
+
+
 def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=False,
-               expand=False, show_all=False):
+               expand=False, show_all=False, top_n=20):
     if _skip_requested():
         return 0
     impact_cfg = cfg.get("impact") or {}
@@ -111,24 +127,18 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         show_all=show_all,
     )
     changed_count = len(changes)
+    effective_expand = bool(expand or show_all)
     if json_out:
-        sys.stdout.write(
-            json.dumps(
-                {
-                    "changed_count": changed_count,
-                    "rows": rows,
-                    "endpoints": endpoints,
-                    "unresolved": unresolved,
-                    "hidden_count": hidden_count,
-                }
-            )
-            + "\n"
-        )
+        sys.stdout.write(json.dumps(to_json_payload(
+            rows, endpoints, unresolved, changed_count, hidden_count,
+            top_n=top_n, expand=effective_expand,
+        )) + "\n")
     else:
         sys.stdout.write(
             reporter.render_report(
                 rows, endpoints, unresolved, changed_count,
-                markdown=markdown, hidden_count=hidden_count, expand=(expand or show_all),
+                markdown=markdown, hidden_count=hidden_count, expand=effective_expand,
+                top_n=top_n,
             )
         )
     strict_env = os.environ.get("IMPACT_CHECK_STRICT")

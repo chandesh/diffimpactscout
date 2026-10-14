@@ -281,12 +281,76 @@ def _split_tiers(rows):
     tiered = {"frontend": [], "backend": [], "heuristic": []}
     untiered = []
     for row in rows or []:
-        tier = row.get("tier")
+        tier = row.get("tier") if isinstance(row, dict) else getattr(row, "tier", None)
         if tier in tiered:
             tiered[tier].append(row)
         else:
             untiered.append(row)
     return tiered, untiered
+
+
+def _table_cap(top_n, expand):
+    """Return the table-body cap, or None when bypassed via --all/--expand."""
+    if expand:
+        return None
+    if top_n is None:
+        return 20
+    try:
+        cap = int(top_n)
+    except (TypeError, ValueError):
+        return 20
+    if cap < 0:
+        return 0
+    return cap
+
+
+def _full_ordered(rows):
+    """Flatten rows into display order: section outer, tier inner, stable."""
+    tiered, untiered = _split_tiers(rows)
+    for tier in tiered:
+        tiered[tier] = _order_by_section(tiered[tier])
+    untiered = _order_by_section(untiered)
+    full = []
+    for section in _SECTION_ORDER:
+        for tier, _label in _TIER_LABELS:
+            bucket = [r for r in tiered.get(tier, []) if _normalized_section(r) == section]
+            full.extend(bucket)
+        full.extend([r for r in untiered if _normalized_section(r) == section])
+    return full
+
+
+def _apply_top_n(rows, top_n, expand):
+    """Split section-ordered rows into (shown, hidden) for the Top-N cap."""
+    full = _full_ordered(rows)
+    cap = _table_cap(top_n, expand)
+    if cap is None:
+        return full, []
+    return full[:cap], full[cap:]
+
+
+def _overflow_lines(hidden):
+    """One collapsed line per module; sums exactly to len(hidden)."""
+    by_module = {}
+    for row in hidden or []:
+        mod = _cell(row, "module") or "unknown"
+        by_module.setdefault(mod, []).append(row)
+    lines = []
+    for mod in sorted(by_module):
+        bucket = by_module[mod]
+        n = len(bucket)
+        h = sum(1 for r in bucket if _cell(r, "severity") == "High")
+        lines.append("... +%d more in %s (%d High)" % (n, mod, h))
+    return lines
+
+
+def top_n_counts(rows, top_n=None, expand=False):
+    """Return (shown_count, hidden_counts) for JSON; additive, backward compatible."""
+    _shown, hidden = _apply_top_n(rows or [], top_n, expand)
+    by_module = {}
+    for row in hidden:
+        mod = _cell(row, "module") or "unknown"
+        by_module[mod] = by_module.get(mod, 0) + 1
+    return len(_shown), by_module
 
 
 def _markdown_table(rows, start=1):
@@ -322,7 +386,8 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  changed %d files vs impacted %d files" % (changed_count, impacted))
     for path, owner in (top or [])[:limit]:
         lines.append("  - %s (%s)" % (path, owner or "unowned"))
-    tiered, untiered = _split_tiers(rows)
+    shown, hidden = _apply_top_n(rows, top_n, expand)
+    tiered, untiered = _split_tiers(shown)
     for tier in tiered:
         tiered[tier] = _order_by_section(tiered[tier])
     untiered = _order_by_section(untiered)
@@ -354,7 +419,7 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
             ordered.extend(bucket)
             if expand:
                 for row in bucket:
-                    for rel in row.get("related") or []:
+                    for rel in (row.get("related") if isinstance(row, dict) else None) or []:
                         lines.append("      - %s" % rel)
         if section_untiered:
             header, body = _ascii_table(section_untiered, start)
@@ -362,6 +427,8 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
             lines.append(header)
             lines.extend(body)
             ordered.extend(section_untiered)
+    for overflow in _overflow_lines(hidden):
+        lines.append("  " + overflow)
     if endpoints:
         lines.append("")
         lines.append("  Affected WebURL/API-URL endpoints:")
@@ -385,10 +452,12 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     return "\n".join(lines) + "\n"
 
 
-def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False):
+def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False,
+                     top_n=None):
     lines = []
     lines.append("# Impact Analysis Report")
-    tiered, untiered = _split_tiers(rows)
+    shown, hidden = _apply_top_n(rows, top_n, expand)
+    tiered, untiered = _split_tiers(shown)
     for tier in tiered:
         tiered[tier] = _order_by_section(tiered[tier])
     untiered = _order_by_section(untiered)
@@ -417,7 +486,7 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
             ordered.extend(bucket)
             if expand:
                 for row in bucket:
-                    related = row.get("related") or []
+                    related = (row.get("related") if isinstance(row, dict) else None) or []
                     if not related:
                         continue
                     lines.append("")
@@ -432,6 +501,9 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
             lines.extend(_markdown_table(section_untiered, start))
             start += len(section_untiered)
             ordered.extend(section_untiered)
+    for overflow in _overflow_lines(hidden):
+        lines.append("")
+        lines.append(overflow)
     if endpoints:
         lines.append("")
         lines.append("## Affected WebURL/API-URL endpoints")
@@ -462,7 +534,8 @@ def render_report(rows, endpoints, unresolved, changed_count, markdown=False,
                   changed_paths=None):
     if markdown:
         return _render_markdown(rows, endpoints, unresolved, changed_count,
-                                hidden_count=hidden_count, expand=expand)
+                                hidden_count=hidden_count, expand=expand,
+                                top_n=top_n)
     return _render_ascii(rows, endpoints, unresolved, changed_count,
                          hidden_count=hidden_count, expand=expand,
                          summary_extra=summary_extra, top_n=top_n,

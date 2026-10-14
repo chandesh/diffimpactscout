@@ -416,19 +416,19 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "status (attr at 4)" in out
     assert "Medium" in out
-    assert "verify" in out
+    assert "update call site" in out
     assert "referenced from a file outside the change-set" in out
     assert "1 changed file(s)" in out
 
 
 def test_run_impact_deleted_function(tmp_path, capsys):
-    """Verifies that a deleted function is reported as a dangling reference."""
+    """Verifies that a deleted function is reported with a remove-import action."""
     repo, base, _head = _build_deleted_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "verify dangling references" in out
+    assert "remove import" in out
     assert "legacy_helper (import at 1)" in out
     assert "legacy_helper (name at 4)" in out
     assert "High" in out
@@ -997,6 +997,43 @@ def test_hide_low_by_default_and_show_all():
     lows = [r for r in rows_all if r["confidence"] == "low"]
     assert lows
     assert all(r["section"] == "Transitive" for r in lows)
+
+
+def test_why_and_action_present():
+    from diffimpactscout.impact import impact as m
+    row = m.finish_row({"path": "b.py", "ref": "x", "key": "b.py:3"}, severity="Medium", changed_paths={"a.py"})
+    row = m.attach_why_action(row, symbol="x", import_chain=["b"], deleted=False, test_path="tests/test_b.py")
+    assert row["why_matters"] and "x" in row["why_matters"]
+    assert row["suggested_action"] != "verify"
+    assert row["suggested_action"] in ("remove import", "update call site", "check migration mapping", "run tests/test_b.py")
+
+
+def test_why_and_action_deleted():
+    from diffimpactscout.impact import impact as m
+    row = m.finish_row({"path": "b.py", "ref": "x", "key": "b.py:3"}, severity="High", changed_paths={"a.py"})
+    row = m.attach_why_action(row, symbol="x", import_chain=[], deleted=True, test_path=None)
+    assert "x" in row["why_matters"]
+    assert "deleted" in row["why_matters"]
+    assert row["suggested_action"] == "remove import"
+    assert row["action"] == "remove import"
+
+
+def test_no_bare_verify_action_on_medium_plus():
+    """Lint: no Medium+ composed row may carry bare verify as its sole action."""
+    analyses, entities, changed = _confidence_fixture()
+    rows, _e, _u, _h = impact._compose_rows(
+        None, {}, "generic", entities, analyses, changed, True,
+        show_all=True,
+    )
+    assert rows
+    allowed = ("remove import", "update call site", "check migration mapping")
+    for r in rows:
+        if r.get("severity") in ("Medium", "High"):
+            assert r.get("why_matters"), "Medium+ row missing why_matters: %r" % (r,)
+            assert r.get("suggested_action") != "verify", "bare verify: %r" % (r,)
+            action = r.get("suggested_action") or ""
+            assert action in allowed or action.startswith("run "), "unexpected action: %r" % (r,)
+            assert r.get("action") == r.get("suggested_action")
 
 
 def test_stoplist_pruned_stay_hidden_with_all():

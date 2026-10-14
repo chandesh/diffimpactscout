@@ -450,6 +450,13 @@ def _compose_rows(
             changed_paths=changed_paths, section_hint=hint, deleted=delrow,
         )
         row.update(finished)
+        if severity in ("Medium", "High"):
+            chain = (row.get("evidence") or {}).get("import_chain") or []
+            row.update(attach_why_action(
+                row, symbol=name, import_chain=list(chain),
+                deleted=delrow,
+                test_path=_test_path_for_row(root, row.get("path")),
+            ))
     endpoints = _endpoint_rows(affected)
     return rows, endpoints, unresolved, hidden_count
 
@@ -766,6 +773,40 @@ def _action(severity, deleted):
     if severity == "Medium":
         return "verify"
     return "ok"
+
+
+def attach_why_action(row, symbol, import_chain, deleted, test_path):
+    row = dict(row)
+    chain = " via " + "->".join(import_chain) if import_chain else " (unresolved import)"
+    if deleted:
+        row["why_matters"] = "%s uses deleted symbol %s%s" % (row.get("path"), symbol, chain)
+        row["suggested_action"] = "remove import"
+    else:
+        row["why_matters"] = "%s uses %s%s" % (row.get("ref"), symbol, chain)
+        row["suggested_action"] = "run %s" % test_path if test_path else "update call site"
+    row["action"] = row["suggested_action"]
+    return row
+
+
+def _test_path_for_row(root, path):
+    """Return the conventional unit-test path for a row, or None when absent.
+
+    Maps ``pkg/mod.py`` to ``tests/test_mod.py`` when that file exists on
+    disk; anything else (non-python rows, missing files) yields None so the
+    caller falls back to ``update call site``.
+    """
+    base = os.path.basename(path or "")
+    if not base or not base.endswith(".py") or not root:
+        return None
+    stem = base[:-3]
+    if not stem or stem.startswith("test_"):
+        return None
+    candidate = os.path.join("tests", "test_%s.py" % stem)
+    try:
+        found = os.path.isfile(os.path.join(root, candidate))
+    except (OSError, ValueError):
+        return None
+    return candidate if found else None
 
 
 def _python_files(root, cfg):

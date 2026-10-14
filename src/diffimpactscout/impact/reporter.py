@@ -147,7 +147,12 @@ def _rationale_lines(rows):
         if not reason:
             continue
         label = "%s -> %s" % (_cell(row, "path") or "-", _cell(row, "ref") or "-")
-        lines.append("    %d. %s - %s (%s)" % (i, _cell(row, "severity") or "?", label, reason))
+        line = "    %d. %s - %s (%s)" % (i, _cell(row, "severity") or "?", label, reason)
+        why = _cell(row, "why_matters")
+        action = _cell(row, "suggested_action")
+        if why or action:
+            line += " [why: %s; do: %s]" % (why or "-", action or "-")
+        lines.append(line)
     return lines
 
 

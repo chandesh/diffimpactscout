@@ -1104,6 +1104,108 @@ def test_breaking_detectors():
     ])
     assert len([r for r in rows if r["severity"] == "High"]) == 3
     assert any("restore or justify removal" in r["suggested_action"] for r in rows)
+    by_path = {r["path"]: r for r in rows}
+    test_row = by_path["tests/test_x.py"]
+    assert test_row["ref"] == "deleted test coverage"
+    assert test_row["suggested_action"] == "restore or justify removal"
+    assert test_row["section"] == "Breaking"
+    assert "risk" in test_row
+    api_row = by_path["pkg/mod.py"]
+    assert api_row["ref"] == "breaking API change: foo"
+    assert api_row["suggested_action"] == "restore export or justify breaking change"
+    assert api_row["section"] == "Breaking"
+    mig_row = by_path["pkg/migrations/0001.py"]
+    assert mig_row["ref"] == "migration/infra change - needs rollout note"
+    assert mig_row["suggested_action"] == "add rollout note"
+    assert mig_row["section"] == "Breaking"
+    for r in rows:
+        assert r["why_matters"] and "\n" not in r["why_matters"]
+        assert "verify" not in r["suggested_action"]
+        assert r["path"] in r["why_matters"]
+
+
+def test_breaking_rule1_threshold():
+    """Verifies rule 1 fires only for deleted test files or >50% removed."""
+    from diffimpactscout.impact import impact as m
+    # Small ratios must not fire.
+    assert m.detect_breaking([{"path": "tests/test_x.py", "removed_ratio": 0.01}]) == []
+    assert m.detect_breaking([{"path": "tests/test_x.py", "removed_ratio": 0.2}]) == []
+    # Touched alone must not fire.
+    assert m.detect_breaking([{"path": "tests/test_x.py", "touched": True}]) == []
+    # Deleted test file fires.
+    deleted_rows = m.detect_breaking([{"path": "tests/test_x.py", "status": "D"}])
+    assert len(deleted_rows) == 1
+    assert deleted_rows[0]["ref"] == "deleted test coverage"
+    # Non-test ratio above 0.5 must not be labeled deleted test coverage.
+    other_rows = m.detect_breaking([{"path": "pkg/util.py", "removed_ratio": 0.6}])
+    assert [r for r in other_rows if r["ref"] == "deleted test coverage"] == []
+    # Deleted source file must not be mislabeled; it falls through
+    # (no deleted entities here, so no rows at all).
+    src_rows = m.detect_breaking([{"path": "pkg/util.py", "status": "D"}])
+    assert [r for r in src_rows if r["ref"] == "deleted test coverage"] == []
+    # Deleted source with a deleted entity falls through to breaking-API.
+    entities = {"helper": {"kind": "function", "deleted": True, "modules": {"pkg.util"}}}
+    api_rows = m.detect_breaking(
+        [{"path": "pkg/util.py", "status": "D"}], entities=entities
+    )
+    assert len(api_rows) == 1
+    assert api_rows[0]["ref"] == "breaking API change: helper"
+
+
+def test_breaking_migration_infra_matchers():
+    """Verifies lockfile and CI matchers fire as migration/infra rows."""
+    from diffimpactscout.impact import impact as m
+    paths = [
+        "pkg/migrations/0002.py",
+        ".github/workflows/ci.yml",
+        ".gitlab-ci.yml",
+        ".circleci/config.yml",
+        "Jenkinsfile",
+        ".travis.yml",
+        "azure-pipelines.yml",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "Pipfile.lock",
+        "poetry.lock",
+        "Gemfile.lock",
+        "Cargo.lock",
+        "go.sum",
+        "pkg/app.toml",
+    ]
+    rows = m.detect_breaking([{"path": p, "status": "M"} for p in paths])
+    assert len(rows) == len(paths)
+    for r in rows:
+        assert r["ref"] == "migration/infra change - needs rollout note"
+        assert r["suggested_action"] == "add rollout note"
+        assert r["section"] == "Breaking"
+
+
+def test_breaking_modified_test_ratio_wired(tmp_path):
+    """Verifies a modified test file with >50% removed lines fires end to end."""
+    from diffimpactscout.impact import diff_parser
+    from diffimpactscout.impact import impact as m
+    repo = _make_repo(tmp_path)
+    base_src = "".join("line %d\n" % i for i in range(10))
+    _write(repo, "tests/test_x.py", base_src)
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(repo, "tests/test_x.py", "line 0\nline 1\n")
+    _commit(repo, "trim test")
+    anchor = _anchor(repo, base)
+    changes = diff_parser.get_file_changes(repo, anchor, False, None, None)
+    assert [c.path for c in changes] == ["tests/test_x.py"]
+    rows = m.detect_breaking(changes, root=repo, anchor=anchor)
+    assert len(rows) == 1
+    assert rows[0]["ref"] == "deleted test coverage"
+    assert rows[0]["section"] == "Breaking"
+    # Small removal stays quiet.
+    _write(repo, "tests/test_x.py", "".join("line %d\n" % i for i in range(9)))
+    _commit(repo, "small trim")
+    changes2 = diff_parser.get_file_changes(repo, anchor, False, None, None)
+    test_changes = [c for c in changes2 if c.path == "tests/test_x.py"]
+    rows2 = m.detect_breaking(test_changes, root=repo, anchor=anchor)
+    assert rows2 == []
 
 
 def test_breaking_pure_addition_yields_no_high():
@@ -1111,6 +1213,10 @@ def test_breaking_pure_addition_yields_no_high():
     rows = m.detect_breaking([
         {"path": "pkg/added.py", "added_only": True},
         {"path": "pkg/other.py", "added_only": True},
+        {"path": "pkg/migrations/0003.py", "added_only": True},
+        {"path": "tests/test_new.py", "added_only": True},
+        {"path": "pkg/migrations/0004.py", "status": "A"},
+        {"path": ".github/workflows/ci.yml", "status": "A"},
     ])
     assert [r for r in rows if r["severity"] == "High"] == []
 

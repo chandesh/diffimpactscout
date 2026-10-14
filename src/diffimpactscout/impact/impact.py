@@ -130,6 +130,10 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         pseudo_entities=pseudo_entities,
         show_all=show_all,
         changes=changes,
+        anchor=anchor,
+        from_ref=from_ref,
+        to_ref=to_ref,
+        staged=staged,
     )
     changed_count = len(changes)
     effective_expand = bool(expand or show_all)
@@ -335,7 +339,8 @@ def _confidence_for_tiered_row(row):
 def _compose_rows(
     root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
     extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
-    show_all=False, changes=None,
+    show_all=False, changes=None, anchor=None, from_ref=None, to_ref=None,
+    staged=False,
 ):
     rows = []
     layers = {}
@@ -487,7 +492,8 @@ def _compose_rows(
             ))
     rows.extend(detect_breaking(
         changes or [], entities=entities, root=root,
-        changed_paths=changed_paths,
+        changed_paths=changed_paths, anchor=anchor, from_ref=from_ref,
+        to_ref=to_ref, staged=staged,
     ))
     rows = rank_rows(rows, max_fan_in=max_fan_in)
     endpoints = _endpoint_rows(affected)
@@ -810,34 +816,104 @@ def _br_finish(path, ref, rule_action, symbol, root, changed_paths):
     explained["missing_test"] = 0
     explained["churn"] = 0
     explained["owner"] = owners_mod.owner_for(path, root or "")
+    # Standalone detect_breaking callers get a severity-only default;
+    # rank_rows overwrites this when rows are composed.
+    explained["risk"] = risk_mod.score("High", 0.0, 0.0, 0.0)
     return explained
 
 
-def detect_breaking(changes, entities=None, root="", changed_paths=None):
+def _is_migration_infra(path):
+    """Return True when a path is a migration, lockfile, or CI config."""
+    flat = (path or "").replace("\\", "/")
+    base = flat.rsplit("/", 1)[-1]
+    if "migrations/" in flat:
+        return True
+    if ".github/" in flat:
+        return True
+    if ".circleci/" in flat:
+        return True
+    if flat.endswith((".lock", ".toml")):
+        return True
+    if base in (
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "go.sum",
+        "Jenkinsfile",
+        ".travis.yml",
+        "azure-pipelines.yml",
+        ".gitlab-ci.yml",
+    ):
+        return True
+    if base.startswith("Jenkinsfile."):
+        return True
+    return False
+
+
+def _br_ratio_from_diff(root, change, anchor=None, from_ref=None,
+                        to_ref=None, staged=False):
+    """Compute removed-line ratio for a modified file from its diff hunks.
+
+    Ratio is len(old hunk lines) / total old file lines; old hunks come
+    from get_changed_lines, total lines from the old blob at the old ref
+    (staged -> HEAD, anchor -> anchor, from_ref -> from_ref, else HEAD).
+    Returns 0.0 when hunks or the old blob are unavailable.
+    """
+    try:
+        old_lines, _new_lines = get_changed_lines(
+            root, change, anchor, from_ref, to_ref, staged
+        )
+    except (OSError, ValueError):
+        return 0.0
+    if not old_lines:
+        return 0.0
+    if staged:
+        old_ref = "HEAD"
+    elif anchor:
+        old_ref = anchor
+    elif from_ref:
+        old_ref = from_ref
+    else:
+        old_ref = "HEAD"
+    old_path = _br_old_path(change) or _br_path(change)
+    try:
+        old_src = read_path_at_ref(root, old_path, old_ref)
+    except (OSError, ValueError):
+        return 0.0
+    total = len((old_src or "").splitlines())
+    if total <= 0:
+        return 0.0
+    return float(len(old_lines)) / float(total)
+
+
+def detect_breaking(changes, entities=None, root="", changed_paths=None,
+                      anchor=None, from_ref=None, to_ref=None, staged=False):
     """Breaking-change detectors (REQ-12): one High row per matching change.
 
     Rules, in order (first match wins per change):
     test deletion: test path (tests/ dir or test_*.py) that is deleted
-    (status D), touched, or has removed content, OR any file with
-    removed_ratio > 0.5 -> "deleted test coverage" / High /
-    "restore or justify removal".
+    (status D) or has removed_ratio > 0.5 -> "deleted test coverage" /
+    High / "restore or justify removal". Deleted non-test .py files fall
+    through to the breaking-API branch via their deleted entities.
     breaking API: removed_export set (dict key, FileChange attr, or a
     deleted entity from _changed_entities whose module matches the
     change) or signature_changed set -> "breaking API change" / High.
-    migration/infra: "migrations/" or ".github/" in path, or a
-    .lock/.toml suffix -> "migration/infra change" / High /
-    "add rollout note".
+    migration/infra: _is_migration_infra match (migrations/, .github/,
+    .circleci/, lockfile names/suffixes, CI configs) -> "migration/infra
+    change" / High / "add rollout note".
     Pure-addition changes (status A / added_only) emit no rows.
 
-    Data sources: FileChange carries path/status/old_path/ext only, so
-    removed_ratio comes from the synthetic "removed_ratio" key (dicts and
-    tests) with status D implying 1.0; per-hunk removed ratios for
-    modified files are NOT computed from get_changed_lines here.
-    Signature diffs are NOT AST-compared; only an explicit
-    "signature_changed" flag fires that branch. Rows are finished with
-    finish_row + attach_why_action (action then overridden per rule),
-    carry confidence high with import_chain evidence, and are ranked
-    with normal rows by the caller.
+    Data sources: FileChange carries path/status/old_path/ext only, so an
+    explicit "removed_ratio" key (dicts and tests) wins with status D
+    implying 1.0; otherwise a modified test file with a root gets its
+    ratio from get_changed_lines as len(old hunk lines) / total old file
+    lines. Signature diffs are NOT AST-compared; only an explicit
+    "signature_changed" flag fires that branch (follow-up: AST-compare
+    old/new signatures). Rows are finished with finish_row +
+    attach_why_action (why/action then overridden per rule with a
+    one-line path-naming summary), carry confidence high with
+    import_chain evidence plus a severity-only default risk (rank_rows
+    overwrites it when rows are composed), and are ranked with normal
+    rows by the caller.
 
     ASCII note: the plan text uses an em-dash in the migration ref; this
     codebase is ASCII-only (no em-dash in src), so the ref uses a hyphen:
@@ -852,17 +928,21 @@ def detect_breaking(changes, entities=None, root="", changed_paths=None):
         if not path:
             continue
         ratio = _br_removed_ratio(change)
-        touched = bool(_br_get(change, "touched", False))
         added = _br_is_added(change)
         deleted = _br_is_deleted(change)
-        if ((_is_test_path(path) and not added
-                and (deleted or touched or ratio > 0))
-                or ratio > 0.5):
+        if added:
+            continue
+        if ratio <= 0.0 and not deleted and _is_test_path(path) and root:
+            ratio = _br_ratio_from_diff(
+                root, change, anchor, from_ref, to_ref, staged
+            )
+        if (_is_test_path(path) and not added and (deleted or ratio > 0.5)):
             row = _br_finish(
                 path, "deleted test coverage",
                 "restore or justify removal", path, root, changed_paths,
             )
             row["reason"] = "deleted test coverage in this change-set"
+            row["why_matters"] = "%s deleted test coverage in this change-set" % (path,)
             rows.append(row)
             continue
         removed_export = _br_deleted_export(change, entities)
@@ -875,16 +955,19 @@ def detect_breaking(changes, entities=None, root="", changed_paths=None):
                 label, root, changed_paths,
             )
             row["reason"] = "export removed or signature changed in this change-set"
+            if removed_export:
+                row["why_matters"] = "%s removed export %s in this change-set" % (path, label)
+            else:
+                row["why_matters"] = "%s signature changed in this change-set" % (path,)
             rows.append(row)
             continue
-        flat = path.replace("\\", "/")
-        if ("migrations/" in flat or ".github/" in flat
-                or path.endswith((".lock", ".toml"))):
+        if _is_migration_infra(path):
             row = _br_finish(
                 path, "migration/infra change - needs rollout note",
                 "add rollout note", path, root, changed_paths,
             )
             row["reason"] = "migration or infra file touched; needs rollout note"
+            row["why_matters"] = "%s migration/infra change needs rollout note" % (path,)
             rows.append(row)
             continue
     return rows

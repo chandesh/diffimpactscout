@@ -934,3 +934,90 @@ def test_section_and_badge_assignment():
     transitive = dict(row2, path="tr.py", section="Transitive")
     ordered = reporter._order_by_section([transitive, breaking, direct])
     assert [r["section"] for r in ordered] == ["Breaking", "Direct", "Transitive"]
+
+
+def _confidence_fixture():
+    analyses = {
+        "app/other.py": pa.analyze_source(
+            "from app.mod import helper\n"
+            "\n"
+            "def f():\n"
+            "    return helper()\n"
+        ),
+        "app/mod.py": pa.analyze_source(
+            "def helper():\n"
+            "    return 1\n"
+            "\n"
+            "def g():\n"
+            "    return helper()\n"
+        ),
+        "app/other2.py": pa.analyze_source(
+            "def f():\n"
+            "    return helper()\n"
+        ),
+    }
+    entities = {
+        "helper": {"kind": "function", "deleted": False, "modules": {"app.mod"}}
+    }
+    changed = ["app/mod.py", "app/other2.py"]
+    return analyses, entities, changed
+
+
+def test_rows_carry_confidence_and_evidence():
+    """Verifies every composed row carries confidence and evidence."""
+    analyses, entities, changed = _confidence_fixture()
+    rows, _endpoints, _unresolved, _hidden = impact._compose_rows(
+        None, {}, "generic", entities, analyses, changed, True,
+        show_all=True,
+    )
+    assert rows
+    for r in rows:
+        assert r["confidence"] in ("high", "medium", "low")
+        assert "evidence" in r and r["evidence"]
+    confs = {r["confidence"] for r in rows}
+    assert "high" in confs
+    assert "medium" in confs
+    assert "low" in confs
+
+
+def test_hide_low_by_default_and_show_all():
+    """Verifies low-confidence rows hide by default and show under Transitive."""
+    analyses, entities, changed = _confidence_fixture()
+    rows, _e, _u, hidden = impact._compose_rows(
+        None, {}, "generic", entities, analyses, changed, True,
+        show_all=False,
+    )
+    assert rows
+    assert all(r["confidence"] != "low" for r in rows)
+    assert hidden > 0
+    rows_all, _e2, _u2, _h2 = impact._compose_rows(
+        None, {}, "generic", entities, analyses, changed, True,
+        show_all=True,
+    )
+    lows = [r for r in rows_all if r["confidence"] == "low"]
+    assert lows
+    assert all(r["section"] == "Transitive" for r in lows)
+
+
+def test_stoplist_pruned_stay_hidden_with_all():
+    """Verifies stoplist-pruned generic hits stay dropped even with --all.
+
+    Carry-forward disposition from Task 2 (REQ-7): pruned hits are
+    drop-always, never demoted/resurfaced. Task 2 deferred
+    "--all demotion+resurfacing of stoplist-pruned hits" here; chosen
+    behavior is drop-always so generic-name noise cannot return via --all.
+    """
+    analyses = {
+        "app/other.py": pa.analyze_source(
+            "def f(obj):\n"
+            "    return obj.status\n"
+        ),
+    }
+    entities = {
+        "status": {"kind": "class_field", "deleted": False, "modules": {"app.models"}}
+    }
+    rows, _e, _u, _h = impact._compose_rows(
+        None, {}, "generic", entities, analyses, ["app/models.py"], True,
+        show_all=True,
+    )
+    assert rows == []

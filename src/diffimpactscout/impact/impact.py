@@ -261,6 +261,74 @@ def _row_severity(row, layers, delrow, changed_paths):
     return base, reporter.severity_reason(layers, delrow, changed_paths, row.get("path"))
 
 
+def _confidence_for_python_hit(hit, analysis, entity_mods, path):
+    """Return (confidence, evidence) for one python reference hit.
+
+    high: the referencing file binds the symbol through an import from one
+    of the defining modules (import_chain lists the defining modules).
+    medium: same-module reference without a qualifying import
+    (import_chain holds the referencing module). low: neither resolves
+    (unresolved import; hidden by default, shown under Transitive
+    with --all).
+    """
+    mods = set(entity_mods or ())
+    if not mods:
+        return "low", {"unresolved": True}
+    name = hit.get("name") or ""
+    how = hit.get("how") or "name"
+    if how == "import":
+        if pa._imports_from(analysis, name, mods, path):
+            return "high", {"import_chain": sorted(mods)}
+    elif how == "attr":
+        base = _hit_base(analysis, hit)
+        head = (base or "").split(".")[0]
+        if head and pa._imports_from(analysis, head, mods, path):
+            return "high", {"import_chain": sorted(mods)}
+    else:
+        if pa._imports_from(analysis, name, mods, path):
+            return "high", {"import_chain": sorted(mods)}
+    if _module_of(path) in mods:
+        return "medium", {"import_chain": [_module_of(path)]}
+    return "low", {"unresolved": True}
+
+
+def _hit_base(analysis, hit):
+    """Return the base chain for a hit by matching its usage record."""
+    usages = None
+    if isinstance(analysis, dict):
+        usages = analysis.get("usages")
+    if not isinstance(usages, list):
+        return ""
+    for u in usages:
+        if not isinstance(u, dict):
+            continue
+        if u.get("name") != hit.get("name"):
+            continue
+        if u.get("kind", "name") != hit.get("how", "name"):
+            continue
+        if u.get("line", 0) != hit.get("line", 0):
+            continue
+        return u.get("base") or ""
+    return ""
+
+
+def _confidence_for_tiered_row(row):
+    """Return (confidence, evidence) for reverse/template/frontend rows.
+
+    frontend tier rows name a changed file directly (high); backend tier
+    rows render a changed template through a known API (medium);
+    heuristic rows are transitive context (low, hidden by default).
+    """
+    tier = row.get("tier")
+    if tier == reverse_mod.TIER_FRONTEND:
+        return "high", {"import_chain": [row.get("path") or ""]}
+    if tier == reverse_mod.TIER_BACKEND:
+        return "medium", {"import_chain": [row.get("module") or ""]}
+    if tier == reverse_mod.TIER_HEURISTIC:
+        return "low", {"unresolved": True}
+    return "medium", {"import_chain": [row.get("module") or ""]}
+
+
 def _compose_rows(
     root, impact_cfg, profile, entities, analyses, changed_paths, fast, cfg=None,
     extra_rows=None, extra_layers=None, extra_unresolved=None, pseudo_entities=None,
@@ -271,6 +339,11 @@ def _compose_rows(
     for name, cats in (extra_layers or {}).items():
         layers.setdefault(name, set()).update(cats)
     rows.extend(extra_rows or [])
+    for row in rows:
+        if "confidence" not in row:
+            conf, ev = _confidence_for_tiered_row(row)
+            row["confidence"] = conf
+            row["evidence"] = ev
     modules = {name: ent.get("modules") or set() for name, ent in entities.items()}
     deleted = {name for name, ent in entities.items() if ent.get("deleted")}
     weak_attr = [
@@ -303,6 +376,14 @@ def _compose_rows(
                 # binding to an affected view) are heuristic context, not a
                 # certain impact.
                 row["tier"] = reverse_mod.TIER_HEURISTIC
+            analysis = _peel(analyses.get(hit.get("path")))
+            conf, ev = _confidence_for_python_hit(
+                hit, analysis, modules.get(name) or set(), hit.get("path")
+            )
+            if row.get("tier") == reverse_mod.TIER_HEURISTIC:
+                conf, ev = "low", {"unresolved": True}
+            row["confidence"] = conf
+            row["evidence"] = ev
             rows.append(row)
     routes = _routes(root, impact_cfg, profile, cfg)
     affected = _affected_routes(routes, analyses, entities, weak) if not fast else []
@@ -314,12 +395,21 @@ def _compose_rows(
         frontend_refs, affected
     )
     unresolved = list(extra_unresolved or [])
+    # Stoplist-pruned generic hits (REQ-7) are drop-always: find_references
+    # already pruned unqualified uses, and they are never demoted or
+    # resurfaced here -- even with show_all -- so generic-name noise cannot
+    # return via --all. Only confidence-low rows (unresolved imports that
+    # still emitted, e.g. inside the change-set) resurface with --all.
     for hit in template_matched:
         row = _tier_linked_row(
             _linked_row(hit, entities, layers, "template", changed_paths),
             pseudo, changed_paths,
         )
         if row is not None:
+            if "confidence" not in row:
+                conf, ev = _confidence_for_tiered_row(row)
+                row["confidence"] = conf
+                row["evidence"] = ev
             rows.append(row)
     for hit in frontend_matched:
         row = _tier_linked_row(
@@ -327,6 +417,10 @@ def _compose_rows(
             pseudo, changed_paths,
         )
         if row is not None:
+            if "confidence" not in row:
+                conf, ev = _confidence_for_tiered_row(row)
+                row["confidence"] = conf
+                row["evidence"] = ev
             rows.append(row)
     rows = _dedup_rows(rows)
     hidden_count = 0
@@ -334,6 +428,8 @@ def _compose_rows(
         kept = []
         for r in rows:
             if r.get("tier") == reverse_mod.TIER_HEURISTIC:
+                hidden_count += 1
+            elif r.get("confidence") == "low":
                 hidden_count += 1
             else:
                 kept.append(r)
@@ -347,6 +443,8 @@ def _compose_rows(
         row["reason"] = reason
         row["action"] = _action(severity, delrow)
         hint = "transitive" if row.get("tier") == reverse_mod.TIER_HEURISTIC else "direct"
+        if row.get("confidence") == "low":
+            hint = "transitive"
         finished = finish_row(
             row, severity=severity,
             changed_paths=changed_paths, section_hint=hint, deleted=delrow,

@@ -11,6 +11,8 @@ dist/
 .vscode/
 .ruff_cache/
 .planning/
+.codegraph/
+.python-version
 *.md
 !README.md
 !AGENTS.md

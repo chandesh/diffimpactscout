@@ -24,6 +24,7 @@ class JsonSyntaxCheck(Check):
 
     def run(self, context, files):
         issues = []
+        warned = []
         for path in files or []:
             if not path.endswith(".json"):
                 continue
@@ -32,6 +33,9 @@ class JsonSyntaxCheck(Check):
                 with open(fn, "rb") as fh:
                     data = fh.read()
             except OSError:
+                continue
+            if not data.strip():
+                warned.append("%s (empty file, nothing to parse)" % path)
                 continue
             try:
                 json.loads(data)
@@ -45,7 +49,7 @@ class JsonSyntaxCheck(Check):
                         "invalid JSON: %s" % exc,
                     )
                 )
-        return CheckResult(issues=issues)
+        return CheckResult(issues=issues, warned=warned)
 
 
 @register

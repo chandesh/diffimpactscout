@@ -323,3 +323,12 @@ def test_merge_conflict_empty_and_none_file_list(tmp_path):
         result = check.run(_ctx(root, FakeScope(changed={1})), files)
         assert result.ok()
         assert result.issues == []
+
+
+def test_empty_json_is_skip_not_fail(tmp_path):
+    """Verifies that an empty JSON file is skipped with a warning, not failed."""
+    root = str(tmp_path)
+    _write(root, "tsconfig.json", "   \n")
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["tsconfig.json"])
+    assert result.issues == []
+    assert len(result.warned) == 1

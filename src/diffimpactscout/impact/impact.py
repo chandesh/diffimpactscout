@@ -766,23 +766,29 @@ def _routes(root, impact_cfg, profile, cfg=None):
 
 
 def _action(severity, deleted):
-    if deleted:
-        return "verify dangling references"
-    if severity == "High":
-        return "review/verify"
-    if severity == "Medium":
-        return "verify"
+    # Medium/High actions are owned by attach_why_action (which overwrites
+    # row["action"); Low rows need no action. Deleted rows are always High,
+    # so the old deleted/Medium/High branches here could never survive.
     return "ok"
 
 
 def attach_why_action(row, symbol, import_chain, deleted, test_path):
+    """Attach REQ-9 why_matters/suggested_action to a Medium+ row (new dict).
+
+    Deleted rows suggest ``remove import``; rows with a conventional unit
+    test suggest ``run <test path>``; otherwise ``update call site``. The
+    row's ``action`` is set to the suggested action. Reverse pseudo-symbol
+    prefixes (``changed:``/``extends:``) are stripped for user-facing text.
+    """
     row = dict(row)
+    if isinstance(symbol, str) and symbol.split(":", 1)[0] in ("changed", "extends"):
+        symbol = symbol.split(":", 1)[-1]
     chain = " via " + "->".join(import_chain) if import_chain else " (unresolved import)"
     if deleted:
-        row["why_matters"] = "%s uses deleted symbol %s%s" % (row.get("path"), symbol, chain)
+        row["why_matters"] = "%s uses deleted symbol %s%s" % (row.get("ref") or "", symbol, chain)
         row["suggested_action"] = "remove import"
     else:
-        row["why_matters"] = "%s uses %s%s" % (row.get("ref"), symbol, chain)
+        row["why_matters"] = "%s uses %s%s" % (row.get("ref") or "", symbol, chain)
         row["suggested_action"] = "run %s" % test_path if test_path else "update call site"
     row["action"] = row["suggested_action"]
     return row

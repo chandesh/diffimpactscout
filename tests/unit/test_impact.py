@@ -1018,22 +1018,56 @@ def test_why_and_action_deleted():
     assert row["action"] == "remove import"
 
 
-def test_no_bare_verify_action_on_medium_plus():
+def test_no_bare_verify_action_on_medium_plus(tmp_path):
     """Lint: no Medium+ composed row may carry bare verify as its sole action."""
+    from diffimpactscout.impact import reverse as reverse_mod
     analyses, entities, changed = _confidence_fixture()
+    # Deleted branch: symbol removed in the change-set, still referenced.
+    entities["gone"] = {"kind": "function", "deleted": True, "modules": {"app.mod"}}
+    analyses["app/user.py"] = pa.analyze_source(
+        "from app.mod import gone\n"
+        "\n"
+        "def f():\n"
+        "    return gone()\n"
+    )
+    # Tiered branches: reverse rows keyed by pseudo-symbol entities.
+    extra_rows = [
+        reverse_mod.make_row(
+            "templates/base.html", "templates", "template",
+            "changed", "changed:base", tier=reverse_mod.TIER_FRONTEND,
+        ),
+        reverse_mod.make_row(
+            "static/app.js", "static", "frontend",
+            "fetch /api/order/", "extends:order", tier=reverse_mod.TIER_BACKEND,
+        ),
+    ]
+    # run-<test> branch: conventional unit test exists under the root.
+    test_file = tmp_path / "tests" / "test_other.py"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("def test_other():\n    pass\n")
     rows, _e, _u, _h = impact._compose_rows(
-        None, {}, "generic", entities, analyses, changed, True,
-        show_all=True,
+        str(tmp_path), {}, "generic", entities, analyses, changed, True,
+        show_all=True, extra_rows=extra_rows,
     )
     assert rows
     allowed = ("remove import", "update call site", "check migration mapping")
-    for r in rows:
-        if r.get("severity") in ("Medium", "High"):
-            assert r.get("why_matters"), "Medium+ row missing why_matters: %r" % (r,)
-            assert r.get("suggested_action") != "verify", "bare verify: %r" % (r,)
-            action = r.get("suggested_action") or ""
-            assert action in allowed or action.startswith("run "), "unexpected action: %r" % (r,)
-            assert r.get("action") == r.get("suggested_action")
+    medium_plus = [r for r in rows if r.get("severity") in ("Medium", "High")]
+    assert medium_plus
+    for r in medium_plus:
+        assert r.get("why_matters"), "Medium+ row missing why_matters: %r" % (r,)
+        assert "\n" not in r["why_matters"], "why_matters must be one line: %r" % (r,)
+        assert r.get("suggested_action") != "verify", "bare verify: %r" % (r,)
+        action = r.get("suggested_action") or ""
+        assert action in allowed or action.startswith("run "), "unexpected action: %r" % (r,)
+        assert r.get("action") == r.get("suggested_action")
+    # Each attach branch fired at least once.
+    assert any(r.get("suggested_action") == "remove import" for r in medium_plus)
+    assert any((r.get("suggested_action") or "").startswith("run ") for r in medium_plus)
+    assert any(r.get("suggested_action") == "update call site" for r in medium_plus)
+    # Pseudo-symbol prefixes never leak into user-facing text.
+    for r in medium_plus:
+        assert "changed:" not in (r.get("why_matters") or "")
+        assert "extends:" not in (r.get("why_matters") or "")
 
 
 def test_stoplist_pruned_stay_hidden_with_all():

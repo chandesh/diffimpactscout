@@ -566,6 +566,7 @@ def test_run_impact_json_output(tmp_path, capsys):
     assert any(r["category"] == "frontend" for r in data["rows"])
     assert [u["reason"] for u in data["unresolved"]] == ["unknown-url"]
     assert data["unresolved_by_reason"] == {"unknown-url": 1}
+    assert "cache_hit_rate" in data
 
 
 def test_run_impact_strict_blocks(tmp_path, monkeypatch, capsys):
@@ -1376,6 +1377,139 @@ def test_high_fan_in_ranks_first():
     ]
     ranked = m.rank_rows(rows, max_fan_in=10)
     assert ranked[0]["ref"] == "util"
+
+
+def _build_deleted_import_repo(tmp_path):
+    """A Python-only repo: a deleted symbol referenced by two import styles."""
+    repo = _make_repo(tmp_path)
+    _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
+    _write(repo, "pkg/__init__.py", "")
+    _write(
+        repo,
+        "pkg/mod.py",
+        "def keep():\n"
+        "    return 1\n"
+        "\n"
+        "def target():\n"
+        "    return 2\n",
+    )
+    _write(
+        repo,
+        "pkg/user_from.py",
+        "from pkg.mod import target\n"
+        "\n"
+        "def use():\n"
+        "    return target()\n",
+    )
+    _write(
+        repo,
+        "pkg/user_import.py",
+        "import pkg.mod\n"
+        "\n"
+        "def use2():\n"
+        "    return pkg.mod.target()\n",
+    )
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(repo, "pkg/mod.py", "def keep():\n    return 1\n")
+    _commit(repo, "delete target")
+    _anchor(repo, base)
+    return repo, base
+
+
+def _build_scale_repo(tmp_path, n=200):
+    repo = _make_repo(tmp_path)
+    _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
+    _write(repo, "app/__init__.py", "")
+    for i in range(n):
+        _write(
+            repo,
+            "app/mod%03d.py" % i,
+            "def func_%03d():\n"
+            "    return %d\n"
+            "\n"
+            "def helper_%03d():\n"
+            "    return func_%03d()\n" % (i, i, i, i),
+        )
+    _write(
+        repo,
+        "app/mod009.py",
+        "def func_009():\n"
+        "    return 9\n"
+        "\n"
+        "def helper_009():\n"
+        "    return func_009()\n"
+        "\n"
+        "def removed_009():\n"
+        "    return 0\n",
+    )
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(
+        repo,
+        "app/consumer.py",
+        "from app.mod009 import removed_009\n"
+        "\n"
+        "def use():\n"
+        "    return removed_009()\n",
+    )
+    _write(
+        repo,
+        "app/mod009.py",
+        "def func_009():\n"
+        "    return 9\n"
+        "\n"
+        "def helper_009():\n"
+        "    return func_009()\n",
+    )
+    _commit(repo, "delete removed_009")
+    _anchor(repo, base)
+    return repo, base
+
+
+def _high_keys(repo, cfg, fast):
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        impact.run_impact(repo, cfg, json_out=True, fast=fast)
+    data = json.loads(buf.getvalue())
+    return {r["key"] for r in data["rows"] if r["severity"] == "High"}
+
+
+def test_fast_full_high_agreement(tmp_path):
+    """Verifies fast and full modes report identical High-row sets."""
+    full_repo, _b = _build_deleted_import_repo(tmp_path / "full")
+    fast_repo, _b = _build_deleted_import_repo(tmp_path / "fast")
+    full = _high_keys(full_repo, config.load_config(full_repo), fast=False)
+    fast = _high_keys(fast_repo, config.load_config(fast_repo), fast=True)
+    assert full
+    assert full == fast
+
+
+def test_perf_budget_scale(tmp_path):
+    """Verifies a full-mode run on a 200-file repo stays within budget."""
+    import time
+    MAX_SECONDS = 30
+    repo, _base = _build_scale_repo(tmp_path)
+    cfg = config.load_config(repo)
+    impact.run_impact(repo, cfg, json_out=True)
+    t0 = time.time()
+    impact.run_impact(repo, cfg, json_out=True)
+    assert time.time() - t0 < MAX_SECONDS
+
+
+def test_cache_hit_rate_in_json(tmp_path, capsys):
+    """Verifies cache_hit_rate is 0 on a cold run and 1 on a warm run."""
+    repo, base, _head = _build_django_repo(tmp_path)
+    _anchor(repo, base)
+    cfg = config.load_config(repo)
+    assert impact.run_impact(repo, cfg, json_out=True) == 0
+    cold = json.loads(capsys.readouterr().out)
+    assert cold["cache_hit_rate"] == 0.0
+    assert impact.run_impact(repo, cfg, json_out=True) == 0
+    warm = json.loads(capsys.readouterr().out)
+    assert warm["cache_hit_rate"] == 1.0
 
 
 def test_unreachable_downgraded_one_level():

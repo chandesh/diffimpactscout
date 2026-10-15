@@ -62,7 +62,7 @@ def analyze_source(src):
     }
 
 
-def analyze_path(path, root, cache):
+def analyze_path(path, root, cache, stats=None):
     """Analyze one repo file, skipping re-parse for unchanged content.
 
     path is the repo-root-relative posix path (as git emits paths); root is
@@ -73,7 +73,8 @@ def analyze_path(path, root, cache):
     is returned without re-parsing; otherwise the file is analyzed and the
     entry stored under path. Returns the analysis dict, or None on a
     read/parse failure. The cache's loaded data is mutated in place so a
-    caller can SymbolCache.save() once after scanning all files.
+    caller can SymbolCache.save() once after scanning all files. When
+    ``stats`` is a dict it records ``hit``/``miss`` counts across calls.
     """
     full = path
     if root:
@@ -88,10 +89,14 @@ def analyze_path(path, root, cache):
     if isinstance(entry, dict) and entry.get("hash") == _content_hash(text):
         analysis = entry.get("analysis")
         if isinstance(analysis, dict) and analysis.get("v") == ANALYSIS_VERSION:
+            if stats is not None:
+                stats["hit"] = stats.get("hit", 0) + 1
             return analysis
     analysis = analyze_source(text)
     if analysis is None:
         return None
+    if stats is not None:
+        stats["miss"] = stats.get("miss", 0) + 1
     if data is not None:
         data[path] = {"hash": analysis["hash"], "analysis": analysis}
     return analysis

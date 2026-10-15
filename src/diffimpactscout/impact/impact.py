@@ -42,7 +42,7 @@ _DEFAULT_KINDS = ("name",)
 
 
 def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
-                    top_n=20, expand=False):
+                    top_n=20, expand=False, cache_hit_rate=None):
     """Build the JSON payload; additive shown/hidden_counts, backward compatible."""
     rows = list(rows or [])
     shown_count, hidden_counts = reporter.top_n_counts(rows, top_n=top_n, expand=expand)
@@ -55,6 +55,7 @@ def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
         "hidden_count": hidden_count,
         "shown_count": shown_count,
         "hidden_counts": hidden_counts,
+        "cache_hit_rate": cache_hit_rate,
     }
 
 
@@ -95,11 +96,14 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
         scan = _fast_subset(root, py_files, cache.load(), entities, changes)
     else:
         scan = py_files
+    scan_stats = {"hit": 0, "miss": 0}
     for path in scan:
-        pa.analyze_path(path, root, cache)
+        pa.analyze_path(path, root, cache, scan_stats)
     cache.prune(py_files)
     cache.save(cache.load())
     analyses = cache.load()
+    analyzed = scan_stats["hit"] + scan_stats["miss"]
+    cache_hit_rate = round(scan_stats["hit"] / analyzed, 3) if analyzed else None
     reverse_rows, reverse_layers, reverse_unresolved = [], {}, []
     pseudo_entities = set()
     if impact_cfg.get("reverse") and not fast:
@@ -157,7 +161,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     elif json_out:
         sys.stdout.write(json.dumps(to_json_payload(
             rows, endpoints, unresolved, changed_count, hidden_count,
-            top_n=top_n, expand=effective_expand,
+            top_n=top_n, expand=effective_expand, cache_hit_rate=cache_hit_rate,
         )) + "\n")
     else:
         sys.stdout.write(
@@ -1365,6 +1369,14 @@ def _fast_subset(root, py_files, cache_data, entities, changes):
     for change in changes:
         if change.ext == "py":
             seed.add(change.path[:-3].rsplit("/", 1)[-1])
+    # A module-qualified reference (``import pkg`` then ``pkg.foo``) records
+    # the top-level module name, not the symbol name, so seed with each
+    # entity's defining module top-level part; otherwise fast mode would miss
+    # a High row full mode reports.
+    for ent in entities.values():
+        for mod in ent.get("modules") or ():
+            if mod:
+                seed.add(mod.split(".", 1)[0])
     index = {}
     for path in py_files:
         analysis = _peel(cache_data.get(path))

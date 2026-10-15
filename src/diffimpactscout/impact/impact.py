@@ -51,6 +51,7 @@ def to_json_payload(rows, endpoints, unresolved, changed_count, hidden_count,
         "rows": rows,
         "endpoints": endpoints,
         "unresolved": unresolved,
+        "unresolved_by_reason": reporter.unresolved_reason_counts(unresolved),
         "hidden_count": hidden_count,
         "shown_count": shown_count,
         "hidden_counts": hidden_counts,
@@ -142,7 +143,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
     sarif_doc = None
     if sarif_out is not None:
         # Build and validate the SARIF document before any output so an
-        # invalid document never reaches stdout or a file (REQ-13).
+        # invalid document never reaches stdout or a file.
         sarif_doc = sarif_mod.to_sarif(rows)
         problems = sarif_mod.validate(sarif_doc)
         if problems:
@@ -434,14 +435,19 @@ def _compose_rows(
     routes = _routes(root, impact_cfg, profile, cfg)
     affected = _affected_routes(routes, analyses, entities, weak) if not fast else []
     template_refs, frontend_refs = _scoped_refs(root, impact_cfg, cfg, affected, fast)
-    template_matched, _template_unresolved = route_linker.match_template_refs(
+    template_matched, template_unresolved = route_linker.match_template_refs(
         template_refs, affected
     )
-    frontend_matched, _frontend_unresolved = route_linker.match_endpoints(
+    frontend_matched, frontend_unresolved = route_linker.match_endpoints(
         frontend_refs, affected
     )
+    # Dynamic and unmatched template/frontend refs are never linked rows; they
+    # join the unresolved bucket so the audit line can count them by cause
+    # (dynamic-ref / unknown-url).
     unresolved = list(extra_unresolved or [])
-    # Stoplist-pruned generic hits (REQ-7) are drop-always: find_references
+    unresolved.extend(template_unresolved)
+    unresolved.extend(frontend_unresolved)
+    # Stoplist-pruned generic hits are drop-always: find_references
     # already pruned unqualified uses, and they are never demoted or
     # resurfaced here -- even with show_all -- so generic-name noise cannot
     # return via --all. Only confidence-low rows (unresolved imports that
@@ -469,7 +475,7 @@ def _compose_rows(
                 row["evidence"] = ev
             rows.append(row)
     if not fast:
-        # REQ-14: a changed symbol may be consumed by name in a TS/JS module
+        # A changed symbol may be consumed by name in a TS/JS module
         # (import/require/export), which the HTTP-call scan above cannot see.
         for ref in route_linker.extract_ts_symbol_refs(
             root, list(entities.keys()), impact_cfg.get("frontend_globs"), cfg=cfg
@@ -945,7 +951,7 @@ def _br_ratio_from_diff(root, change, anchor=None, from_ref=None,
 
 def detect_breaking(changes, entities=None, root="", changed_paths=None,
                       anchor=None, from_ref=None, to_ref=None, staged=False):
-    """Breaking-change detectors (REQ-12): one High row per matching change.
+    """Breaking-change detectors: one High row per matching change.
 
     Rules, in order (first match wins per change):
     test deletion: test path (tests/ dir or test_*.py) that is deleted
@@ -1165,7 +1171,7 @@ def _action(severity, deleted):
 
 
 def attach_why_action(row, symbol, import_chain, deleted, test_path):
-    """Attach REQ-9 why_matters/suggested_action to a Medium+ row (new dict).
+    """Attach why_matters/suggested_action to a Medium+ row (new dict).
 
     Deleted rows suggest ``remove import``; rows with a conventional unit
     test suggest ``run <test path>``; otherwise ``update call site``. The

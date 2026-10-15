@@ -270,6 +270,64 @@ def _endpoint_lines(endpoints):
     return lines
 
 
+_UNRESOLVED_REASONS = (
+    "dynamic-ref",
+    "unknown-url",
+    "no-import-chain",
+    "binary/unsupported",
+)
+
+
+def reason_category(reason):
+    """Map an unresolved reason to one of the canonical report buckets.
+
+    Canonical buckets are ``dynamic-ref``, ``unknown-url``, ``no-import-chain``
+    and ``binary/unsupported``. Legacy free-text reasons are classified by kind
+    so the audit line counts by cause; a missing or unrecognised reason falls
+    back to ``unknown-url``.
+    """
+    if not reason:
+        return "unknown-url"
+    if reason in _UNRESOLVED_REASONS:
+        return reason
+    low = reason.lower()
+    if "dynamic" in low:
+        return "dynamic-ref"
+    if "binary" in low or "unsupported" in low:
+        return "binary/unsupported"
+    if "importer" in low or "import chain" in low or "template references" in low:
+        return "no-import-chain"
+    return "unknown-url"
+
+
+def unresolved_reason_counts(unresolved):
+    """Count unresolved entries by canonical reason bucket."""
+    counts = {}
+    for ref in unresolved or []:
+        reason = ref.get("reason") if isinstance(ref, dict) else None
+        bucket = reason_category(reason)
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return counts
+
+
+def _unresolved_breakdown(counts):
+    parts = [
+        "%s: %d" % (reason, counts[reason])
+        for reason in _UNRESOLVED_REASONS
+        if counts.get(reason)
+    ]
+    return ", ".join(parts)
+
+
+def _unresolved_audit_line(unresolved):
+    """The audit line: ``Unresolved: N (<reason breakdown>)``."""
+    total = len(unresolved or [])
+    breakdown = _unresolved_breakdown(unresolved_reason_counts(unresolved))
+    if not breakdown:
+        return "Unresolved: %d" % total
+    return "Unresolved: %d (%s)" % (total, breakdown)
+
+
 def _unresolved_line(ref):
     """Render one unresolved reference.
 
@@ -281,6 +339,10 @@ def _unresolved_line(ref):
         return str(ref)
     location = ref.get("file") or ref.get("path") or ""
     detail = ref.get("ref")
+    if not detail and ref.get("path") and ref.get("path") != location:
+        # Frontend unmatched refs carry the URL under ``path``; show it as the
+        # detail when it is distinct from the file location.
+        detail = ref.get("path")
     reason = ref.get("reason") or ""
     head = ": ".join(str(part) for part in (location, detail) if part) or "?"
     return "%s (%s)" % (head, reason) if reason else head
@@ -501,6 +563,7 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  " + _summary_line(rows, changed_count))
     if hidden_count:
         lines.append("  %d lower-confidence impacts hidden - use --all to expand" % hidden_count)
+    lines.append("  " + _unresolved_audit_line(unresolved))
     lines.append("=" * 70)
     return "\n".join(lines) + "\n"
 
@@ -579,6 +642,7 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
     lines.append(_summary_line(rows, changed_count))
     if hidden_count:
         lines.append("%d lower-confidence impacts hidden - use --all to expand" % hidden_count)
+    lines.append(_unresolved_audit_line(unresolved))
     return "\n".join(lines) + "\n"
 
 

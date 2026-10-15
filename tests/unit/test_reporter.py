@@ -267,6 +267,54 @@ def test_render_report_unresolved_omitted_when_empty():
     assert "Unresolved references" not in out
 
 
+def test_unresolved_audit_line():
+    """Verifies the report ends with an unresolved count broken down by cause."""
+    unresolved = [
+        {"file": "a.html", "reason": "dynamic-ref"},
+        {"file": "b.ts", "reason": "unknown-url"},
+        {"file": "c.py", "reason": "no-import-chain"},
+        {"file": "d.bin", "reason": "binary/unsupported"},
+    ]
+    out = reporter.render_report([], [], unresolved, 1)
+    assert "Unresolved: 4 (" in out
+    assert "dynamic-ref" in out and "unknown-url" in out
+    assert "no-import-chain" in out and "binary/unsupported" in out
+    assert reporter.unresolved_reason_counts(unresolved) == {
+        "dynamic-ref": 1,
+        "unknown-url": 1,
+        "no-import-chain": 1,
+        "binary/unsupported": 1,
+    }
+
+
+def test_unresolved_audit_line_markdown():
+    """Verifies the Markdown report carries the same audit line."""
+    out = reporter.render_report(
+        [], [], [{"file": "a.ts", "reason": "unknown-url"}], 1, markdown=True
+    )
+    assert "Unresolved: 1 (unknown-url: 1)" in out
+
+
+def test_unresolved_audit_line_zero():
+    """Verifies the audit line is present with a zero count when there are none."""
+    out = reporter.render_report([], [], [], 0)
+    assert "Unresolved: 0" in out
+
+
+def test_unresolved_legacy_string_counts_as_unknown_url():
+    """Verifies legacy string refs (no reason) count under unknown-url."""
+    counts = reporter.unresolved_reason_counts(["/api/v1/opaque/", "no-such-route"])
+    assert counts == {"unknown-url": 2}
+
+
+def test_reason_category_maps_legacy_reasons():
+    """Verifies free-text reasons map into the canonical buckets by kind."""
+    assert reporter.reason_category("dynamic include; manual check required") == "dynamic-ref"
+    assert reporter.reason_category("no matching route") == "unknown-url"
+    assert reporter.reason_category("no template references this asset") == "no-import-chain"
+    assert reporter.reason_category("") == "unknown-url"
+
+
 def test_render_report_summary_changed_count():
     """Verifies that the report summary shows the changed file count and severities."""
     out = reporter.render_report(ROWS, [], [], 3)

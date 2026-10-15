@@ -1132,8 +1132,13 @@ def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
     refs = _http_refs_for_files(root, [c.path for c in changed_js], tracked)
     routes = extract_django_routes(root, urls_globs, cfg=cfg)
     matched, unmatched = match_endpoints(refs, routes)
-    unresolved = [{"file": u.get("file"), "ref": u.get("path"), "reason": "no matching route"}
-                  for u in unmatched]
+    # Keep the real reason (unknown-url / dynamic-ref) so the audit line counts
+    # by cause instead of collapsing every unmatched ref to a single label.
+    unresolved = [
+        {"file": u.get("file"), "ref": u.get("path"),
+         "reason": u.get("reason") or "unknown-url"}
+        for u in unmatched
+    ]
     rows = []
     layers = {}
     seen_pairs = set()

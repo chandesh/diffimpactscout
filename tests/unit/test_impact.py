@@ -490,7 +490,8 @@ def test_run_impact_json_output(tmp_path, capsys):
     assert all("reason" in r for r in data["rows"])
     assert any(r["category"] == "template" for r in data["rows"])
     assert any(r["category"] == "frontend" for r in data["rows"])
-    assert data["unresolved"] == []
+    assert [u["reason"] for u in data["unresolved"]] == ["unknown-url"]
+    assert data["unresolved_by_reason"] == {"unknown-url": 1}
 
 
 def test_run_impact_strict_blocks(tmp_path, monkeypatch, capsys):
@@ -516,15 +517,16 @@ def test_run_impact_skip_env_returns_zero_no_output(tmp_path, monkeypatch, capsy
     assert captured.err == ""
 
 
-def test_run_impact_dynamic_refs_not_reported(tmp_path, capsys):
-    """Verifies that dynamic refs are dropped and unresolved stays noise-free."""
+def test_run_impact_unmatched_frontend_ref_unresolved(tmp_path, capsys):
+    """Verifies an unmatched frontend URL is reported unresolved, never linked."""
     repo, base, _head = _build_django_repo(tmp_path)
     _anchor(repo, base)
     cfg = config.load_config(repo)
     assert impact.run_impact(repo, cfg) == 0
     out = capsys.readouterr().out
-    assert "Unresolved references (manual check required)" not in out
-    assert "http.get(\"/api/v1/dynamic/\")" not in out
+    assert "src/orders.service.ts: /api/v1/dynamic/ (unknown-url)" in out
+    assert "Unresolved: 1 (unknown-url: 1)" in out
+    assert 'http.get("/api/v1/dynamic/")' not in out
 
 
 def test_run_impact_cache_skips_reparse_on_second_run(tmp_path, monkeypatch):
@@ -1073,7 +1075,7 @@ def test_no_bare_verify_action_on_medium_plus(tmp_path):
 def test_stoplist_pruned_stay_hidden_with_all():
     """Verifies stoplist-pruned generic hits stay dropped even with --all.
 
-    Carry-forward disposition from Task 2 (REQ-7): pruned hits are
+    Carry-forward disposition from Task 2: pruned hits are
     drop-always, never demoted/resurfaced. Task 2 deferred
     "--all demotion+resurfacing of stoplist-pruned hits" here; chosen
     behavior is drop-always so generic-name noise cannot return via --all.

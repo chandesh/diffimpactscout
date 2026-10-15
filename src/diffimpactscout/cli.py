@@ -183,7 +183,7 @@ def main(argv=None):
 
 
 def exit_for(severity_gate=None, highs=0, mediums=0, lows=0, advisory=False):
-    """Return the rollout-gate exit code (Phase B REQ-13).
+    """Return the rollout-gate exit code.
 
     ``severity_gate`` is one of None (no --fail-on flag: warn, exit 0),
     "high" (exit 1 when highs > 0), "medium" (highs + mediums > 0) or
@@ -224,7 +224,7 @@ def exit_for(severity_gate=None, highs=0, mediums=0, lows=0, advisory=False):
         total = highs + mediums + lows
     if advisory:
         # stderr, not stdout: a bare --sarif writes the SARIF JSON to
-        # stdout and a banner there would corrupt it (REQ-13).
+        # stdout and a banner there would corrupt it.
         print(
             "advisory mode: %d findings would block" % total,
             file=sys.stderr,

@@ -1,4 +1,4 @@
-"""SARIF 2.1.0 output for impact rows (Phase B REQ-13).
+"""SARIF 2.1.0 output for impact rows.
 
 Severity maps High->error, Medium->warning, Low->note. Each result
 carries a stable ruleId, a message from why_matters (falling back to

@@ -1,4 +1,4 @@
-"""SARIF output and validation for impact rows (Phase B REQ-13)."""
+"""SARIF output and validation for impact rows."""
 
 import pytest
 

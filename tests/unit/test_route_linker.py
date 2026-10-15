@@ -232,14 +232,14 @@ def test_match_template_refs(tmp_path):
 
 
 def test_extract_dynamic_template_ref_yields_none_name(tmp_path):
-    """Checks a dynamic url tag is extracted as a None-named reference (REQ-16)."""
+    """Checks a dynamic url tag is extracted as a None-named reference."""
     _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
     refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
     assert refs == [("app/templates/t.html", None)]
 
 
 def test_dynamic_url_var_is_unresolved(tmp_path):
-    """Checks a dynamic url tag never links and lands in dynamic-ref (REQ-16)."""
+    """Checks a dynamic url tag never links and lands in dynamic-ref."""
     _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
     refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
     linked, unresolved = rl.match_template_refs(refs, [])
@@ -250,7 +250,7 @@ def test_dynamic_url_var_is_unresolved(tmp_path):
 
 
 def test_dynamic_url_var_never_matches_route(tmp_path):
-    """Checks a dynamic name equal to a route name still stays unresolved (REQ-16)."""
+    """Checks a dynamic name equal to a route name still stays unresolved."""
     _write(str(tmp_path), "app/templates/t.html", "{% url order_list %}\n")
     refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
     routes = [Route("order_list", "orders/", "OrderList.as_view", "u.py")]
@@ -260,7 +260,7 @@ def test_dynamic_url_var_never_matches_route(tmp_path):
 
 
 def test_dynamic_url_tag_with_args_is_unresolved(tmp_path):
-    """Checks a dynamic url tag carrying args is unresolved dynamic-ref (REQ-16)."""
+    """Checks a dynamic url tag carrying args is unresolved dynamic-ref."""
     _write(str(tmp_path), "app/templates/t.html", "{% url next_page fallback %}\n")
     refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
     linked, unresolved = rl.match_template_refs(refs, [])
@@ -269,7 +269,7 @@ def test_dynamic_url_tag_with_args_is_unresolved(tmp_path):
 
 
 def test_dynamic_template_ref_ignores_names_filter(tmp_path):
-    """Checks a dynamic ref is emitted even when names scopes static refs (REQ-16)."""
+    """Checks a dynamic ref is emitted even when names scopes static refs."""
     _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
     refs = rl.extract_template_refs(
         str(tmp_path), ["**/*.html"], names={"other-route"}
@@ -301,7 +301,7 @@ def test_static_template_ref_links_when_dynamic_present(tmp_path):
 
 
 def test_whitespace_only_url_tag_is_not_dynamic(tmp_path):
-    """Checks a malformed whitespace-only url tag is not captured (REQ-16)."""
+    """Checks a malformed whitespace-only url tag is not captured."""
     _write(str(tmp_path), "app/templates/t.html", "{% url %}\n{% url  %}\n")
     refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
     assert refs == []
@@ -411,32 +411,32 @@ def test_extract_frontend_refs_block_comment_preserves_lines(tmp_path):
     ],
 )
 def test_call_styles_link(tmp_path, snippet, method, url):
-    """Verifies each frontend call style yields its (method, URL) pair (REQ-15)."""
+    """Verifies each frontend call style yields its (method, URL) pair."""
     (tmp_path / "a.ts").write_text(snippet + "\n")
     pairs = rl.extract_call_pairs(str(tmp_path))
     assert (method, url) in pairs
 
 
 def test_axios_bare_defaults_to_get(tmp_path):
-    """Checks a bare axios() call defaults to the GET method (REQ-15)."""
+    """Checks a bare axios() call defaults to the GET method."""
     (tmp_path / "a.ts").write_text("axios('/api/orders')\n")
     assert ("get", "/api/orders") in rl.extract_call_pairs(str(tmp_path))
 
 
 def test_fetch_method_option_override(tmp_path):
-    """Checks a fetch() options object overrides the default GET method (REQ-15)."""
+    """Checks a fetch() options object overrides the default GET method."""
     (tmp_path / "a.ts").write_text("fetch('/api/orders', { method: 'POST' })\n")
     assert ("post", "/api/orders") in rl.extract_call_pairs(str(tmp_path))
 
 
 def test_non_literal_url_yields_no_pair(tmp_path):
-    """Checks a non-literal URL never produces a call pair (REQ-15)."""
+    """Checks a non-literal URL never produces a call pair."""
     (tmp_path / "a.ts").write_text("fetch(apiUrl)\n")
     assert rl.extract_call_pairs(str(tmp_path)) == []
 
 
 def test_extract_frontend_refs_call_styles(tmp_path):
-    """Checks fetch/axios call styles link through extract_frontend_refs (REQ-15)."""
+    """Checks fetch/axios call styles link through extract_frontend_refs."""
     _write(str(tmp_path), "app.ts", "fetch('/api/orders')\naxios.post('/api/orders')\n")
     refs = rl.extract_frontend_refs(str(tmp_path), ["**/*.ts"])
     pairs = {(r["ref"], r["method"]) for r in refs}
@@ -495,7 +495,7 @@ def test_iter_call_refs_yields_line_method_url():
 
 
 def test_match_endpoints_unknown_url_reason(tmp_path):
-    """Checks an unmatched URL ref lands in unresolved with reason unknown-url (REQ-15)."""
+    """Checks an unmatched URL ref lands in unresolved with reason unknown-url."""
     routes = [Route("order-list", "/api/v1/orders/", "OrderList.as_view", "u.py")]
     refs = [_ref("f.ts", "/api/v1/unknown/")]
     matched, unresolved = rl.match_endpoints(refs, routes)

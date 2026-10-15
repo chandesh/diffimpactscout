@@ -902,7 +902,7 @@ def test_endpoint_refs_transports_methods_and_absolute_filtered(tmp_path):
     })
     refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
     got = sorted((r["ref"], r["method"]) for r in refs)
-    # Bare fetch defaults to GET now that route_linker is the canonical scan (REQ-15).
+    # Bare fetch defaults to GET now that route_linker is the canonical scan.
     assert got == [("/shop/fetch/", "get"), ("/shop/items/", "post")]
 
 

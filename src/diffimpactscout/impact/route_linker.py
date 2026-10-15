@@ -289,6 +289,18 @@ def _iter_files(root, globs, exts, cfg=None, vendor=False):
                     break
 
 
+MANAGEMENT_COMMAND_GLOBS = ("**/management/commands/*.py",)
+
+
+def iter_command_files(root, cfg=None):
+    """Yield posix paths of Django management command files under ``root``.
+
+    Management commands are legitimate entry points (run via ``manage.py``),
+    so reachability treats every def in them as reachable.
+    """
+    return _iter_files(root, list(MANAGEMENT_COMMAND_GLOBS), (".py",), cfg=cfg)
+
+
 def _parse_file(full):
     text = _read_text(full)
     if text is None:

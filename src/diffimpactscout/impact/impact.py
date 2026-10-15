@@ -531,12 +531,24 @@ def _compose_rows(
         # _compose_rows, normalized 0-1) and add a churn-ranking test.
         row["churn"] = 0
         row["owner"] = owners_mod.owner_for(row.get("path") or "", root or "")
+    # Reachability: a consumer only reachable from an entry point (route
+    # handler or management command) keeps its severity; a consumer no entry
+    # reaches is downgraded one level. Skip entirely when there are no entries
+    # so an entry-less project is never mass-downgraded.
+    entries = _entry_points(routes, root, cfg, analyses)
+    if entries:
+        rnames, rmods = _reachable_symbols(entries, analyses)
+        for row in rows:
+            row["reachable"] = _row_reachable(row, rnames, rmods)
     for row in rows:
         name = row.pop("_entity")
         delrow = row.pop("_deleted")
         test_path = row.pop("_test_path", None)
+        row.pop("_ctx", None)
         severity, reason = _row_severity(row, layers.get(name) or (), delrow, changed_paths)
         row["severity"] = severity
+        _downgrade_unreachable(row)
+        severity = row["severity"]
         row["reason"] = reason
         row["action"] = _action(severity, delrow)
         hint = "transitive" if row.get("tier") == reverse_mod.TIER_HEURISTIC else "direct"
@@ -675,6 +687,132 @@ def _affected_routes(routes, analyses, entities, weak):
         if _route_binds_handler(urls, handler, func_mods[handler], route.module, weak):
             affected.append(route)
     return affected
+
+
+_SEVERITY_DOWNGRADE = {"High": "Medium", "Medium": "Low"}
+_REACHABILITY_HOPS = 5
+_REACHABILITY_NODES = 500
+
+
+def _def_paths_by_name(analyses):
+    """Index ``{def name -> [defining paths]}`` built once per run."""
+    index = {}
+    for path, entry in (analyses or {}).items():
+        analysis = _peel(entry)
+        if isinstance(analysis, dict):
+            for name in analysis.get("defs") or {}:
+                index.setdefault(name, []).append(path)
+    return index
+
+
+def _handler_def_path(handler, index):
+    """Path of the file that defines a route handler, or None if unknown.
+
+    ``route.module`` is the URLconf file (where ``path(...)`` is declared),
+    not where the handler lives. Prefer the candidate whose module matches the
+    handler's dotted module part, then fall back to the first candidate.
+    """
+    leaf = _handler_leaf(handler)
+    if not leaf:
+        return None
+    candidates = index.get(leaf) or []
+    if not candidates:
+        return None
+    handler_mod = handler.rsplit(".", 1)[0] if "." in handler else ""
+    for path in candidates:
+        mod = _module_of(path)
+        if handler_mod and (mod == handler_mod or mod.endswith("." + handler_mod)):
+            return path
+    return candidates[0]
+
+
+def _entry_points(routes, root, cfg, analyses):
+    """Entry ``(path, name)`` pairs: route handlers plus management commands.
+
+    Route handlers come from every discovered route (not just the affected
+    subset) and are anchored at the file that defines the handler. Django
+    management commands contribute their whole file, so ``name`` is None for
+    those and every def in the file is an entry.
+    """
+    entries = []
+    index = _def_paths_by_name(analyses)
+    for route in routes or []:
+        leaf = _handler_leaf(route.handler)
+        if not leaf:
+            continue
+        path = _handler_def_path(route.handler, index) or route.module
+        if path:
+            entries.append((path, leaf))
+    if root:
+        for posix in route_linker.iter_command_files(root, cfg=cfg):
+            entries.append((posix, None))
+    return entries
+
+
+def _reachable_symbols(entries, analyses):
+    """Function names and defining modules reachable forward from the entries."""
+    names = set()
+    mods = set()
+    seen = set()
+    for path, name in entries:
+        mods.add(_module_of(path))
+        if name is None:
+            analysis = _peel(analyses.get(path))
+            if isinstance(analysis, dict):
+                names.update((analysis.get("defs") or {}).keys())
+            continue
+        if (path, name) in seen:
+            continue
+        seen.add((path, name))
+        names.add(name)
+        closure = reverse_mod.callee_closure(
+            analyses, name, path,
+            max_hops=_REACHABILITY_HOPS, max_nodes=_REACHABILITY_NODES,
+        )
+        for cname, cmods in closure.items():
+            names.add(cname)
+            mods.update(cmods)
+    return names, mods
+
+
+def _row_reachable(row, names, mods):
+    """Whether a composed row's consumer is reachable from an entry point.
+
+    Only Python rows are judged; template/frontend rows are already tied to an
+    affected route. A row is reachable when its file's module or the name of
+    its enclosing function (the consumer) is in the forward closure of any
+    entry point. A module-level usage (no enclosing function) is treated as
+    reachable because it cannot be proven unreachable.
+    """
+    if row.get("category") != "python":
+        return True
+    module = _module_of(row.get("path") or "")
+    if module and module in mods:
+        return True
+    ctx = row.get("_ctx") or ""
+    if not ctx:
+        return True
+    return ctx.rsplit(".", 1)[-1] in names
+
+
+def _downgrade_unreachable(row):
+    """Drop an unreachable row one severity level and mark it (in place)."""
+    if row.pop("reachable", True) is False:
+        row["severity"] = _SEVERITY_DOWNGRADE.get(
+            row.get("severity"), row.get("severity")
+        )
+        row["reachability"] = "unreachable"
+    return row
+
+
+def apply_reachability(rows):
+    """Downgrade every row flagged ``reachable=False`` one severity level.
+
+    High->Medium, Medium->Low; Low is unchanged. Downgraded rows gain
+    ``reachability: "unreachable"``; ``badge`` stays Changed/Impacted. Returns
+    new row dicts.
+    """
+    return [_downgrade_unreachable(dict(row)) for row in rows or []]
 
 
 def _norm_needle(full):
@@ -1068,6 +1206,7 @@ def _python_row(hit, name, ent):
         "ref": "%s (%s at %d)" % (hit.get("name"), hit.get("how"), hit.get("line", 0)),
         "_entity": name,
         "_deleted": bool(ent.get("deleted")),
+        "_ctx": ctx,
     }
 
 

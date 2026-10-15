@@ -372,6 +372,80 @@ def _build_deleted_repo(tmp_path):
     return repo, base, head
 
 
+def _build_reachability_repo(tmp_path):
+    repo = _make_repo(tmp_path)
+    _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
+    _write(repo, "app/__init__.py", "")
+    _write(
+        repo,
+        "app/urls.py",
+        "from django.urls import path\n"
+        "from . import views\n"
+        "\n"
+        "urlpatterns = [\n"
+        "    path('orders/', views.orders, name='order-list'),\n"
+        "]\n",
+    )
+    _write(
+        repo,
+        "app/views.py",
+        "from django.http import HttpResponse\n"
+        "from app.helpers import helper_a\n"
+        "\n"
+        "def orders(request):\n"
+        "    return HttpResponse(helper_a())\n",
+    )
+    _write(
+        repo,
+        "app/helpers.py",
+        "from app.models import Book\n"
+        "\n"
+        "def helper_a():\n"
+        "    return Book.status\n",
+    )
+    _write(
+        repo,
+        "app/orphan.py",
+        "from app.models import Book\n"
+        "\n"
+        "def orphan():\n"
+        "    return Book.status\n",
+    )
+    _write(repo, "app/management/__init__.py", "")
+    _write(repo, "app/management/commands/__init__.py", "")
+    _write(
+        repo,
+        "app/management/commands/run_thing.py",
+        "from django.core.management.base import BaseCommand\n"
+        "from app.models import Book\n"
+        "\n"
+        "class Command(BaseCommand):\n"
+        "    def handle(self, *args, **options):\n"
+        "        return Book.status\n",
+    )
+    _write(
+        repo,
+        "app/models.py",
+        "from django.db import models\n"
+        "\n"
+        "class Book(models.Model):\n"
+        "    status = models.CharField(max_length=20)\n",
+    )
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(
+        repo,
+        "app/models.py",
+        "from django.db import models\n"
+        "\n"
+        "class Book(models.Model):\n"
+        "    status = models.CharField(max_length=20, default='new')\n",
+    )
+    _commit(repo, "change model")
+    head = _sha(repo)
+    return repo, base, head
+
+
 def _count_parse(monkeypatch):
     calls = {"n": 0, "hashes": {}}
     real = ast.parse
@@ -1302,3 +1376,46 @@ def test_high_fan_in_ranks_first():
     ]
     ranked = m.rank_rows(rows, max_fan_in=10)
     assert ranked[0]["ref"] == "util"
+
+
+def test_unreachable_downgraded_one_level():
+    """Verifies unreachable rows drop one severity level and are marked."""
+    from diffimpactscout.impact import impact as m
+    rows = [
+        {"path": "p.py", "severity": "High", "reachable": True, "key": "a"},
+        {"path": "p.py", "severity": "High", "reachable": False, "key": "b"},
+        {"path": "p.py", "severity": "Low", "reachable": False, "key": "c"},
+    ]
+    out = {r["key"]: r for r in m.apply_reachability(rows)}
+    assert out["a"]["severity"] == "High"
+    assert "reachability" not in out["a"]
+    assert out["b"]["severity"] == "Medium"
+    assert out["b"]["reachability"] == "unreachable"
+    assert out["c"]["severity"] == "Low"
+    assert out["c"]["reachability"] == "unreachable"
+
+
+def test_reachability_downgrades_unreached_consumer(tmp_path, capsys):
+    """Verifies a consumer no entry reaches ranks below a reached consumer."""
+    repo, base, _head = _build_reachability_repo(tmp_path)
+    _anchor(repo, base)
+    cfg = config.load_config(repo)
+    assert impact.run_impact(repo, cfg, json_out=True) == 0
+    data = json.loads(capsys.readouterr().out)
+    by_ctx = {}
+    for row in data["rows"]:
+        if row.get("category") == "python" and row.get("module") in (
+            "helper_a",
+            "orphan",
+            "Command.handle",
+        ):
+            by_ctx[row["module"]] = row
+    # Reached from the route handler `orders`.
+    assert by_ctx["helper_a"]["severity"] == "Medium"
+    assert "reachability" not in by_ctx["helper_a"]
+    # A management command is an entry point even with no calling route.
+    assert by_ctx["Command.handle"]["severity"] == "Medium"
+    assert "reachability" not in by_ctx["Command.handle"]
+    # Reached by nothing: downgraded one level and marked.
+    assert by_ctx["orphan"]["severity"] == "Low"
+    assert by_ctx["orphan"]["reachability"] == "unreachable"

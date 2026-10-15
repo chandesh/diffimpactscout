@@ -361,6 +361,56 @@ def test_extract_frontend_refs_call_styles(tmp_path):
     assert ("/api/orders", "post") in pairs
 
 
+def test_non_literal_call_does_not_borrow_later_literal(tmp_path):
+    """Checks a non-literal call never adopts a later statement's URL (CR-01)."""
+    (tmp_path / "a.ts").write_text("fetch(apiUrl)\nconst ENDPOINT = '/api/orders/'\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_non_literal_call_does_not_borrow_next_line_literal(tmp_path):
+    """Checks a later literal on the following line is not borrowed (IN-04)."""
+    (tmp_path / "a.ts").write_text("fetch(apiUrl)\n\nconst ENDPOINT = '/api/orders/';\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_method_option_does_not_bleed_from_later_call(tmp_path):
+    """Checks a later call's method option does not override this call (WR-01)."""
+    (tmp_path / "a.ts").write_text("fetch('/api/a/')\nfoo({ method: 'DELETE' })\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == [("get", "/api/a/")]
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "myaxios.get('/api/x/')",
+        "myhttp.post('/x/')",
+        "xHttpClient.put('/x/')",
+    ],
+)
+def test_dotted_callee_needs_word_boundary(tmp_path, snippet):
+    """Checks a dotted callee inside a longer identifier yields no pair (WR-02)."""
+    (tmp_path / "a.ts").write_text(snippet + "\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_backtick_static_url_literal(tmp_path):
+    """Checks a static backtick template literal resolves to a pair (WR-05)."""
+    (tmp_path / "a.ts").write_text("fetch(`/api/orders/`)\n")
+    assert ("get", "/api/orders/") in rl.extract_call_pairs(str(tmp_path))
+
+
+def test_backtick_interpolated_url_yields_no_pair(tmp_path):
+    """Checks an interpolated backtick template literal is non-literal (WR-05)."""
+    (tmp_path / "a.ts").write_text("fetch(`/api/orders/${id}/`)\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_iter_call_refs_yields_line_method_url():
+    """Checks the canonical call scan yields (line, method, url) (WR-03)."""
+    refs = list(rl.iter_call_refs("const a = 1;\nfetch('/api/orders')\n"))
+    assert refs == [(2, "get", "/api/orders")]
+
+
 def test_match_endpoints_unknown_url_reason(tmp_path):
     """Checks an unmatched URL ref lands in unresolved with reason unknown-url (REQ-15)."""
     routes = [Route("order-list", "/api/v1/orders/", "OrderList.as_view", "u.py")]

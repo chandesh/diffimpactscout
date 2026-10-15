@@ -33,16 +33,22 @@ QUOTED_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 # Matches a frontend HTTP call head across call styles so the URL literal that
 # follows can be linked to a route. Dotted calls carry an explicit method;
 # bare fetch()/axios() default to GET (an options object may override it).
+# The dotted alternative needs a guard that blocks a preceding WORD char but
+# ALLOWS a preceding "." so "myaxios"/"myhttp"/"xHttpClient" are rejected while
+# "this.http"/"this.$http"/"this.axios" still match.
 #   Matches:  http.get(   HttpClient.post(   $http.delete(   axios.put(
+#             this.http.get(   this.$http.get(   this.axios.get(
 #             axios(      fetch(
 #   Captures: group 1 = explicit method (get|post|put|delete|patch) or None
 #             group 2 = bare callee name ("fetch" | "axios") or None
-#   Skips:    myfetch(          (lookbehind blocks a word run before it)
-#             response.fetch(   (lookbehind blocks the ".")
-#             fetch = 1         (no "(" after the callee)
-#             fetchMore(        (no word boundary before "fetch")
+#   Skips:    myhttp.get(        (lookbehind blocks the word run before "http")
+#             myaxios(           (lookbehind blocks the word run before "axios")
+#             xHttpClient.put(   (lookbehind blocks the word run before it)
+#             response.fetch(    (lookbehind blocks the ".")
+#             fetch = 1          (no "(" after the callee)
+#             fetchMore(         (the mandatory "\s*\(" rejects "M")
 _CALL_HEAD_RE = re.compile(
-    r"(?:\$http|HttpClient|http|axios)\s*\.\s*("
+    r"(?<![\w])(?:\$http|HttpClient|http|axios)\s*\.\s*("
     + _HTTP_METHOD_RE_SRC
     + r")\s*\(|(?<![\w$.])(fetch|axios)\s*\("
 )
@@ -56,6 +62,37 @@ _CALL_HEAD_RE = re.compile(
 _METHOD_OPTION_RE = re.compile(
     r"\bmethod\s*:\s*['\"](get|post|put|delete|patch)['\"]", re.IGNORECASE
 )
+
+# Matches a backtick template literal's one-line body so a STATIC template URL
+# resolves.
+#   Matches:  `/api/orders/`          -> "/api/orders/"
+#             `/shop/items/`
+#   Captures: group 1 = the backtick body
+#   Skips:    `multi\nline`           (no newline allowed inside)
+#   Note:     an interpolated body such as `/api/items/${id}/` still matches;
+#             the caller rejects it as non-literal on "${".
+_BACKTICK_LITERAL_RE = re.compile(r"`([^`\r\n]{1,500})`")
+
+# Matches a leading concatenation fragment at the START of a call's argument
+# list so a URL built as "base + '/path/'" still resolves its static part,
+# while a later statement's literal is never borrowed (only the first operand
+# run before the "+" is consumed, and only the first "+" chain is read).
+#   Matches:  environment.apiUrl + '/api/orders/'  -> "/api/orders/"
+#             BASE + '/shop/'
+#   Captures: group 1 = the quote character, group 2 = the literal body
+#   Skips:    apiUrl              (bare identifier; no "+")
+#             build() + '/x/'     (first run cannot span "(")
+_ARG_CONCAT_RE = re.compile(
+    r"""[\w$.\[\]'"]*\s*\+\s*(['"])([^'"\r\n]{1,500})\1"""
+)
+
+# Matches a bare identifier opening a call's argument list so a one-level
+# constant (see reverse._CONST_ASSIGN_RE/_CONST_CONCAT_RE) can be substituted.
+#   Matches:  LIST)   -> "LIST"     apiUrl,
+#   Captures: group 1 = the identifier
+#   Skips:    '/path/'  (handled by the quote/backtick branches)
+#             obj.path  (only the leading "obj" run is read)
+_ARG_NAME_RE = re.compile(r"([A-Za-z_$][\w$]*)")
 
 # Bound for the argument window scanned after a call head for its URL literal.
 _CALL_WINDOW = 300
@@ -530,38 +567,81 @@ def _call_method(match, window):
     return "get"
 
 
-def _call_url(window):
-    """Return the URL literal opening a call argument list, else None.
+def _call_window_end(blanked, start):
+    """Return the index just past a call's matching close paren (bounded).
 
-    A quoted first argument is preferred; otherwise the first quoted literal
-    in the window is used so a concatenated fragment (``base + '/path/'``)
-    still resolves. A non-literal call has no literal to return and yields
-    None, so it never becomes a pair or a false link.
+    Scanning the literal-blanked copy means parens inside string/template
+    literals are spaces and cannot miscount, so the window is the call's own
+    argument list rather than every character up to ``_CALL_WINDOW``. An
+    unbalanced call is cut at the bound.
+    """
+    depth = 1
+    limit = min(len(blanked), start + _CALL_WINDOW)
+    i = start
+    while i < limit:
+        ch = blanked[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return limit
+
+
+def _call_url(window, consts=None):
+    """Return the URL literal opening a call's argument list, else None.
+
+    Only a literal that OPENS the call's own argument list resolves: a quoted
+    (single/double) or static backtick first argument, a leading concatenation
+    fragment of the same call (``base + '/path/'``), or a bare identifier bound
+    in the one-level ``consts`` map. A later statement's literal is never
+    borrowed, so a non-literal call has no URL and yields None -- it can never
+    become a pair or a false link.
     """
     stripped = window.lstrip()
-    if stripped[:1] in ("'", '"'):
+    head = stripped[:1]
+    if head in ("'", '"'):
         lit = QUOTED_LITERAL_RE.match(stripped)
-        if lit:
-            return lit.group(2)
-    litm = QUOTED_LITERAL_RE.search(window)
-    return litm.group(2) if litm else None
+        return lit.group(2) if lit else None
+    if head == "`":
+        lit = _BACKTICK_LITERAL_RE.match(stripped)
+        if lit and "${" not in lit.group(1):
+            return lit.group(1)
+        return None
+    concat = _ARG_CONCAT_RE.match(stripped)
+    if concat:
+        return concat.group(2)
+    name = _ARG_NAME_RE.match(stripped)
+    if name and consts and name.group(1) in consts:
+        return consts[name.group(1)]
+    return None
 
 
-def _iter_call_refs(text):
+def iter_call_refs(text, consts=None):
     """Yield (line, method, url) for each frontend HTTP call in ``text``.
 
-    Call-head positions are located on a literal-blanked copy so a call that
-    appears inside a string/template literal cannot match; the URL itself is
-    read from the original text (blanking preserves length and newlines, so
-    offsets and line numbers stay aligned).
+    The single canonical call-site scan: dotted ``http``/``HttpClient``/
+    ``$http``/``axios`` calls, bare ``fetch()``/``axios()``, and their React
+    Query wrappers. ``useQuery``/``useMutation`` are covered TRANSITIVELY
+    through the ``fetch``/``axios`` call they wrap; named user-defined fetchers
+    are not detected. Call-head positions are located on a literal-blanked copy
+    so a call inside a string/template literal cannot match; the URL is read
+    from the original ``text`` (blanking preserves length and newlines, so
+    offsets and line numbers stay aligned). The window is the call's own
+    argument list, so a later method option or URL literal is never borrowed.
+    ``consts`` (optional) is a one-level name->literal map: a bare identifier
+    first argument present in it resolves to its value.
     """
     from diffimpactscout.impact import reverse
 
     blanked = reverse._blank_literals(text, keep_export_names=False)
     for m in _CALL_HEAD_RE.finditer(blanked):
-        window = text[m.end():m.end() + _CALL_WINDOW]
+        end = _call_window_end(blanked, m.end())
+        window = text[m.end():end]
         line = text[:m.start()].count("\n") + 1
-        yield line, _call_method(m, window), _call_url(window)
+        yield line, _call_method(m, window), _call_url(window, consts)
 
 
 def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=None):
@@ -577,7 +657,7 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
             continue
         text = _strip_comments(text)
         seen = set()
-        for line, method, url in _iter_call_refs(text):
+        for line, method, url in iter_call_refs(text):
             ref = _url_ref(posix, line, url, method, seen)
             if ref is not None:
                 refs.append(ref)
@@ -595,11 +675,12 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
 def extract_call_pairs(root, frontend_globs=None, cfg=None):
     """Return ``(method, url)`` pairs for frontend HTTP calls across call styles.
 
-    A thin projection over the same call-head scan as
-    ``extract_frontend_refs`` (dotted http/HttpClient/$http/axios, bare
-    fetch/axios, and their React Query wrappers), so every pair is also a
-    linkable ref. Only URL-like string literals produce a pair; a non-literal
-    call yields none and can never false-link.
+    A thin projection over the same canonical call-head scan as
+    ``extract_frontend_refs`` (``iter_call_refs``: dotted
+    http/HttpClient/$http/axios, bare fetch/axios, and their React Query
+    wrappers), so every pair is also a linkable ref. Only URL-like string
+    literals produce a pair; a non-literal call yields none and can never
+    false-link.
     """
     globs = _TS_DEFAULT_GLOBS if frontend_globs is None else frontend_globs
     pairs = []
@@ -610,7 +691,7 @@ def extract_call_pairs(root, frontend_globs=None, cfg=None):
         if text is None:
             continue
         text = _strip_comments(text)
-        for _line, method, url in _iter_call_refs(text):
+        for _line, method, url in iter_call_refs(text):
             if not _is_url_like(url):
                 continue
             key = (method, url)

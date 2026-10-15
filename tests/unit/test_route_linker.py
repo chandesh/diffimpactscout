@@ -231,6 +231,89 @@ def test_match_template_refs(tmp_path):
     assert unresolved_names == {"no-such-route"}
 
 
+def test_extract_dynamic_template_ref_yields_none_name(tmp_path):
+    """Checks a dynamic url tag is extracted as a None-named reference (REQ-16)."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    assert refs == [("app/templates/t.html", None)]
+
+
+def test_dynamic_url_var_is_unresolved(tmp_path):
+    """Checks a dynamic url tag never links and lands in dynamic-ref (REQ-16)."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    linked, unresolved = rl.match_template_refs(refs, [])
+    assert linked == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["reason"] == "dynamic-ref"
+    assert unresolved[0]["file"] == "app/templates/t.html"
+
+
+def test_dynamic_url_var_never_matches_route(tmp_path):
+    """Checks a dynamic name equal to a route name still stays unresolved (REQ-16)."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url order_list %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    routes = [Route("order_list", "orders/", "OrderList.as_view", "u.py")]
+    linked, unresolved = rl.match_template_refs(refs, routes)
+    assert linked == []
+    assert unresolved[0]["reason"] == "dynamic-ref"
+
+
+def test_dynamic_url_tag_with_args_is_unresolved(tmp_path):
+    """Checks a dynamic url tag carrying args is unresolved dynamic-ref (REQ-16)."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url next_page fallback %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    linked, unresolved = rl.match_template_refs(refs, [])
+    assert linked == []
+    assert unresolved[0]["reason"] == "dynamic-ref"
+
+
+def test_dynamic_template_ref_ignores_names_filter(tmp_path):
+    """Checks a dynamic ref is emitted even when names scopes static refs (REQ-16)."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
+    refs = rl.extract_template_refs(
+        str(tmp_path), ["**/*.html"], names={"other-route"}
+    )
+    assert refs == [("app/templates/t.html", None)]
+
+
+def test_static_unknown_template_ref_reason(tmp_path):
+    """Checks a static unmatched url tag is unresolved with reason unknown-url."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url 'no-such-route' %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    linked, unresolved = rl.match_template_refs(refs, [])
+    assert linked == []
+    assert unresolved[0]["reason"] == "unknown-url"
+
+
+def test_static_template_ref_links_when_dynamic_present(tmp_path):
+    """Checks a matching static tag still links when a dynamic tag shares the file."""
+    _write(
+        str(tmp_path),
+        "app/templates/t.html",
+        "{% url 'order-list' %}\n{% url view_name %}\n",
+    )
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    routes = [Route("order-list", "orders/", "OrderList.as_view", "u.py")]
+    linked, unresolved = rl.match_template_refs(refs, routes)
+    assert [m["ref"] for m in linked] == ["order-list"]
+    assert [u["reason"] for u in unresolved] == ["dynamic-ref"]
+
+
+def test_whitespace_only_url_tag_is_not_dynamic(tmp_path):
+    """Checks a malformed whitespace-only url tag is not captured (REQ-16)."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url %}\n{% url  %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    assert refs == []
+
+
+def test_quoted_url_tag_is_not_dynamic(tmp_path):
+    """Checks a quoted (static) url tag is not also captured as dynamic."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url 'order-list' %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    assert refs == [("app/templates/t.html", "order-list")]
+
+
 def test_extract_frontend_refs(tmp_path):
     """Verifies that frontend endpoints are extracted as static refs only."""
     _build_tree(tmp_path)

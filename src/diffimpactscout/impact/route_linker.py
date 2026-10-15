@@ -97,6 +97,18 @@ _ARG_NAME_RE = re.compile(r"([A-Za-z_$][\w$]*)")
 # Bound for the argument window scanned after a call head for its URL literal.
 _CALL_WINDOW = 300
 URL_TAG_RE = re.compile(r"{%\s*url\s+['\"]([^'\"]+)['\"]\s*%}")
+
+# Matches a DYNAMIC {% url %} tag: the route name is NOT a quoted literal (a
+# template variable or computed expression) so it can never be linked to a
+# named route. Such tags degrade to an unresolved "dynamic-ref" entry.
+#   Matches:  {% url view_name %}        -> dynamic
+#             {% url next_page fallback %}
+#   Captures: none (match presence is the only signal)
+#   Skips:    {% url 'order-list' %}     (quoted literal -> URL_TAG_RE)
+#             {% url "order-list" %}
+#             {% url %}                  (no argument follows; also whitespace-only)
+_URL_TAG_DYNAMIC_RE = re.compile(r"{%\s*url\s+(?!['\"%}\s])[^%]{1,200}?%}")
+
 URL_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 
 # Matches the named-binding brace list of an ES/TS import, tolerant of
@@ -518,6 +530,14 @@ def extract_fastapi_routes(root, py_globs, cfg=None):
 
 
 def extract_template_refs(root, template_globs, cfg=None, names=None):
+    """Extract {% url %} template refs as (file, name) pairs.
+
+    A literal name is kept only when it is in ``names`` (None scans all). A
+    DYNAMIC tag whose name is not a quoted literal yields a ``(file, None)``
+    pair: it can never be attributed to a named route, so ``match_template_refs``
+    routes it to the unresolved ``dynamic-ref`` bucket and never links it.
+    Dynamic refs ignore ``names`` because they carry no name to filter on.
+    """
     refs = []
     for posix in _iter_files(root, template_globs, (".html",), cfg=cfg):
         full = os.path.join(root, posix) if root else posix
@@ -527,6 +547,8 @@ def extract_template_refs(root, template_globs, cfg=None, names=None):
         for m in URL_TAG_RE.finditer(text):
             if names is None or m.group(1) in names:
                 refs.append((posix, m.group(1)))
+        for _ in _URL_TAG_DYNAMIC_RE.finditer(text):
+            refs.append((posix, None))
     return refs
 
 
@@ -965,13 +987,22 @@ def _best_route_match(ref_path, routes):
 
 
 def match_template_refs(refs, routes):
+    """Match extracted template refs to routes; never link a dynamic ref.
+
+    A ``None`` name marks a dynamic {% url %} tag: it always lands in the
+    unresolved bucket with reason ``dynamic-ref`` and is never linked. A
+    literal name with no matching route is unresolved with reason ``unknown-url``.
+    """
     by_name = {r.name: r for r in routes if r.name is not None}
     matched = []
     unresolved = []
     for file, name in refs:
+        if name is None:
+            unresolved.append({"file": file, "ref": None, "reason": "dynamic-ref"})
+            continue
         route = by_name.get(name)
         if route is not None:
             matched.append({"route": route, "file": file, "ref": name})
         else:
-            unresolved.append({"file": file, "ref": name})
+            unresolved.append({"file": file, "ref": name, "reason": "unknown-url"})
     return matched, unresolved

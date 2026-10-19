@@ -320,6 +320,7 @@ The default report is a plain ASCII table: no emoji, no Findings section, and se
 - **Top-N cap.** `--top N` limits the body to the N highest-ranked rows (default: 20); hidden rows collapse to one overflow line per module (`... +3 more in app/views (1 High)`). The header severity counts and the top impacted paths are computed over all rows, so they do not change with `--top`. `--all` and `--expand` bypass the cap.
 - **JSON surface.** `--json` emits `{changed_count, rows, endpoints, unresolved, unresolved_by_reason, hidden_count, shown_count, hidden_counts, cache_hit_rate}` for scripting. Each entry in `rows` carries the same `section`, `badge`, and `key` fields shown in the table; `shown_count` is the body row count after the Top-N cap, and `hidden_counts` maps each overflowed module to its hidden row count. The original five keys are unchanged, so existing scripts keep working. Each row additionally carries `confidence` (`high`/`medium`/`low`), `evidence`, `why_matters`/`suggested_action` (Medium and High rows), `owner`, and the ranking terms `fan_in`, `missing_test`, `churn`, plus the computed `risk`.
 - **Empty JSON files.** The `syntax/json-syntax` guard check skips empty `.json` files with a warning instead of failing them.
+- **JSONC files.** `syntax/json-syntax` parses JSONC (comments and trailing commas) for files that are JSON-with-comments by convention -- `tsconfig.json`, `tsconfig.*.json`, `jsconfig.json`, `.vscode/*.json`, `devcontainer.json`, `*.code-workspace` -- and keeps every other `.json` strict.
 
 ### Confidence and evidence
 

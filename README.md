@@ -11,7 +11,7 @@ An incremental pre-push guard and AST blast-radius impact analyzer for git repos
 - Incremental checks: every check is scoped to the change-set or changed lines, not the whole repository.
 - Auto-fixing hygiene checks (line endings, trailing whitespace, end-of-file newline) that clean files in place.
 - Python AST symbol map: detects changed classes, functions, methods, module fields, and class fields, including deletions and renames.
-- Cross-layer impact linking: Python symbols to Django `{% url %}` template tags and frontend `http.get()/post()`-style calls.
+- Cross-layer impact linking: Python symbols to Django `{% url %}` template tags, frontend HTTP calls (`http`, `HttpClient`, `$http`, `axios`, `fetch`, React Query), and TS/JS import/export bindings of changed symbol names.
 - Symbol cache (`.impact_analysis_cache.json`) so repeated runs skip unchanged files.
 - Profiles for `generic`, `django`, `fastapi`, `python`, and `frontend` projects.
 - Configurable pre-push hook installation that never silently clobbers an existing hook.
@@ -101,7 +101,7 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 | --- | --- |
 | `--staged` | Analyze the staged diff (base ref becomes `HEAD`). |
 | `--fast` | Skip template and frontend scanning; limit Python scanning to the changed files plus import-linked files. |
-| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, hidden_count, shown_count, hidden_counts}`) instead of a table; see [Report format](#report-format). |
+| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, unresolved_by_reason, hidden_count, shown_count, hidden_counts, cache_hit_rate}`) instead of a table; see [Report format](#report-format). |
 | `--expand` | Open rolled-up rows (e.g. "35 templates directly extend it") to list their child files. |
 | `--all` | Also show lower-confidence (heuristic/transitive) impacts. |
 | `--top N` | Cap the table body at N ranked rows (default: 20); overflow collapses to one line per module. `--all` and `--expand` bypass the cap. |
@@ -271,7 +271,7 @@ The `impact` command answers: if I push these changes, what else could break?
 3. Depending on the profile it extracts routes:
    - `django`: `path()`/`re_path()`/`url()` entries in `urls_globs` that carry a `name=`.
    - `fastapi`: `get`/`post`/`put`/`delete`/`patch`/`options` decorators on `router`/`app`-style objects in `urls_globs`.
-4. It links layers: Django templates using `{% url 'name' %}` resolve through the route to its handler; frontend calls (`http.get(...)`, `HttpClient.post(...)`, `$http.delete(...)`) resolve the quoted endpoint to a route by path. References that cannot be resolved to a route land in an "unresolved" bucket flagged for manual checking.
+4. It links layers: Django templates using `{% url 'name' %}` resolve through the route to its handler; frontend HTTP calls resolve the quoted endpoint to a route by path. Recognized call styles are `http.*`, `HttpClient.*`, `$http.*`, `axios.*`, bare `fetch()`/`axios()`, and React Query `useQuery`/`useMutation` wrappers around `fetch`/`axios`. Changed Python symbol names that appear in TS/JS `import`/`require`/`export` bindings become `frontend-symbol` rows. Literal template refs that cannot be resolved to a route, non-literal (`{% url var %}`) refs, unknown URLs, assets with no template reference, and binary/unsupported inputs land in an "unresolved" bucket flagged for manual checking.
 5. Every impacted reference gets a severity:
 
 | Condition | Severity |
@@ -318,7 +318,7 @@ The default report is a plain ASCII table: no emoji, no Findings section, and se
 - **Badge column.** Every row carries a `Badge`: `Changed` when the impacted file is itself in the change-set, else `Impacted`.
 - **Row keys.** Each body row ends with an unbroken `path:line` key (e.g. `app/views/dashboard.py:12`) that never wraps across lines, so scripts can rejoin wrapped rows by matching the trailing token.
 - **Top-N cap.** `--top N` limits the body to the N highest-ranked rows (default: 20); hidden rows collapse to one overflow line per module (`... +3 more in app/views (1 High)`). The header severity counts and the top impacted paths are computed over all rows, so they do not change with `--top`. `--all` and `--expand` bypass the cap.
-- **JSON surface.** `--json` emits `{changed_count, rows, endpoints, unresolved, hidden_count, shown_count, hidden_counts}` for scripting. Each entry in `rows` carries the same `section`, `badge`, and `key` fields shown in the table; `shown_count` is the body row count after the Top-N cap, and `hidden_counts` maps each overflowed module to its hidden row count. The original five keys are unchanged, so existing scripts keep working. Each row additionally carries `confidence` (`high`/`medium`/`low`), `evidence`, `why_matters`/`suggested_action` (Medium and High rows), `owner`, and the ranking terms `fan_in`, `missing_test`, `churn`, plus the computed `risk`.
+- **JSON surface.** `--json` emits `{changed_count, rows, endpoints, unresolved, unresolved_by_reason, hidden_count, shown_count, hidden_counts, cache_hit_rate}` for scripting. Each entry in `rows` carries the same `section`, `badge`, and `key` fields shown in the table; `shown_count` is the body row count after the Top-N cap, and `hidden_counts` maps each overflowed module to its hidden row count. The original five keys are unchanged, so existing scripts keep working. Each row additionally carries `confidence` (`high`/`medium`/`low`), `evidence`, `why_matters`/`suggested_action` (Medium and High rows), `owner`, and the ranking terms `fan_in`, `missing_test`, `churn`, plus the computed `risk`.
 - **Empty JSON files.** The `syntax/json-syntax` guard check skips empty `.json` files with a warning instead of failing them.
 
 ### Confidence and evidence
@@ -336,6 +336,38 @@ Low-confidence rows are hidden by default and shown under `Transitive (collapsed
 ### Why and action per row
 
 Medium and High rows carry `why_matters` (a one-line reason naming the symbol and the import chain, or an explicit `(unresolved import)` note) and `suggested_action` (for example `run tests/test_x.py`, `update call site`, or `remove import` for a deleted symbol). `suggested_action` is what the `Action Required` column shows, and both fields are appended to the rationale lines as `[why: ...; do: ...]`.
+
+### Polyglot linking and unresolved reasons
+
+Frontend HTTP calls are scanned with one canonical call-head pass, so every recognized style produces the same `(method, URL)` pair used for route matching:
+
+| Style | Example |
+| --- | --- |
+| Dotted `http` / `HttpClient` / `$http` | `this.http.get('/orders/')` |
+| Dotted `axios` | `axios.post('/orders/')` |
+| Bare `fetch()` / `axios()` | `fetch('/orders/')` (method `get` unless an options object overrides it) |
+| React Query | `useQuery(() => fetch('/orders/'))`, `useMutation(() => axios.post('/orders/'))` |
+
+A non-literal URL never links. Changed Python symbol names bound by a TS/JS named import, `require`, or export produce `category: frontend-symbol` rows at the importing file.
+
+Every report ends with an audit line counting unresolved entries by cause. The same counts are available as `unresolved_by_reason` in `--json`:
+
+| Reason | Cause |
+| --- | --- |
+| `dynamic-ref` | A non-literal template ref such as `{% url view_name %}`. |
+| `unknown-url` | A literal URL that matches no extracted route. |
+| `no-import-chain` | A changed asset with no tracked template or importer. |
+| `binary/unsupported` | A legacy/free-text unresolved reason classified as an unsupported input. |
+
+Dynamic refs and unmatched URLs never produce linked rows.
+
+### Reachability
+
+When the repository has entry points (Django/FastAPI routes and Django management commands), each Python consumer is checked for reachability through a forward callee walk (depth cap 5, node cap 500). A consumer no entry point reaches is downgraded exactly one severity level (High to Medium, Medium to Low, Low unchanged), marked `reachability: "unreachable"`, and still listed with `--all`. Reachable consumers keep their severity.
+
+### Performance budget and cache
+
+The full-mode regression guard runs a 200-file synthetic repository with `MAX_SECONDS = 30` (measured around 0.1s cold and warm on development hardware). `--fast` remains an import-linked subset that agrees with full mode on High rows for the route-free scale fixture. `cache_hit_rate` in `--json` reports the symbol-cache hit ratio for the analyzed files (`0.0` cold, `1.0` fully warm).
 
 ### Risk ranking and owners
 

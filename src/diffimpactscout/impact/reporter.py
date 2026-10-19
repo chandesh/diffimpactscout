@@ -74,10 +74,11 @@ def _counts(rows):
 
 
 def compute_summary_risk_score(rows):
-    """Phase-A placeholder risk score (0-100) from severity counts.
+    """Summary risk score (0-100) from severity counts.
 
-    Weights High as 1.0 and Medium as 0.5 over all counted rows;
-    Phase-B replaces this with the fan_in formula.
+    Weights High as 1.0 and Medium as 0.5 over all counted rows. This is a
+    change-set-level score; per-row ordering uses the fan_in risk formula in
+    risk.py.
     """
     counts = _counts(rows or [])
     total = counts["High"] + counts["Medium"] + counts["Low"]
@@ -111,10 +112,10 @@ def _top_impacted_paths(rows, limit=5, changed_paths=None):
     """Rank the top impacted files for the summary header.
 
     Returns up to ``limit`` ``(path, owner)`` pairs ordered by descending
-    risk then path. Rows without a ``risk`` score (pre-Phase-B callers)
-    fall back to severity rank (High, Medium, Low) then path. Paths in
-    ``changed_paths`` are excluded so the Top list only contains impacted
-    files, consistent with ``_impacted_count``.
+    risk then path. Rows without a ``risk`` score fall back to severity
+    rank (High, Medium, Low) then path. Paths in ``changed_paths`` are
+    excluded so the Top list only contains impacted files, consistent
+    with ``_impacted_count``.
     """
     changed = set(changed_paths or ())
 
@@ -496,7 +497,7 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
         impacted = _impacted_count(rows, changed_paths)
         top = _top_impacted_paths(rows, limit, changed_paths)
     counts = _counts(rows or [])
-    lines.append("  Risk: %d/100 (High*1.0 + Medium*0.5 over rows; Phase-B replaces with fan_in formula)" % risk)
+    lines.append("  Risk: %d/100 (severity-weighted: High*1.0 + Medium*0.5 over counted rows)" % risk)
     lines.append("  High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
     lines.append("  changed %d files vs impacted %d files" % (changed_count, impacted))
     for path, owner in (top or [])[:limit]:

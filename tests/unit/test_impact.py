@@ -59,6 +59,13 @@ DESCRIBE = (
     "    return Book.status\n"
 )
 
+DESCRIBE_HEAD = (
+    "from app.models import Book\n"
+    "\n"
+    "def describe():\n"
+    "    return Book.status or ''\n"
+)
+
 UTILS = (
     "def helper():\n"
     "    return 'x'\n"
@@ -493,6 +500,32 @@ def test_run_impact_model_field_plain(tmp_path, capsys):
     assert "update call site" in out
     assert "referenced from a file outside the change-set" in out
     assert "1 changed file(s)" in out
+
+
+def test_run_impact_summary_counts_only_impacted_files(tmp_path, capsys):
+    """Verifies the summary excludes changed files from impacted count and Top-5.
+
+    When the only consumer of a changed symbol is itself in the change-set
+    (badge Changed), the report must count zero impacted files and must not
+    list that changed file in the Top impacted paths.
+    """
+    repo = _make_repo(tmp_path)
+    _write(repo, "app/__init__.py", "")
+    _write(repo, "app/models.py", MODELS)
+    _write(repo, "app/views.py", DESCRIBE)
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(repo, "app/models.py", MODELS_HEAD)
+    _write(repo, "app/views.py", DESCRIBE_HEAD)
+    _commit(repo, "change model and consumer")
+    _anchor(repo, base)
+    cfg = config.load_config(repo)
+    assert impact.run_impact(repo, cfg) == 0
+    out = capsys.readouterr().out
+    head = "\n".join(out.splitlines()[:25])
+    assert "changed 2 files vs impacted 0 files" in head
+    top_lines = [l for l in out.splitlines() if l.strip().startswith("- ")]
+    assert not any("app/views.py" in l for l in top_lines)
 
 
 def test_run_impact_deleted_function(tmp_path, capsys):

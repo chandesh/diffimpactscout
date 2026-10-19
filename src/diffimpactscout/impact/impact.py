@@ -168,7 +168,7 @@ def run_impact(root, cfg, staged=False, fast=False, json_out=False, markdown=Fal
             reporter.render_report(
                 rows, endpoints, unresolved, changed_count,
                 markdown=markdown, hidden_count=hidden_count, expand=effective_expand,
-                top_n=top_n,
+                top_n=top_n, changed_paths=changed_paths,
             )
         )
     if sarif_out is not None and sarif_out != "-":

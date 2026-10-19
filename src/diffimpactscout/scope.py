@@ -67,10 +67,33 @@ class DevScope(object):
             )
         return self._gitdir_cache
 
+    def _resolve_ref(self, ref):
+        """Resolve a ref to its commit id for cache keying.
+
+        A moving ref such as HEAD resolves to the current commit, so
+        switching branches (or committing) while the ref *names* are
+        unchanged yields a different key instead of reusing a stale entry.
+        Names that cannot be resolved (for example the synthetic refs some
+        callers/tests pass) fall back to the literal string.
+        """
+        if not ref:
+            return ""
+        sha = gitrun.git_out(
+            ["rev-parse", "--verify", "--quiet", "%s^{commit}" % ref], self.root
+        )
+        return sha or ref
+
     def _cache_path(self, kind, from_ref, to_ref):
         return os.path.join(
             self.cache_dir,
-            "%s.%s" % (kind, cache_key(self._gitdir(), from_ref, to_ref)),
+            "%s.%s" % (
+                kind,
+                cache_key(
+                    self._gitdir(),
+                    self._resolve_ref(from_ref),
+                    self._resolve_ref(to_ref),
+                ),
+            ),
         )
 
     def _write(self, path, text):
@@ -138,10 +161,11 @@ class DevScope(object):
         return ref
 
     def dev_files(self, anchor, from_ref=None, to_ref=None):
-        """Dev files for the change, cached on the (from, to) range only.
+        """Dev files for the change, cached on the resolved (from, to) commit ids.
 
-        The anchor is not part of the cache key, so a different anchor with
-        the same range hits a stale cache.
+        The cache key uses resolved commit ids, so a moved ref (HEAD after a
+        branch switch or a new commit) recomputes instead of serving a stale
+        set.
         """
         if from_ref and to_ref:
             cached = self._cache_path("devset", from_ref, to_ref)

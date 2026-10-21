@@ -176,6 +176,23 @@ def test_dev_files_cache_hit_after_repo_change(tmp_path):
     assert ds.dev_files(anchor, "from", "to") == ["b.txt"]
 
 
+def test_dev_files_cache_invalidated_when_head_moves(tmp_path):
+    """A moved to-ref (HEAD) must invalidate the cached dev-files set.
+
+    The cache key is derived from the resolved commit ids of the range, not
+    the literal ref names, so committing (or switching branches) while the
+    ref strings stay the same recomputes instead of serving a stale set.
+    """
+    repo = _make_repo(tmp_path)
+    _commit(repo, "base.txt", "base\n", "base")
+    anchor = _anchor(repo)
+    _commit(repo, "a.txt", "one\n", "dev a")
+    ds = _make_scope(repo, str(tmp_path / "cache"))
+    assert ds.dev_files(anchor, "origin/master", "HEAD") == ["a.txt"]
+    _commit(repo, "b.txt", "two\n", "dev b")
+    assert ds.dev_files(anchor, "origin/master", "HEAD") == ["a.txt", "b.txt"]
+
+
 def test_contains(tmp_path):
     """Checks that contains distinguishes dev files from tracked and unknown paths."""
     repo = _make_repo(tmp_path)

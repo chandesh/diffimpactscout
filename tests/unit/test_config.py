@@ -97,6 +97,20 @@ def test_user_guard_checks_replace_not_merge(tmp_path):
     assert [c["id"] for c in cfg["guard"]["checks"]] == ["custom-check"]
 
 
+def test_load_config_ignore_symbols_default_empty(tmp_path):
+    """Checks that impact.ignore_symbols defaults to an empty list."""
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["impact"]["ignore_symbols"] == []
+
+
+def test_load_config_ignore_symbols_additive(tmp_path):
+    """Checks that user impact.ignore_symbols add to (not replace) defaults."""
+    _write_cfg(tmp_path, {"impact": {"ignore_symbols": ["tenant"]}})
+    cfg = config.load_config(str(tmp_path))
+    assert "tenant" in cfg["impact"]["ignore_symbols"]
+    assert cfg["impact"]["ignore_symbols"].count("tenant") == 1
+
+
 def test_load_config_invalid_json_fails_open(tmp_path, capsys):
     """Checks that invalid JSON config fails open with a warning."""
     with open(os.path.join(str(tmp_path), config.CFG_NAME), "w") as fh:

@@ -887,7 +887,7 @@ def test_endpoint_chain_literal_and_const_prop(tmp_path):
 
 
 def test_endpoint_refs_transports_methods_and_absolute_filtered(tmp_path):
-    """fetch has no method; absolute/CDN URLs are dropped; consts propagate."""
+    """Absolute/CDN URLs are dropped; consts propagate; bare fetch defaults to GET."""
     root = _repo(tmp_path, {
         "media/shop/src/app/api.ts": (
             "const BASE = '/shop/';\n"
@@ -902,7 +902,24 @@ def test_endpoint_refs_transports_methods_and_absolute_filtered(tmp_path):
     })
     refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
     got = sorted((r["ref"], r["method"]) for r in refs)
-    assert got == [("/shop/fetch/", None), ("/shop/items/", "post")]
+    # Bare fetch defaults to GET now that route_linker is the canonical scan.
+    assert got == [("/shop/fetch/", "get"), ("/shop/items/", "post")]
+
+
+def test_endpoint_refs_bare_axios_and_query_wrappers(tmp_path):
+    """Bare axios, axios.<method>, and React Query wrappers resolve via Chain E (WR-04)."""
+    root = _repo(tmp_path, {
+        "media/shop/src/app/api.ts": (
+            "function go() {\n"
+            "  axios('/shop/x/');\n"
+            "  axios.post('/shop/y/');\n"
+            "  useQuery(['k'], () => fetch('/shop/z/'));\n"
+            "}\n"
+        ),
+    })
+    refs = rev._http_refs_for_files(root, ["media/shop/src/app/api.ts"])
+    got = sorted((r["ref"], r["method"]) for r in refs)
+    assert got == [("/shop/x/", "get"), ("/shop/y/", "post"), ("/shop/z/", "get")]
 
 
 def test_endpoint_refs_reject_multilevel_concat(tmp_path):

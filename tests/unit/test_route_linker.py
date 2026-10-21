@@ -1,6 +1,8 @@
 import ast
 import os
 
+import pytest
+
 import diffimpactscout.impact.route_linker as rl
 from diffimpactscout.impact.route_linker import Route
 
@@ -229,6 +231,89 @@ def test_match_template_refs(tmp_path):
     assert unresolved_names == {"no-such-route"}
 
 
+def test_extract_dynamic_template_ref_yields_none_name(tmp_path):
+    """Checks a dynamic url tag is extracted as a None-named reference."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    assert refs == [("app/templates/t.html", None)]
+
+
+def test_dynamic_url_var_is_unresolved(tmp_path):
+    """Checks a dynamic url tag never links and lands in dynamic-ref."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    linked, unresolved = rl.match_template_refs(refs, [])
+    assert linked == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["reason"] == "dynamic-ref"
+    assert unresolved[0]["file"] == "app/templates/t.html"
+
+
+def test_dynamic_url_var_never_matches_route(tmp_path):
+    """Checks a dynamic name equal to a route name still stays unresolved."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url order_list %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    routes = [Route("order_list", "orders/", "OrderList.as_view", "u.py")]
+    linked, unresolved = rl.match_template_refs(refs, routes)
+    assert linked == []
+    assert unresolved[0]["reason"] == "dynamic-ref"
+
+
+def test_dynamic_url_tag_with_args_is_unresolved(tmp_path):
+    """Checks a dynamic url tag carrying args is unresolved dynamic-ref."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url next_page fallback %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    linked, unresolved = rl.match_template_refs(refs, [])
+    assert linked == []
+    assert unresolved[0]["reason"] == "dynamic-ref"
+
+
+def test_dynamic_template_ref_ignores_names_filter(tmp_path):
+    """Checks a dynamic ref is emitted even when names scopes static refs."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url view_name %}\n")
+    refs = rl.extract_template_refs(
+        str(tmp_path), ["**/*.html"], names={"other-route"}
+    )
+    assert refs == [("app/templates/t.html", None)]
+
+
+def test_static_unknown_template_ref_reason(tmp_path):
+    """Checks a static unmatched url tag is unresolved with reason unknown-url."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url 'no-such-route' %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    linked, unresolved = rl.match_template_refs(refs, [])
+    assert linked == []
+    assert unresolved[0]["reason"] == "unknown-url"
+
+
+def test_static_template_ref_links_when_dynamic_present(tmp_path):
+    """Checks a matching static tag still links when a dynamic tag shares the file."""
+    _write(
+        str(tmp_path),
+        "app/templates/t.html",
+        "{% url 'order-list' %}\n{% url view_name %}\n",
+    )
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    routes = [Route("order-list", "orders/", "OrderList.as_view", "u.py")]
+    linked, unresolved = rl.match_template_refs(refs, routes)
+    assert [m["ref"] for m in linked] == ["order-list"]
+    assert [u["reason"] for u in unresolved] == ["dynamic-ref"]
+
+
+def test_whitespace_only_url_tag_is_not_dynamic(tmp_path):
+    """Checks a malformed whitespace-only url tag is not captured."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url %}\n{% url  %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    assert refs == []
+
+
+def test_quoted_url_tag_is_not_dynamic(tmp_path):
+    """Checks a quoted (static) url tag is not also captured as dynamic."""
+    _write(str(tmp_path), "app/templates/t.html", "{% url 'order-list' %}\n")
+    refs = rl.extract_template_refs(str(tmp_path), ["**/*.html"])
+    assert refs == [("app/templates/t.html", "order-list")]
+
+
 def test_extract_frontend_refs(tmp_path):
     """Verifies that frontend endpoints are extracted as static refs only."""
     _build_tree(tmp_path)
@@ -313,6 +398,236 @@ def test_extract_frontend_refs_block_comment_preserves_lines(tmp_path):
     refs = rl.extract_frontend_refs(str(tmp_path), ["**/*.ts"])
     static = [r for r in refs if not r["dynamic"]]
     assert [(r["line"], r["method"]) for r in static] == [(3, "get")]
+
+
+@pytest.mark.parametrize(
+    "snippet,method,url",
+    [
+        ("fetch('/api/orders')", "get", "/api/orders"),
+        ("axios.post('/api/orders')", "post", "/api/orders"),
+        ("this.$http.get('/api/orders')", "get", "/api/orders"),
+        ("useQuery(['orders'], () => fetch('/api/orders'))", "get", "/api/orders"),
+        ("useMutation((d) => axios.post('/api/orders', d))", "post", "/api/orders"),
+    ],
+)
+def test_call_styles_link(tmp_path, snippet, method, url):
+    """Verifies each frontend call style yields its (method, URL) pair."""
+    (tmp_path / "a.ts").write_text(snippet + "\n")
+    pairs = rl.extract_call_pairs(str(tmp_path))
+    assert (method, url) in pairs
+
+
+def test_axios_bare_defaults_to_get(tmp_path):
+    """Checks a bare axios() call defaults to the GET method."""
+    (tmp_path / "a.ts").write_text("axios('/api/orders')\n")
+    assert ("get", "/api/orders") in rl.extract_call_pairs(str(tmp_path))
+
+
+def test_fetch_method_option_override(tmp_path):
+    """Checks a fetch() options object overrides the default GET method."""
+    (tmp_path / "a.ts").write_text("fetch('/api/orders', { method: 'POST' })\n")
+    assert ("post", "/api/orders") in rl.extract_call_pairs(str(tmp_path))
+
+
+def test_non_literal_url_yields_no_pair(tmp_path):
+    """Checks a non-literal URL never produces a call pair."""
+    (tmp_path / "a.ts").write_text("fetch(apiUrl)\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_extract_frontend_refs_call_styles(tmp_path):
+    """Checks fetch/axios call styles link through extract_frontend_refs."""
+    _write(str(tmp_path), "app.ts", "fetch('/api/orders')\naxios.post('/api/orders')\n")
+    refs = rl.extract_frontend_refs(str(tmp_path), ["**/*.ts"])
+    pairs = {(r["ref"], r["method"]) for r in refs}
+    assert ("/api/orders", "get") in pairs
+    assert ("/api/orders", "post") in pairs
+
+
+def test_non_literal_call_does_not_borrow_later_literal(tmp_path):
+    """Checks a non-literal call never adopts a later statement's URL (CR-01)."""
+    (tmp_path / "a.ts").write_text("fetch(apiUrl)\nconst ENDPOINT = '/api/orders/'\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_non_literal_call_does_not_borrow_next_line_literal(tmp_path):
+    """Checks a later literal on the following line is not borrowed (IN-04)."""
+    (tmp_path / "a.ts").write_text("fetch(apiUrl)\n\nconst ENDPOINT = '/api/orders/';\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_method_option_does_not_bleed_from_later_call(tmp_path):
+    """Checks a later call's method option does not override this call (WR-01)."""
+    (tmp_path / "a.ts").write_text("fetch('/api/a/')\nfoo({ method: 'DELETE' })\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == [("get", "/api/a/")]
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "myaxios.get('/api/x/')",
+        "myhttp.post('/x/')",
+        "xHttpClient.put('/x/')",
+    ],
+)
+def test_dotted_callee_needs_word_boundary(tmp_path, snippet):
+    """Checks a dotted callee inside a longer identifier yields no pair (WR-02)."""
+    (tmp_path / "a.ts").write_text(snippet + "\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_backtick_static_url_literal(tmp_path):
+    """Checks a static backtick template literal resolves to a pair (WR-05)."""
+    (tmp_path / "a.ts").write_text("fetch(`/api/orders/`)\n")
+    assert ("get", "/api/orders/") in rl.extract_call_pairs(str(tmp_path))
+
+
+def test_backtick_interpolated_url_yields_no_pair(tmp_path):
+    """Checks an interpolated backtick template literal is non-literal (WR-05)."""
+    (tmp_path / "a.ts").write_text("fetch(`/api/orders/${id}/`)\n")
+    assert rl.extract_call_pairs(str(tmp_path)) == []
+
+
+def test_iter_call_refs_yields_line_method_url():
+    """Checks the canonical call scan yields (line, method, url) (WR-03)."""
+    refs = list(rl.iter_call_refs("const a = 1;\nfetch('/api/orders')\n"))
+    assert refs == [(2, "get", "/api/orders")]
+
+
+def test_match_endpoints_unknown_url_reason(tmp_path):
+    """Checks an unmatched URL ref lands in unresolved with reason unknown-url."""
+    routes = [Route("order-list", "/api/v1/orders/", "OrderList.as_view", "u.py")]
+    refs = [_ref("f.ts", "/api/v1/unknown/")]
+    matched, unresolved = rl.match_endpoints(refs, routes)
+    assert matched == []
+    assert unresolved[0]["reason"] == "unknown-url"
+
+
+def test_ts_import_links_changed_symbol(tmp_path):
+    """Verifies that a TS import of a changed symbol yields a frontend-symbol ref."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import { CustomTag } from './models';\nconsole.log(CustomTag);\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"})
+    assert any(r["file"].endswith("app.ts") for r in rows)
+    assert all(r["category"] == "frontend-symbol" for r in rows)
+    assert all(r["confidence"] == "medium" for r in rows)
+
+
+def test_ts_import_alias_require_and_export(tmp_path):
+    """Checks alias imports, require() bindings, and local exports are collected."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import { Original as Alias } from './m';\n"
+        "const Req = require('./r');\n"
+        "export const Exported = 1;\n",
+    )
+    rows = rl.extract_ts_symbol_refs(
+        str(tmp_path), {"Original", "Req", "Exported", "Alias"}
+    )
+    names = {r["ref"] for r in rows}
+    assert names == {"Original", "Req", "Exported"}
+
+
+def test_ts_import_ignores_unrelated_and_comments(tmp_path):
+    """Checks unrelated names and commented imports produce no refs."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "// import { CustomTag } from './models';\n"
+        "import { Other } from './other';\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"})
+    assert rows == []
+
+
+def test_ts_import_respects_frontend_globs(tmp_path):
+    """Checks that frontend_globs scope which TS files are scanned."""
+    _write(str(tmp_path), "app.ts", "import { CustomTag } from './m';\n")
+    _write(str(tmp_path), "vendor/lib.ts", "import { CustomTag } from './m';\n")
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}, ["app.ts"])
+    assert {r["file"] for r in rows} == {"app.ts"}
+
+
+def test_ts_import_ignores_literals(tmp_path):
+    """Checks import-looking text in string/template literals yields no refs (CR-01)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "const s = \"import { CustomTag } from './models'\";\n"
+        "const t = `import { CustomTag } from './models'`;\n",
+    )
+    assert rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}) == []
+
+
+def test_ts_import_skips_vendor_and_minified(tmp_path):
+    """Checks dist bundles and minified files yield no refs (WR-01)."""
+    _write(str(tmp_path), "dist/bundle.js", "import { CustomTag } from './m';\n")
+    _write(str(tmp_path), "x.min.js", "import { CustomTag } from './m';\n")
+    _write(str(tmp_path), "src/app.ts", "import { CustomTag } from './m';\n")
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"})
+    assert {r["file"] for r in rows} == {"src/app.ts"}
+
+
+def test_ts_reexport_forms_collected(tmp_path):
+    """Checks re-export and export-declaration forms count as consumed names (WR-02)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "export { Alpha } from './a';\n"
+        "export { Beta };\n"
+        "export default Gamma;\n"
+        "export async function Delta() {}\n"
+        "export function* Epsilon() {}\n",
+    )
+    rows = rl.extract_ts_symbol_refs(
+        str(tmp_path), {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
+    )
+    assert {r["ref"] for r in rows} == {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
+
+
+def test_ts_import_no_space_and_require_destructure(tmp_path):
+    """Checks no-space imports and require destructuring are linked (WR-03)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import{CustomTag}from'./m';\n"
+        "const { Alpha, Beta } = require('./r');\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag", "Alpha", "Beta"})
+    assert {r["ref"] for r in rows} == {"CustomTag", "Alpha", "Beta"}
+
+
+def test_ts_import_symbols_carry_distinct_lines(tmp_path):
+    """Checks each symbol's import match carries its own line number (WR-05)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "import { Alpha } from './a';\n"
+        "import { Beta } from './b';\n",
+    )
+    rows = rl.extract_ts_symbol_refs(str(tmp_path), {"Alpha", "Beta"})
+    assert {r["ref"]: r["line"] for r in rows} == {"Alpha": 1, "Beta": 2}
+
+
+def test_ts_import_empty_globs_scans_nothing(tmp_path):
+    """Checks an explicit empty glob list scans nothing (WR-06)."""
+    _write(str(tmp_path), "app.ts", "import { CustomTag } from './m';\n")
+    assert rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}, []) == []
+
+
+def test_ts_import_ignores_block_comments(tmp_path):
+    """Checks block-commented imports produce no refs (IN-03)."""
+    _write(
+        str(tmp_path),
+        "app.ts",
+        "/* import { CustomTag } from './m'; */\n"
+        "import { Other } from './o';\n",
+    )
+    assert rl.extract_ts_symbol_refs(str(tmp_path), {"CustomTag"}) == []
 
 
 def test_match_endpoints_wildcard_and_prefix(tmp_path):

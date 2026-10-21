@@ -25,12 +25,123 @@ class Route(object):
 _HTTP_METHODS = ("get", "post", "put", "delete", "patch", "options")
 _HTTP_METHOD_RE_SRC = r"get|post|put|delete|patch"
 
-HTTP_CALL_RE = re.compile(
-    r"(\$http|HttpClient|http)\s*\.\s*(" + _HTTP_METHOD_RE_SRC + r")\s*\("
-)
 QUOTED_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
+
+# Matches a frontend HTTP call head across call styles so the URL literal that
+# follows can be linked to a route. Dotted calls carry an explicit method;
+# bare fetch()/axios() default to GET (an options object may override it).
+# The dotted alternative needs a guard that blocks a preceding WORD char but
+# ALLOWS a preceding "." so "myaxios"/"myhttp"/"xHttpClient" are rejected while
+# "this.http"/"this.$http"/"this.axios" still match.
+#   Matches:  http.get(   HttpClient.post(   $http.delete(   axios.put(
+#             this.http.get(   this.$http.get(   this.axios.get(
+#             axios(      fetch(
+#   Captures: group 1 = explicit method (get|post|put|delete|patch) or None
+#             group 2 = bare callee name ("fetch" | "axios") or None
+#   Skips:    myhttp.get(        (lookbehind blocks the word run before "http")
+#             myaxios(           (lookbehind blocks the word run before "axios")
+#             xHttpClient.put(   (lookbehind blocks the word run before it)
+#             response.fetch(    (lookbehind blocks the ".")
+#             fetch = 1          (no "(" after the callee)
+#             fetchMore(         (the mandatory "\s*\(" rejects "M")
+_CALL_HEAD_RE = re.compile(
+    r"(?<![\w])(?:\$http|HttpClient|http|axios)\s*\.\s*("
+    + _HTTP_METHOD_RE_SRC
+    + r")\s*\(|(?<![\w$.])(fetch|axios)\s*\("
+)
+
+# Matches an explicit method override inside a fetch()/axios() options object.
+#   Matches:  { method: 'POST' }   -> "POST"
+#             {method:"delete"}    -> "delete"
+#   Captures: group 1 = the HTTP method name
+#   Skips:    method: verb          (non-literal value)
+#             methodName: 'post'     (no word boundary before "method")
+_METHOD_OPTION_RE = re.compile(
+    r"\bmethod\s*:\s*['\"](get|post|put|delete|patch)['\"]", re.IGNORECASE
+)
+
+# Matches a backtick template literal's one-line body so a STATIC template URL
+# resolves.
+#   Matches:  `/api/orders/`          -> "/api/orders/"
+#             `/shop/items/`
+#   Captures: group 1 = the backtick body
+#   Skips:    `multi\nline`           (no newline allowed inside)
+#   Note:     an interpolated body such as `/api/items/${id}/` still matches;
+#             the caller rejects it as non-literal on "${".
+_BACKTICK_LITERAL_RE = re.compile(r"`([^`\r\n]{1,500})`")
+
+# Matches a leading concatenation fragment at the START of a call's argument
+# list so a URL built as "base + '/path/'" still resolves its static part,
+# while a later statement's literal is never borrowed (only the first operand
+# run before the "+" is consumed, and only the first "+" chain is read).
+#   Matches:  environment.apiUrl + '/api/orders/'  -> "/api/orders/"
+#             BASE + '/shop/'
+#   Captures: group 1 = the quote character, group 2 = the literal body
+#   Skips:    apiUrl              (bare identifier; no "+")
+#             build() + '/x/'     (first run cannot span "(")
+_ARG_CONCAT_RE = re.compile(
+    r"""[\w$.\[\]'"]*\s*\+\s*(['"])([^'"\r\n]{1,500})\1"""
+)
+
+# Matches a bare identifier opening a call's argument list so a one-level
+# constant (see reverse._CONST_ASSIGN_RE/_CONST_CONCAT_RE) can be substituted.
+#   Matches:  LIST)   -> "LIST"     apiUrl,
+#   Captures: group 1 = the identifier
+#   Skips:    '/path/'  (handled by the quote/backtick branches)
+#             obj.path  (only the leading "obj" run is read)
+_ARG_NAME_RE = re.compile(r"([A-Za-z_$][\w$]*)")
+
+# Bound for the argument window scanned after a call head for its URL literal.
+_CALL_WINDOW = 300
 URL_TAG_RE = re.compile(r"{%\s*url\s+['\"]([^'\"]+)['\"]\s*%}")
+
+# Matches a DYNAMIC {% url %} tag: the route name is NOT a quoted literal (a
+# template variable or computed expression) so it can never be linked to a
+# named route. Such tags degrade to an unresolved "dynamic-ref" entry.
+#   Matches:  {% url view_name %}        -> dynamic
+#             {% url next_page fallback %}
+#   Captures: none (match presence is the only signal)
+#   Skips:    {% url 'order-list' %}     (quoted literal -> URL_TAG_RE)
+#             {% url "order-list" %}
+#             {% url %}                  (no argument follows; also whitespace-only)
+_URL_TAG_DYNAMIC_RE = re.compile(r"{%\s*url\s+(?!['\"%}\s])[^%]{1,200}?%}")
+
 URL_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
+
+# Matches the named-binding brace list of an ES/TS import, tolerant of
+# missing whitespace and a leading "type" modifier. Only the brace body is
+# captured; the module specifier is deliberately ignored here (reverse.py's
+# _IMPORT_SPEC_RE owns the module graph).
+#   Matches:  import { Alpha, Beta } from './m'   -> "Alpha, Beta"
+#             import{Alpha}from'./m'              -> "Alpha"
+#             import type { Shape } from './s'    -> "Shape"
+#             import { type Foo, Bar } from './m' -> "type Foo, Bar"
+#   Captures: group 1 = the text between the braces
+#   Skips:    import Foo from './m'              (default import; no brace)
+#             import './side'                     (side-effect import)
+#             import('./dyn')                     (dynamic import)
+#             obj.import { x }                    (lookbehind blocks the ".")
+#             reimport { x }                      (no word boundary before
+#                                                  "import")
+_TS_IMPORT_SYMBOLS_RE = re.compile(r"(?<![\w$.])import\s*(?:type\s+)?\{([^}]*)\}")
+
+# Matches CommonJS require() bindings: a destructured brace list or a single
+# default binding. The module specifier is ignored (see _TS_IMPORT_SYMBOLS_RE).
+#   Matches:  const { Alpha, Beta } = require('./m') -> group 1 "Alpha, Beta"
+#             const {Alpha} = require('./m')         -> group 1 "Alpha"
+#             const Req = require('./r')             -> group 2 "Req"
+#             let x = require('./x')                 -> group 2 "x"
+#   Captures: group 1 = destructured brace body (or None)
+#             group 2 = default binding name (or None)
+#   Skips:    foo.require('./m')                        (no keyword before)
+#             const x = import('./m')                   (ESM dynamic import)
+_TS_REQUIRE_SYMBOLS_RE = re.compile(
+    r"(?:const|let|var)\s+(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))\s*=\s*"
+    r"require\s*\(\s*['\"][^'\"]*['\"]\s*\)"
+)
+
+_TS_EXTS = (".ts", ".js", ".tsx", ".jsx")
+_TS_DEFAULT_GLOBS = ("**/*.ts", "**/*.js", "**/*.tsx", "**/*.jsx")
 
 _URL_ASSET_EXTS = (
     ".js",
@@ -173,6 +284,18 @@ def _iter_files(root, globs, exts, cfg=None, vendor=False):
                 if _matches_glob(posix, pattern):
                     yield posix
                     break
+
+
+MANAGEMENT_COMMAND_GLOBS = ("**/management/commands/*.py",)
+
+
+def iter_command_files(root, cfg=None):
+    """Yield posix paths of Django management command files under ``root``.
+
+    Management commands are legitimate entry points (run via ``manage.py``),
+    so reachability treats every def in them as reachable.
+    """
+    return _iter_files(root, list(MANAGEMENT_COMMAND_GLOBS), (".py",), cfg=cfg)
 
 
 def _parse_file(full):
@@ -416,6 +539,14 @@ def extract_fastapi_routes(root, py_globs, cfg=None):
 
 
 def extract_template_refs(root, template_globs, cfg=None, names=None):
+    """Extract {% url %} template refs as (file, name) pairs.
+
+    A literal name is kept only when it is in ``names`` (None scans all). A
+    DYNAMIC tag whose name is not a quoted literal yields a ``(file, None)``
+    pair: it can never be attributed to a named route, so ``match_template_refs``
+    routes it to the unresolved ``dynamic-ref`` bucket and never links it.
+    Dynamic refs ignore ``names`` because they carry no name to filter on.
+    """
     refs = []
     for posix in _iter_files(root, template_globs, (".html",), cfg=cfg):
         full = os.path.join(root, posix) if root else posix
@@ -425,6 +556,8 @@ def extract_template_refs(root, template_globs, cfg=None, names=None):
         for m in URL_TAG_RE.finditer(text):
             if names is None or m.group(1) in names:
                 refs.append((posix, m.group(1)))
+        for _ in _URL_TAG_DYNAMIC_RE.finditer(text):
+            refs.append((posix, None))
     return refs
 
 
@@ -454,6 +587,94 @@ def _url_ref(file, line, value, method, seen):
     }
 
 
+def _call_method(match, window):
+    """Resolve a call head's method: explicit dotted name, options override, or GET."""
+    explicit = match.group(1)
+    if explicit:
+        return explicit
+    opt = _METHOD_OPTION_RE.search(window)
+    if opt:
+        return opt.group(1).lower()
+    return "get"
+
+
+def _call_window_end(blanked, start):
+    """Return the index just past a call's matching close paren (bounded).
+
+    Scanning the literal-blanked copy means parens inside string/template
+    literals are spaces and cannot miscount, so the window is the call's own
+    argument list rather than every character up to ``_CALL_WINDOW``. An
+    unbalanced call is cut at the bound.
+    """
+    depth = 1
+    limit = min(len(blanked), start + _CALL_WINDOW)
+    i = start
+    while i < limit:
+        ch = blanked[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return limit
+
+
+def _call_url(window, consts=None):
+    """Return the URL literal opening a call's argument list, else None.
+
+    Only a literal that OPENS the call's own argument list resolves: a quoted
+    (single/double) or static backtick first argument, a leading concatenation
+    fragment of the same call (``base + '/path/'``), or a bare identifier bound
+    in the one-level ``consts`` map. A later statement's literal is never
+    borrowed, so a non-literal call has no URL and yields None -- it can never
+    become a pair or a false link.
+    """
+    stripped = window.lstrip()
+    head = stripped[:1]
+    if head in ("'", '"'):
+        lit = QUOTED_LITERAL_RE.match(stripped)
+        return lit.group(2) if lit else None
+    if head == "`":
+        lit = _BACKTICK_LITERAL_RE.match(stripped)
+        if lit and "${" not in lit.group(1):
+            return lit.group(1)
+        return None
+    concat = _ARG_CONCAT_RE.match(stripped)
+    if concat:
+        return concat.group(2)
+    name = _ARG_NAME_RE.match(stripped)
+    if name and consts and name.group(1) in consts:
+        return consts[name.group(1)]
+    return None
+
+
+def iter_call_refs(text, consts=None):
+    """Yield (line, method, url) for each frontend HTTP call in ``text``.
+
+    The single canonical call-site scan: dotted ``http``/``HttpClient``/
+    ``$http``/``axios`` calls, bare ``fetch()``/``axios()``, and their React
+    Query wrappers. ``useQuery``/``useMutation`` are covered TRANSITIVELY
+    through the ``fetch``/``axios`` call they wrap; named user-defined fetchers
+    are not detected. Call-head positions are located on a literal-blanked copy
+    so a call inside a string/template literal cannot match; the URL is read
+    from the original ``text`` (blanking preserves length and newlines, so
+    offsets and line numbers stay aligned). The window is the call's own
+    argument list, so a later method option or URL literal is never borrowed.
+    ``consts`` (optional) is a one-level name->literal map: a bare identifier
+    first argument present in it resolves to its value.
+    """
+    from diffimpactscout.impact import reverse
+
+    blanked = reverse._blank_literals(text, keep_export_names=False)
+    for m in _CALL_HEAD_RE.finditer(blanked):
+        end = _call_window_end(blanked, m.end())
+        window = text[m.end():end]
+        line = text[:m.start()].count("\n") + 1
+        yield line, _call_method(m, window), _call_url(window, consts)
+
+
 def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=None):
     refs = []
     for posix in _iter_files(
@@ -467,21 +688,8 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
             continue
         text = _strip_comments(text)
         seen = set()
-        for m in HTTP_CALL_RE.finditer(text):
-            line = text[:m.start()].count("\n") + 1
-            method = m.group(2)
-            window = text[m.end():m.end() + 300]
-            stripped = window.lstrip()
-            if stripped[:1] in ("'", '"'):
-                lit = QUOTED_LITERAL_RE.match(stripped)
-                if lit:
-                    ref = _url_ref(posix, line, lit.group(2), method, seen)
-                    if ref is not None:
-                        refs.append(ref)
-                    continue
-            litm = QUOTED_LITERAL_RE.search(window)
-            literal = litm.group(2) if litm else None
-            ref = _url_ref(posix, line, literal, method, seen)
+        for line, method, url in iter_call_refs(text):
+            ref = _url_ref(posix, line, url, method, seen)
             if ref is not None:
                 refs.append(ref)
         for m in URL_LITERAL_RE.finditer(text):
@@ -492,6 +700,133 @@ def extract_frontend_refs(root, frontend_globs, cfg=None, vendor=False, needles=
             ref = _url_ref(posix, line, lit, None, seen)
             if ref is not None:
                 refs.append(ref)
+    return refs
+
+
+def extract_call_pairs(root, frontend_globs=None, cfg=None):
+    """Return ``(method, url)`` pairs for frontend HTTP calls across call styles.
+
+    A thin projection over the same canonical call-head scan as
+    ``extract_frontend_refs`` (``iter_call_refs``: dotted
+    http/HttpClient/$http/axios, bare fetch/axios, and their React Query
+    wrappers), so every pair is also a linkable ref. Only URL-like string
+    literals produce a pair; a non-literal call yields none and can never
+    false-link.
+    """
+    globs = _TS_DEFAULT_GLOBS if frontend_globs is None else frontend_globs
+    pairs = []
+    seen = set()
+    for posix in _iter_files(root, globs, _TS_EXTS, cfg=cfg, vendor=True):
+        full = os.path.join(root, posix) if root else posix
+        text = _read_text(full)
+        if text is None:
+            continue
+        text = _strip_comments(text)
+        for _line, method, url in iter_call_refs(text):
+            if not _is_url_like(url):
+                continue
+            key = (method, url)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append(key)
+    return pairs
+
+
+def _ts_import_names(block):
+    """Extract imported binding names from a named-import clause.
+
+    ``X as Y`` yields the original name ``X`` (the changed symbol); a bare
+    ``X`` yields ``X``. A leading ``type`` modifier is ignored.
+    """
+    names = set()
+    for part in block.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        token = re.split(r"\s+as\s+", token, maxsplit=1)[0].strip()
+        if token.startswith("type "):
+            token = token[len("type "):].strip()
+        if token:
+            names.add(token)
+    return names
+
+
+def _ts_import_symbol_lines(text):
+    """Map each imported/required symbol name to its 1-based line number.
+
+    Covers ES named imports and CommonJS require bindings; reuses
+    ``_ts_import_names`` for the binding grammar (alias left-hand side, the
+    ``type`` modifier) on both the import brace list and a require brace list.
+    Exported names are handled separately by ``reverse._export_lines`` so this
+    helper stays import-only.
+    """
+    out = {}
+    for m in _TS_IMPORT_SYMBOLS_RE.finditer(text):
+        line = text[:m.start()].count("\n") + 1
+        for name in _ts_import_names(m.group(1)):
+            out.setdefault(name, line)
+    for m in _TS_REQUIRE_SYMBOLS_RE.finditer(text):
+        line = text[:m.start()].count("\n") + 1
+        if m.group(1) is not None:
+            for name in _ts_import_names(m.group(1)):
+                out.setdefault(name, line)
+        elif m.group(2):
+            out.setdefault(m.group(2), line)
+    return out
+
+
+def extract_ts_symbol_refs(root, changed_names, frontend_globs=None, cfg=None):
+    """Link changed symbol names to TS/JS files that import, require, or export them.
+
+    A changed Python symbol may be referenced by name in a frontend module
+    (``import { CustomTag } from './models'``); this emits a ``frontend-symbol``
+    ref per (file, name, line) so those consumers surface instead of silence.
+
+    Shared lexer: this reuses reverse.py's stdlib TS/JS lexer rather than a
+    second parser. ``_strip_comments`` then ``_blank_literals`` blank
+    string/template literals so import-looking text inside them cannot match;
+    ``reverse._export_lines`` (wrapping ``_EXPORT_NAMED_RE`` /
+    ``_EXPORT_BRACE_RE``) supplies exported names; ``reverse._is_graph_file``
+    drops minified/bundled files. The only new logic is symbol-name extraction
+    from import/require braces: reverse's graph tracks MODULE specifiers,
+    whereas this links changed SYMBOL names to the files that bind them, so
+    the two are intentionally distinct.
+
+    Globs: ``frontend_globs is None`` scans the built-in ``_TS_DEFAULT_GLOBS``;
+    an explicit list -- including ``[]`` -- is honored verbatim, so the generic
+    profile's ``frontend_globs: []`` scans nothing (matching
+    ``extract_frontend_refs``).
+    """
+    names_wanted = set(changed_names or ())
+    refs = []
+    if not names_wanted:
+        return refs
+    from diffimpactscout.impact import reverse
+
+    globs = _TS_DEFAULT_GLOBS if frontend_globs is None else frontend_globs
+    for posix in _iter_files(root, globs, _TS_EXTS, cfg=cfg, vendor=True):
+        if not reverse._is_graph_file(posix):
+            continue
+        full = os.path.join(root, posix) if root else posix
+        text = _read_text(full)
+        if text is None:
+            continue
+        text = _strip_comments(text)
+        text = reverse._blank_literals(text, keep_export_names=False)
+        found = _ts_import_symbol_lines(text)
+        for name, line in reverse._export_lines(text).items():
+            found.setdefault(name, line)
+        for name in sorted(found.keys() & names_wanted):
+            refs.append(
+                {
+                    "file": posix,
+                    "ref": name,
+                    "line": found[name],
+                    "category": "frontend-symbol",
+                    "confidence": "medium",
+                }
+            )
     return refs
 
 
@@ -559,6 +894,8 @@ def match_endpoints(refs, routes):
         dynamic = ref.get("dynamic", False)
         line = ref.get("line")
         method = ref.get("method")
+        # Defensive: refs are never dynamic today (_url_ref hard-codes
+        # "dynamic": False), so this branch does not fire at runtime.
         if dynamic or path is None:
             exact = _exact_route(path, routes) if path is not None else None
             if exact is not None:
@@ -572,7 +909,14 @@ def match_endpoints(refs, routes):
                     }
                 )
             else:
-                unresolved.append({"file": file, "path": path, "dynamic": True})
+                unresolved.append(
+                    {
+                        "file": file,
+                        "path": path,
+                        "dynamic": True,
+                        "reason": "dynamic-ref",
+                    }
+                )
             continue
         hit = _best_route_match(path, routes)
         if hit is not None:
@@ -586,7 +930,14 @@ def match_endpoints(refs, routes):
                 }
             )
         else:
-            unresolved.append({"file": file, "path": path, "dynamic": False})
+            unresolved.append(
+                {
+                    "file": file,
+                    "path": path,
+                    "dynamic": False,
+                    "reason": "unknown-url",
+                }
+            )
     return matched, unresolved
 
 
@@ -647,13 +998,22 @@ def _best_route_match(ref_path, routes):
 
 
 def match_template_refs(refs, routes):
+    """Match extracted template refs to routes; never link a dynamic ref.
+
+    A ``None`` name marks a dynamic {% url %} tag: it always lands in the
+    unresolved bucket with reason ``dynamic-ref`` and is never linked. A
+    literal name with no matching route is unresolved with reason ``unknown-url``.
+    """
     by_name = {r.name: r for r in routes if r.name is not None}
     matched = []
     unresolved = []
     for file, name in refs:
+        if name is None:
+            unresolved.append({"file": file, "ref": None, "reason": "dynamic-ref"})
+            continue
         route = by_name.get(name)
         if route is not None:
             matched.append({"route": route, "file": file, "ref": name})
         else:
-            unresolved.append({"file": file, "ref": name})
+            unresolved.append({"file": file, "ref": name, "reason": "unknown-url"})
     return matched, unresolved

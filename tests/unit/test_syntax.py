@@ -323,3 +323,97 @@ def test_merge_conflict_empty_and_none_file_list(tmp_path):
         result = check.run(_ctx(root, FakeScope(changed={1})), files)
         assert result.ok()
         assert result.issues == []
+
+
+def test_empty_json_is_skip_not_fail(tmp_path):
+    """Verifies that an empty JSON file is skipped with a warning, not failed."""
+    root = str(tmp_path)
+    _write(root, "tsconfig.json", "   \n")
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["tsconfig.json"])
+    assert result.issues == []
+    assert len(result.warned) == 1
+
+
+def test_jsonc_tsconfig_comments_and_trailing_commas_clean(tmp_path):
+    """Verifies that a tsconfig.json (JSONC) with comments/trailing commas passes."""
+    root = str(tmp_path)
+    _write(
+        root,
+        "tsconfig.json",
+        "/* To learn more */\n"
+        "{\n"
+        "  // out dir\n"
+        "  \"compilerOptions\": { \"strict\": true, },\n"
+        "}\n",
+    )
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["tsconfig.json"])
+    assert result.ok()
+    assert result.issues == []
+
+
+def test_jsonc_extends_name_variants_clean(tmp_path):
+    """Verifies that tsconfig.*.json and jsconfig.json are treated as JSONC."""
+    root = str(tmp_path)
+    _write(root, "tsconfig.app.json", "{\n  \"a\": [1, 2,],\n  // note\n}\n")
+    _write(root, "jsconfig.json", "{\n  \"compilerOptions\": {},\n}\n")
+    result = _cls("syntax/json-syntax")().run(
+        _ctx(root), ["tsconfig.app.json", "jsconfig.json"]
+    )
+    assert result.ok()
+    assert result.issues == []
+
+
+def test_jsonc_string_literals_preserved(tmp_path):
+    """Verifies that comment-like text inside strings is not stripped."""
+    root = str(tmp_path)
+    _write(
+        root,
+        "tsconfig.json",
+        "{\n"
+        "  // leading comment\n"
+        "  \"url\": \"http://example.com/a//b\",\n"
+        "  \"glob\": \"a/*b*/c\",\n"
+        "  \"quoted\": \"he said \\\"// hi\\\"\",\n"
+        "}\n",
+    )
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["tsconfig.json"])
+    assert result.ok()
+    assert result.issues == []
+
+
+def test_jsonc_bom_prefix_parses_clean(tmp_path):
+    """Verifies that a UTF-8 BOM tsconfig.json parses cleanly."""
+    root = str(tmp_path)
+    _write_bytes(root, "tsconfig.json", b"\xef\xbb\xbf{\n  // c\n  \"a\": 1\n}\n")
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["tsconfig.json"])
+    assert result.ok()
+    assert result.issues == []
+
+
+def test_jsonc_real_syntax_error_still_fails_with_line(tmp_path):
+    """Verifies that a genuinely malformed tsconfig still fails at the right line."""
+    root = str(tmp_path)
+    _write(root, "tsconfig.json", "{\n  // comment line\n  \"a\": bad\n}\n")
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["tsconfig.json"])
+    assert not result.ok()
+    assert len(result.issues) == 1
+    assert result.issues[0].path == "tsconfig.json"
+    assert result.issues[0].line == 3
+
+
+def test_strict_json_with_comments_still_fails(tmp_path):
+    """Verifies that a non-JSONC .json file with comments still fails."""
+    root = str(tmp_path)
+    _write(root, "package.json", '{\n  // not allowed here\n  "a": 1\n}\n')
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["package.json"])
+    assert not result.ok()
+    assert len(result.issues) == 1
+
+
+def test_strict_json_with_trailing_comma_still_fails(tmp_path):
+    """Verifies that a non-JSONC .json file with a trailing comma still fails."""
+    root = str(tmp_path)
+    _write(root, "data.json", '{"a": 1,}\n')
+    result = _cls("syntax/json-syntax")().run(_ctx(root), ["data.json"])
+    assert not result.ok()
+    assert len(result.issues) == 1

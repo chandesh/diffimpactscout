@@ -14,6 +14,10 @@ _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 ANALYSIS_VERSION = 3
 
+DEFAULT_IGNORE_SYMBOLS = frozenset(
+    ["client_id", "id", "name", "status", "update", "uuid"]
+)
+
 
 def analyze_source(src):
     """Parse source text and build a per-file symbol analysis.
@@ -58,7 +62,7 @@ def analyze_source(src):
     }
 
 
-def analyze_path(path, root, cache):
+def analyze_path(path, root, cache, stats=None):
     """Analyze one repo file, skipping re-parse for unchanged content.
 
     path is the repo-root-relative posix path (as git emits paths); root is
@@ -69,7 +73,8 @@ def analyze_path(path, root, cache):
     is returned without re-parsing; otherwise the file is analyzed and the
     entry stored under path. Returns the analysis dict, or None on a
     read/parse failure. The cache's loaded data is mutated in place so a
-    caller can SymbolCache.save() once after scanning all files.
+    caller can SymbolCache.save() once after scanning all files. When
+    ``stats`` is a dict it records ``hit``/``miss`` counts across calls.
     """
     full = path
     if root:
@@ -84,10 +89,14 @@ def analyze_path(path, root, cache):
     if isinstance(entry, dict) and entry.get("hash") == _content_hash(text):
         analysis = entry.get("analysis")
         if isinstance(analysis, dict) and analysis.get("v") == ANALYSIS_VERSION:
+            if stats is not None:
+                stats["hit"] = stats.get("hit", 0) + 1
             return analysis
     analysis = analyze_source(text)
     if analysis is None:
         return None
+    if stats is not None:
+        stats["miss"] = stats.get("miss", 0) + 1
     if data is not None:
         data[path] = {"hash": analysis["hash"], "analysis": analysis}
     return analysis
@@ -120,11 +129,10 @@ def find_references(
     change-set. When both are supplied a hit that is not itself in a
     changed file is kept only when its file actually binds the entity name
     from one of those modules, pruning same-name false positives across
-    unrelated files (e.g. a generic 'create' method). Attribute loads are
-    verified through their base chain (``views.orders`` resolves when the
-    file imports ``views`` from the changed module); attributes inside
-    weak_attr names (typically class fields accessed through arbitrary
-    object variables) bypass the import check. deleted, when given, names
+    unrelated files (e.g. a generic 'create' method). Attribute loads whose
+    name is in weak_attr (class fields, generic names from
+    DEFAULT_IGNORE_SYMBOLS, and config impact.ignore_symbols) resolve only
+    when their base head is imported from one of the entity modules. deleted, when given, names
     entities removed or renamed in the change-set; their hits are bound to
     the defining modules even inside changed files so a same-name reference
     on a foreign object (e.g. ``service.create`` when ``create`` was a
@@ -184,6 +192,12 @@ def find_references(
 
 
 def _usage_resolves(analysis, usage, name, entity_mods, path, weak):
+    """Return True when a usage binds the entity defined in entity_mods.
+
+    Names in ``weak`` (generic attribute names) resolve only through an
+    import-qualified base head; unqualified uses on arbitrary objects are
+    dropped as likely false positives.
+    """
     if not entity_mods:
         return True
     if usage.get("kind") != "attr":
@@ -191,7 +205,11 @@ def _usage_resolves(analysis, usage, name, entity_mods, path, weak):
             return True
         return _imports_from(analysis, name, entity_mods, path)
     if name in weak:
-        return True
+        base = usage.get("base") or ""
+        head = base.split(".")[0]
+        if head and _imports_from(analysis, head, entity_mods, path):
+            return True
+        return False
     base = usage.get("base") or ""
     if not base:
         return True

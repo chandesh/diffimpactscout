@@ -11,8 +11,6 @@ import re
 import diffimpactscout.gitrun as gitrun
 from diffimpactscout.config import is_excluded, _matches_glob
 from diffimpactscout.impact.route_linker import (
-    HTTP_CALL_RE,
-    QUOTED_LITERAL_RE,
     _is_url_like,
     _strip_comments,
     _read_text,
@@ -1134,8 +1132,13 @@ def _endpoint_chain(root, cfg, impact_cfg, changes, analyses):
     refs = _http_refs_for_files(root, [c.path for c in changed_js], tracked)
     routes = extract_django_routes(root, urls_globs, cfg=cfg)
     matched, unmatched = match_endpoints(refs, routes)
-    unresolved = [{"file": u.get("file"), "ref": u.get("path"), "reason": "no matching route"}
-                  for u in unmatched]
+    # Keep the real reason (unknown-url / dynamic-ref) so the audit line counts
+    # by cause instead of collapsing every unmatched ref to a single label.
+    unresolved = [
+        {"file": u.get("file"), "ref": u.get("path"),
+         "reason": u.get("reason") or "unknown-url"}
+        for u in unmatched
+    ]
     rows = []
     layers = {}
     seen_pairs = set()
@@ -1204,13 +1207,6 @@ def _has_dynamic_include(root, path):
     return bool(_DYNAMIC_INCLUDE_RE.search(_strip_html_comments(text)))
 
 
-# Matches native fetch() calls (second transport besides the $http/HttpClient
-# families in route_linker.HTTP_CALL_RE).
-#   Matches:  fetch('/shop/items/')  -> scan continues after "(" for the arg
-#   Skips:    fetch(variableUrl)     (unquoted arg; only quoted literals or
-#                                     known constants resolve)
-_FETCH_RE = re.compile(r"\bfetch\s*\(")
-
 # Matches string-constant ASSIGNMENTS used for one-level constant propagation.
 # Both free-text quantifiers are bounded (\w{1,100}, [^=\n]{0,200}) so a long
 # word run after a keyword cannot backtrack quadratically; "\b" stops
@@ -1235,71 +1231,68 @@ _CONST_CONCAT_RE = re.compile(
 )
 
 
+def _const_map(clean):
+    """Build the one-level name->literal map with ambiguous names dropped.
+
+    A string const, or a prefix concatenation of one string const plus a
+    literal, is recorded. A name DECLARED with a string literal or such a
+    concatenation more than once is dropped rather than resolved to an
+    arbitrary occurrence (reassignment without a declaration keyword, e.g.
+    ``let x = 'a'; x = 'b';``, is not detected).
+    """
+    consts = {}
+    ambiguous = set()
+    for m in _CONST_ASSIGN_RE.finditer(clean):
+        name = m.group(1)
+        if name in consts or name in ambiguous:
+            consts.pop(name, None)
+            ambiguous.add(name)
+        else:
+            consts[name] = m.group(2)
+    literals = dict(consts)
+    concat_seen = set()
+    for m in _CONST_CONCAT_RE.finditer(clean):
+        name = m.group(1)
+        if name in consts or name in ambiguous or name in concat_seen:
+            consts.pop(name, None)
+            ambiguous.add(name)
+            concat_seen.add(name)
+            continue
+        concat_seen.add(name)
+        base = literals.get(m.group(2))
+        if base:
+            consts[name] = base + m.group(3)
+    return consts
+
+
 def _http_refs_for_files(root, paths, tracked=None):
     """Extract HTTP endpoint refs from the given js/ts files.
 
-    One-level constant propagation only: a string const, or a prefix
-    concatenation of one string const plus a literal, is substituted into a
-    call argument. Deeper chains and runtime-built URLs are dropped
-    (unresolved). Const resolution is file-global; a name DECLARED with a
-    string literal or such a concatenation more than once is dropped rather
-    than resolved to an arbitrary occurrence (reassignment without a
-    declaration keyword, e.g. ``let x = 'a'; x = 'b';``, is not detected).
+    Reuses route_linker's single canonical call-site scan
+    (``iter_call_refs``) so every call style -- dotted http/HttpClient/$http/
+    axios, bare fetch/axios, and their React Query wrappers -- resolves the
+    same way as ``extract_frontend_refs``. One-level constant propagation only
+    (via ``_const_map``): a bare identifier first argument is substituted from
+    the file-global const map; deeper chains and runtime-built URLs are dropped.
     """
+    from diffimpactscout.impact.route_linker import iter_call_refs
+
     refs = []
     for path in paths:
         text = _read_text(os.path.join(root, path) if root else path)
         if not text:
             continue
         clean = _strip_comments(text)
-        consts = {}
-        ambiguous = set()
-        for m in _CONST_ASSIGN_RE.finditer(clean):
-            name = m.group(1)
-            if name in consts or name in ambiguous:
-                consts.pop(name, None)
-                ambiguous.add(name)
-            else:
-                consts[name] = m.group(2)
-        literals = dict(consts)
-        concat_seen = set()
-        for m in _CONST_CONCAT_RE.finditer(clean):
-            name = m.group(1)
-            if name in consts or name in ambiguous or name in concat_seen:
-                consts.pop(name, None)
-                ambiguous.add(name)
-                concat_seen.add(name)
-                continue
-            concat_seen.add(name)
-            base = literals.get(m.group(2))
-            if base:
-                consts[name] = base + m.group(3)
-        for regex, has_method in ((HTTP_CALL_RE, True), (_FETCH_RE, False)):
-            for m in regex.finditer(clean):
-                value = _arg_value_after(clean, m.end(), consts)
-                if value and _is_url_like(value):
-                    line = clean[: m.start()].count("\n") + 1
-                    refs.append(
-                        {
-                            "file": path,
-                            "ref": value,
-                            "dynamic": False,
-                            "line": line,
-                            "method": m.group(2) if has_method else None,
-                        }
-                    )
+        consts = _const_map(clean)
+        for line, method, value in iter_call_refs(clean, consts):
+            if value and _is_url_like(value):
+                refs.append(
+                    {
+                        "file": path,
+                        "ref": value,
+                        "dynamic": False,
+                        "line": line,
+                        "method": method,
+                    }
+                )
     return refs
-
-
-def _arg_value_after(text, offset, consts):
-    """Return the endpoint string at a call site: quoted literal or known constant."""
-    window = text[offset: offset + 512]
-    stripped = window.lstrip()
-    if stripped[:1] in ("'", '"'):
-        lit = QUOTED_LITERAL_RE.match(stripped)
-        if lit:
-            return lit.group(2)
-    name_match = re.match(r"(\w+)", stripped)
-    if name_match and name_match.group(1) in consts:
-        return consts[name_match.group(1)]
-    return None

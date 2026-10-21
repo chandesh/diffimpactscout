@@ -4,18 +4,25 @@ The terminal/stdout default is a plain aligned ASCII table that matches the
 guard report's visual style; a Markdown table is available via an explicit
 `--markdown` output mode for piping into PR comments or docs pages.
 
+For scripting, prefer `--json` output: it carries the stable per-row fields
+(`path`, `line`, `section`, `badge`, `key`) unbroken. The ASCII table wraps
+long `path`/`module` cells for display and repeats each row's stable
+`path:line` key as an unbroken trailing token on the first physical line of
+that logical row so parsers can rejoin wrapped rows.
+
 Example: a changed view referenced from a template and a frontend service
 gets High severity, while a reference inside the changed file gets Low.
 """
 
+import re
 import sys
 
 import diffimpactscout.env as env
 
-_HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |"
-_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- |"
-_COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required")
-_COLUMN_WIDTHS = (2, 38, 20, 8, 38, 8, 26)
+_HEADER = "| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required | Badge |"
+_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+_COLUMNS = ("#", "Impacted File Path", "Module / Subsystem", "Category", "Detected Reference / Usage", "Severity", "Action Required", "Badge")
+_COLUMN_WIDTHS = (2, 38, 20, 8, 38, 8, 26, 8)
 
 
 def classify_severity(layers, deleted_renamed, changed_paths, ref_path):
@@ -54,7 +61,7 @@ def _cell(row, key):
 
 
 def _row_values(row, index):
-    return [str(index)] + [_cell(row, k) for k in ("path", "module", "category", "ref", "severity", "action")]
+    return [str(index)] + [_cell(row, k) for k in ("path", "module", "category", "ref", "severity", "action", "badge")]
 
 
 def _counts(rows):
@@ -64,6 +71,91 @@ def _counts(rows):
         if sev in counts:
             counts[sev] += 1
     return counts
+
+
+def compute_summary_risk_score(rows):
+    """Summary risk score (0-100) from severity counts.
+
+    Weights High as 1.0 and Medium as 0.5 over all counted rows. This is a
+    change-set-level score; per-row ordering uses the fan_in risk formula in
+    risk.py.
+    """
+    counts = _counts(rows or [])
+    total = counts["High"] + counts["Medium"] + counts["Low"]
+    if not total:
+        return 0
+    return min(100, int(round(
+        100.0 * (counts["High"] * 1.0 + counts["Medium"] * 0.5) / total)))
+
+
+_SEVERITY_RANK = {"High": 0, "Medium": 1, "Low": 2}
+
+
+def _risk_fallback(severity):
+    """Severity-only risk proxy for rows without a risk score."""
+    return -_SEVERITY_RANK.get(severity, 99)
+
+
+def _impacted_count(rows, changed_paths=None):
+    """Count distinct impacted paths excluding the changed set."""
+    changed = set(changed_paths or ())
+    seen = set()
+    for row in rows or []:
+        path = _cell(row, "path")
+        if not path or path in changed:
+            continue
+        seen.add(path)
+    return len(seen)
+
+
+def _top_impacted_paths(rows, limit=5, changed_paths=None):
+    """Rank the top impacted files for the summary header.
+
+    Returns up to ``limit`` ``(path, owner)`` pairs ordered by descending
+    risk then path. Rows without a ``risk`` score fall back to severity
+    rank (High, Medium, Low) then path. Paths in ``changed_paths`` are
+    excluded so the Top list only contains impacted files, consistent
+    with ``_impacted_count``.
+    """
+    changed = set(changed_paths or ())
+
+    def _key(row):
+        try:
+            risk = float(row.get("risk")) if isinstance(row, dict) else None
+        except (TypeError, ValueError):
+            risk = None
+        if risk is not None:
+            return (-risk, _cell(row, "path") or "")
+        sev = _cell(row, "severity")
+        return (-_risk_fallback(sev), _cell(row, "path") or "")
+
+    top = []
+    seen = set()
+    for row in sorted(rows or [], key=_key):
+        if len(top) >= limit:
+            break
+        path = _cell(row, "path")
+        if not path or path in changed or path in seen:
+            continue
+        seen.add(path)
+        top.append((path, _cell(row, "owner") or ""))
+    return top
+
+
+def _summary_block(rows, changed_count, summary_extra, changed_paths, limit=5):
+    """Shared summary data for the ASCII banner and the markdown Summary."""
+    if summary_extra is not None:
+        _risk = summary_extra.get("risk")
+        risk = _risk if _risk is not None else compute_summary_risk_score(rows)
+        _impacted = summary_extra.get("impacted_count")
+        impacted = _impacted if _impacted is not None else _impacted_count(rows, changed_paths)
+        _top = summary_extra.get("top")
+        top = _top if _top is not None else _top_impacted_paths(rows, limit, changed_paths)
+    else:
+        risk = compute_summary_risk_score(rows)
+        impacted = _impacted_count(rows, changed_paths)
+        top = _top_impacted_paths(rows, limit, changed_paths)
+    return risk, _counts(rows or []), impacted, (top or [])[:limit]
 
 
 def _summary_line(rows, changed_count):
@@ -84,7 +176,12 @@ def _rationale_lines(rows):
         if not reason:
             continue
         label = "%s -> %s" % (_cell(row, "path") or "-", _cell(row, "ref") or "-")
-        lines.append("    %d. %s - %s (%s)" % (i, _cell(row, "severity") or "?", label, reason))
+        line = "    %d. %s - %s (%s)" % (i, _cell(row, "severity") or "?", label, reason)
+        why = _cell(row, "why_matters")
+        action = _cell(row, "suggested_action")
+        if why or action:
+            line += " [why: %s; do: %s]" % (why or "-", action or "-")
+        lines.append(line)
     return lines
 
 
@@ -134,19 +231,46 @@ def _split_token(token, width):
     return [token[i : i + width] for i in range(0, len(token), width)]
 
 
+def _row_key(row):
+    """Return the stable ``path:line`` key for an ASCII row suffix token.
+
+    Prefers the row's ``key`` field (set by ``finish_row``); falls back to
+    ``path`` plus the line parsed from ``ref`` (``at <N>``/``line <N>``)
+    or the row's ``line`` field, else 0. The token is emitted unbroken so
+    parsers can rejoin wrapped rows; never wrap or truncate it here.
+    """
+    key = _cell(row, "key")
+    if key:
+        return key
+    path = _cell(row, "path")
+    ref = _cell(row, "ref")
+    match = re.search(r"at (\d+)", ref)
+    if match:
+        return "%s:%s" % (path, match.group(1))
+    match = re.search(r"line (\d+)", ref)
+    if match:
+        return "%s:%s" % (path, match.group(1))
+    line = row.get("line") if isinstance(row, dict) else getattr(row, "line", None)
+    return "%s:%s" % (path, line or 0)
+
+
 def _ascii_table(rows, start=1):
     widths = list(_COLUMN_WIDTHS)
     header = "  " + "  ".join(c.ljust(widths[i]) for i, c in enumerate(_COLUMNS))
     body = []
     for i, row in enumerate(rows or [], start=start):
         cells = [_wrap(v, widths[j]) for j, v in enumerate(_row_values(row, i))]
+        key = _row_key(row)
         height = max(len(c) for c in cells)
         for line_idx in range(height):
             parts = []
             for j, cell_lines in enumerate(cells):
                 value = cell_lines[line_idx] if line_idx < len(cell_lines) else ""
                 parts.append(value.ljust(widths[j]))
-            body.append("  " + "  ".join(parts))
+            line = "  " + "  ".join(parts)
+            if line_idx == 0 and key and _cell(row, "path"):
+                line = line.rstrip() + "  " + key
+            body.append(line)
     return header, body
 
 
@@ -163,6 +287,64 @@ def _endpoint_lines(endpoints):
     return lines
 
 
+_UNRESOLVED_REASONS = (
+    "dynamic-ref",
+    "unknown-url",
+    "no-import-chain",
+    "binary/unsupported",
+)
+
+
+def reason_category(reason):
+    """Map an unresolved reason to one of the canonical report buckets.
+
+    Canonical buckets are ``dynamic-ref``, ``unknown-url``, ``no-import-chain``
+    and ``binary/unsupported``. Legacy free-text reasons are classified by kind
+    so the audit line counts by cause; a missing or unrecognised reason falls
+    back to ``unknown-url``.
+    """
+    if not reason:
+        return "unknown-url"
+    if reason in _UNRESOLVED_REASONS:
+        return reason
+    low = reason.lower()
+    if "dynamic" in low:
+        return "dynamic-ref"
+    if "binary" in low or "unsupported" in low:
+        return "binary/unsupported"
+    if "importer" in low or "import chain" in low or "template references" in low:
+        return "no-import-chain"
+    return "unknown-url"
+
+
+def unresolved_reason_counts(unresolved):
+    """Count unresolved entries by canonical reason bucket."""
+    counts = {}
+    for ref in unresolved or []:
+        reason = ref.get("reason") if isinstance(ref, dict) else None
+        bucket = reason_category(reason)
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return counts
+
+
+def _unresolved_breakdown(counts):
+    parts = [
+        "%s: %d" % (reason, counts[reason])
+        for reason in _UNRESOLVED_REASONS
+        if counts.get(reason)
+    ]
+    return ", ".join(parts)
+
+
+def _unresolved_audit_line(unresolved):
+    """The audit line: ``Unresolved: N (<reason breakdown>)``."""
+    total = len(unresolved or [])
+    breakdown = _unresolved_breakdown(unresolved_reason_counts(unresolved))
+    if not breakdown:
+        return "Unresolved: %d" % total
+    return "Unresolved: %d (%s)" % (total, breakdown)
+
+
 def _unresolved_line(ref):
     """Render one unresolved reference.
 
@@ -174,6 +356,10 @@ def _unresolved_line(ref):
         return str(ref)
     location = ref.get("file") or ref.get("path") or ""
     detail = ref.get("ref")
+    if not detail and ref.get("path") and ref.get("path") != location:
+        # Frontend unmatched refs carry the URL under ``path``; show it as the
+        # detail when it is distinct from the file location.
+        detail = ref.get("path")
     reason = ref.get("reason") or ""
     head = ": ".join(str(part) for part in (location, detail) if part) or "?"
     return "%s (%s)" % (head, reason) if reason else head
@@ -186,12 +372,46 @@ _TIER_LABELS = (
 )
 
 
+_SECTION_ORDER = ("Breaking", "Direct", "Transitive")
+
+_SECTION_LABELS = {
+    "Breaking": "Breaking",
+    "Direct": "Direct consumers",
+    "Transitive": "Transitive (collapsed)",
+}
+
+
+def _normalized_section(row):
+    """Map a row to its display section; missing/unknown goes to Direct."""
+    sec = _cell(row, "section")
+    if sec in _SECTION_ORDER:
+        return sec
+    return "Direct"
+
+
+def _section_rank(row):
+    """Rank a row for section display order: Breaking, Direct, Transitive.
+
+    Rows with missing/unknown section sort last under Direct (after known
+    Direct rows, before Transitive).
+    """
+    sec = _cell(row, "section")
+    if sec in _SECTION_ORDER:
+        return (_SECTION_ORDER.index(sec), 0)
+    return (_SECTION_ORDER.index("Direct"), 1)
+
+
+def _order_by_section(rows):
+    """Stable-sort rows by section order for rendering; tiers stay as data."""
+    return sorted(rows or [], key=_section_rank)
+
+
 def _split_tiers(rows):
     """Return (tiered, untiered); tiered maps each tier value to its rows."""
     tiered = {"frontend": [], "backend": [], "heuristic": []}
     untiered = []
     for row in rows or []:
-        tier = row.get("tier")
+        tier = row.get("tier") if isinstance(row, dict) else getattr(row, "tier", None)
         if tier in tiered:
             tiered[tier].append(row)
         else:
@@ -199,44 +419,138 @@ def _split_tiers(rows):
     return tiered, untiered
 
 
+def _table_cap(top_n, expand):
+    """Return the table-body cap, or None when bypassed via --all/--expand."""
+    if expand:
+        return None
+    if top_n is None:
+        return 20
+    if isinstance(top_n, bool):
+        return 20
+    try:
+        cap = int(top_n)
+    except (TypeError, ValueError):
+        return 20
+    if cap < 0:
+        return 0
+    return cap
+
+
+def _full_ordered(rows):
+    """Flatten rows into display order: section outer, tier inner, stable."""
+    tiered, untiered = _split_tiers(rows)
+    for tier in tiered:
+        tiered[tier] = _order_by_section(tiered[tier])
+    untiered = _order_by_section(untiered)
+    full = []
+    for section in _SECTION_ORDER:
+        for tier, _label in _TIER_LABELS:
+            bucket = [r for r in tiered.get(tier, []) if _normalized_section(r) == section]
+            full.extend(bucket)
+        full.extend([r for r in untiered if _normalized_section(r) == section])
+    return full
+
+
+def _apply_top_n(rows, top_n, expand):
+    """Split section-ordered rows into (shown, hidden) for the Top-N cap."""
+    full = _full_ordered(rows)
+    cap = _table_cap(top_n, expand)
+    if cap is None:
+        return full, []
+    return full[:cap], full[cap:]
+
+
+def _overflow_lines(hidden):
+    """One collapsed line per module; sums exactly to len(hidden)."""
+    by_module = {}
+    for row in hidden or []:
+        mod = _cell(row, "module") or "unknown"
+        by_module.setdefault(mod, []).append(row)
+    lines = []
+    for mod in sorted(by_module):
+        bucket = by_module[mod]
+        n = len(bucket)
+        h = sum(1 for r in bucket if _cell(r, "severity") == "High")
+        lines.append("... +%d more in %s (%d High)" % (n, mod, h))
+    return lines
+
+
+def top_n_counts(rows, top_n=None, expand=False):
+    """Return (shown_count, hidden_counts) for JSON; additive, backward compatible."""
+    _shown, hidden = _apply_top_n(rows or [], top_n, expand)
+    by_module = {}
+    for row in hidden:
+        mod = _cell(row, "module") or "unknown"
+        by_module[mod] = by_module.get(mod, 0) + 1
+    return len(_shown), by_module
+
+
 def _markdown_table(rows, start=1):
     lines = [_HEADER, _SEPARATOR]
     for i, row in enumerate(rows or [], start=start):
-        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action")]
+        cells = [str(i)] + [_cell(row, k).replace("|", "\\|") for k in ("path", "module", "category", "ref", "severity", "action", "badge")]
         lines.append("| " + " | ".join(cells) + " |")
     return lines
 
 
-def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False):
+def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False,
+                  summary_extra=None, top_n=None, changed_paths=None):
     lines = []
     lines.append("=" * 70)
     lines.append("  Impact Analysis Report")
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
-    tiered, untiered = _split_tiers(rows)
+    limit = 5
+    risk, counts, impacted, top = _summary_block(
+        rows, changed_count, summary_extra, changed_paths, limit)
+    lines.append("  Risk: %d/100 (severity-weighted: High*1.0 + Medium*0.5 over counted rows)" % risk)
+    lines.append("  High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
+    lines.append("  changed %d files vs impacted %d files" % (changed_count, impacted))
+    for path, owner in (top or [])[:limit]:
+        lines.append("  - %s (%s)" % (path, owner or "unowned"))
+    shown, hidden = _apply_top_n(rows, top_n, expand)
+    tiered, untiered = _split_tiers(shown)
+    for tier in tiered:
+        tiered[tier] = _order_by_section(tiered[tier])
+    untiered = _order_by_section(untiered)
     ordered = []
     start = 1
-    for tier, label in _TIER_LABELS:
-        if not tiered[tier]:
+    for section in _SECTION_ORDER:
+        section_label = _SECTION_LABELS[section]
+        section_buckets = {
+            tier: [r for r in tiered[tier] if _normalized_section(r) == section]
+            for tier in tiered
+        }
+        section_untiered = [r for r in untiered if _normalized_section(r) == section]
+        if not any(section_buckets.values()) and not section_untiered:
             continue
         lines.append("")
-        lines.append("  " + label)
+        lines.append("  " + section_label)
         lines.append("  " + "-" * 66)
-        header, body = _ascii_table(tiered[tier], start)
-        start += len(tiered[tier])
-        lines.append(header)
-        lines.extend(body)
-        ordered.extend(tiered[tier])
-        if expand:
-            for row in tiered[tier]:
-                for rel in row.get("related") or []:
-                    lines.append("      - %s" % rel)
-    if untiered:
-        lines.append("")
-        header, body = _ascii_table(untiered, start)
-        lines.append(header)
-        lines.extend(body)
-        ordered.extend(untiered)
+        for tier, tier_label in _TIER_LABELS:
+            bucket = section_buckets.get(tier) or []
+            if not bucket:
+                continue
+            lines.append("")
+            lines.append("  " + tier_label)
+            lines.append("  " + "-" * 66)
+            header, body = _ascii_table(bucket, start)
+            start += len(bucket)
+            lines.append(header)
+            lines.extend(body)
+            ordered.extend(bucket)
+            if expand:
+                for row in bucket:
+                    for rel in (row.get("related") if isinstance(row, dict) else None) or []:
+                        lines.append("      - %s" % rel)
+        if section_untiered:
+            header, body = _ascii_table(section_untiered, start)
+            start += len(section_untiered)
+            lines.append(header)
+            lines.extend(body)
+            ordered.extend(section_untiered)
+    for overflow in _overflow_lines(hidden):
+        lines.append("  " + overflow)
     if endpoints:
         lines.append("")
         lines.append("  Affected WebURL/API-URL endpoints:")
@@ -256,41 +570,73 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  " + _summary_line(rows, changed_count))
     if hidden_count:
         lines.append("  %d lower-confidence impacts hidden - use --all to expand" % hidden_count)
+    lines.append("  " + _unresolved_audit_line(unresolved))
     lines.append("=" * 70)
     return "\n".join(lines) + "\n"
 
 
-def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False):
+def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False,
+                     summary_extra=None, top_n=None, changed_paths=None):
     lines = []
     lines.append("# Impact Analysis Report")
-    tiered, untiered = _split_tiers(rows)
+    risk, counts, impacted, top = _summary_block(
+        rows, changed_count, summary_extra, changed_paths, 5)
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("- Risk: %d/100 (severity-weighted: High*1.0 + Medium*0.5 over counted rows)" % risk)
+    lines.append("- High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
+    lines.append("- changed %d files vs impacted %d files" % (changed_count, impacted))
+    for path, owner in top:
+        lines.append("- %s (%s)" % (path, owner or "unowned"))
+    shown, hidden = _apply_top_n(rows, top_n, expand)
+    tiered, untiered = _split_tiers(shown)
+    for tier in tiered:
+        tiered[tier] = _order_by_section(tiered[tier])
+    untiered = _order_by_section(untiered)
     ordered = []
     start = 1
-    for tier, label in _TIER_LABELS:
-        if not tiered[tier]:
+    for section in _SECTION_ORDER:
+        section_label = _SECTION_LABELS[section]
+        section_buckets = {
+            tier: [r for r in tiered[tier] if _normalized_section(r) == section]
+            for tier in tiered
+        }
+        section_untiered = [r for r in untiered if _normalized_section(r) == section]
+        if not any(section_buckets.values()) and not section_untiered:
             continue
         lines.append("")
-        lines.append("### " + label)
+        lines.append("### " + section_label)
         lines.append("")
-        lines.extend(_markdown_table(tiered[tier], start))
-        start += len(tiered[tier])
-        ordered.extend(tiered[tier])
-        if expand:
-            for row in tiered[tier]:
-                related = row.get("related") or []
-                if not related:
-                    continue
-                lines.append("")
-                lines.append("  <details><summary>%d templates</summary>" % len(related))
-                lines.append("")
-                for rel in related:
-                    lines.append("  - %s" % rel)
-                lines.append("")
-                lines.append("  </details>")
-    if untiered:
+        for tier, tier_label in _TIER_LABELS:
+            bucket = section_buckets.get(tier) or []
+            if not bucket:
+                continue
+            lines.append("### " + tier_label)
+            lines.append("")
+            lines.extend(_markdown_table(bucket, start))
+            start += len(bucket)
+            ordered.extend(bucket)
+            if expand:
+                for row in bucket:
+                    related = (row.get("related") if isinstance(row, dict) else None) or []
+                    if not related:
+                        continue
+                    lines.append("")
+                    lines.append("  <details><summary>%d templates</summary>" % len(related))
+                    lines.append("")
+                    for rel in related:
+                        lines.append("  - %s" % rel)
+                    lines.append("")
+                    lines.append("  </details>")
+        if section_untiered:
+            lines.append("")
+            lines.extend(_markdown_table(section_untiered, start))
+            start += len(section_untiered)
+            ordered.extend(section_untiered)
+    for overflow in _overflow_lines(hidden):
         lines.append("")
-        lines.extend(_markdown_table(untiered, start))
-        ordered.extend(untiered)
+        lines.append(overflow)
     if endpoints:
         lines.append("")
         lines.append("## Affected WebURL/API-URL endpoints")
@@ -313,16 +659,22 @@ def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0,
     lines.append(_summary_line(rows, changed_count))
     if hidden_count:
         lines.append("%d lower-confidence impacts hidden - use --all to expand" % hidden_count)
+    lines.append(_unresolved_audit_line(unresolved))
     return "\n".join(lines) + "\n"
 
 
 def render_report(rows, endpoints, unresolved, changed_count, markdown=False,
-                  hidden_count=0, expand=False):
+                  hidden_count=0, expand=False, summary_extra=None, top_n=None,
+                  changed_paths=None):
     if markdown:
         return _render_markdown(rows, endpoints, unresolved, changed_count,
-                                hidden_count=hidden_count, expand=expand)
+                                hidden_count=hidden_count, expand=expand,
+                                summary_extra=summary_extra, top_n=top_n,
+                                changed_paths=changed_paths)
     return _render_ascii(rows, endpoints, unresolved, changed_count,
-                         hidden_count=hidden_count, expand=expand)
+                         hidden_count=hidden_count, expand=expand,
+                         summary_extra=summary_extra, top_n=top_n,
+                         changed_paths=changed_paths)
 
 
 def interactive_tty():

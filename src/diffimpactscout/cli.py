@@ -15,6 +15,7 @@ import diffimpactscout.launcher as launcher
 import diffimpactscout.scope as scope
 from diffimpactscout import __version__
 from diffimpactscout.checks.base import CheckContext, make_check
+from diffimpactscout.impact import diff_parser as diff_parser_module
 from diffimpactscout.impact import impact as impact_module
 
 
@@ -63,6 +64,26 @@ def _parser():
         "--all", action="store_true", dest="show_all",
         help="also show lower-confidence (heuristic/transitive) impacts",
     )
+    p_impact.add_argument(
+        "--top", type=int, default=20,
+        help="max ranked rows in the table body (overflow collapses per module)",
+    )
+    p_impact.add_argument(
+        "--sarif", metavar="PATH", nargs="?", const="-", default=None,
+        help="emit SARIF 2.1.0 (to PATH, or stdout instead of the report "
+             "when bare)",
+    )
+    p_impact.add_argument(
+        "--fail-on", nargs="?", const="high", default=None,
+        choices=("high", "medium", "low"),
+        help="exit 1 when findings reach GATE (bare flag means high); "
+             "default with no flag is warn (exit 0)",
+    )
+    p_impact.add_argument(
+        "--advisory", action="store_true",
+        help="report the gate outcome to stderr but always exit 0; with no "
+             "--fail-on, counts all findings",
+    )
     p_impact.set_defaults(func=_cmd_impact)
 
     p_guard_impact = sub.add_parser(
@@ -84,6 +105,26 @@ def _parser():
     p_guard_impact.add_argument(
         "--all", action="store_true", dest="show_all",
         help="also show lower-confidence (heuristic/transitive) impacts",
+    )
+    p_guard_impact.add_argument(
+        "--top", type=int, default=20,
+        help="max ranked rows in the table body (overflow collapses per module)",
+    )
+    p_guard_impact.add_argument(
+        "--sarif", metavar="PATH", nargs="?", const="-", default=None,
+        help="emit SARIF 2.1.0 (to PATH, or stdout instead of the report "
+             "when bare)",
+    )
+    p_guard_impact.add_argument(
+        "--fail-on", nargs="?", const="high", default=None,
+        choices=("high", "medium", "low"),
+        help="exit 1 when findings reach GATE (bare flag means high); "
+             "default with no flag is warn (exit 0)",
+    )
+    p_guard_impact.add_argument(
+        "--advisory", action="store_true",
+        help="report the gate outcome to stderr but always exit 0; with no "
+             "--fail-on, counts all findings",
     )
     p_guard_impact.set_defaults(func=_cmd_guard_and_analyse_impact)
 
@@ -141,6 +182,57 @@ def main(argv=None):
     return args.func(args)
 
 
+def exit_for(severity_gate=None, highs=0, mediums=0, lows=0, advisory=False):
+    """Return the rollout-gate exit code.
+
+    ``severity_gate`` is one of None (no --fail-on flag: warn, exit 0),
+    "high" (exit 1 when highs > 0), "medium" (highs + mediums > 0) or
+    "low" (any findings). ``advisory`` always emits
+    "advisory mode: N findings would block" to stderr (N counts the
+    gate-relevant findings; with no gate, all findings) and forces
+    exit 0. DIFFIMPACT_OK=1 logs an override note and forces exit 0.
+    """
+    if env.is_true(os.environ.get("DIFFIMPACT_OK")):
+        sys.stderr.write(
+            "diffimpactscout: DIFFIMPACT_OK=1 override; forcing exit 0\n"
+        )
+        return 0
+    try:
+        highs = int(highs or 0)
+    except (TypeError, ValueError):
+        highs = 0
+    try:
+        mediums = int(mediums or 0)
+    except (TypeError, ValueError):
+        mediums = 0
+    try:
+        lows = int(lows or 0)
+    except (TypeError, ValueError):
+        lows = 0
+    gate = (severity_gate or "").lower() if severity_gate else None
+    if gate == "high":
+        blocked = highs > 0
+        total = highs
+    elif gate == "medium":
+        blocked = (highs + mediums) > 0
+        total = highs + mediums
+    elif gate == "low":
+        blocked = (highs + mediums + lows) > 0
+        total = highs + mediums + lows
+    else:
+        blocked = False
+        total = highs + mediums + lows
+    if advisory:
+        # stderr, not stdout: a bare --sarif writes the SARIF JSON to
+        # stdout and a banner there would corrupt it.
+        print(
+            "advisory mode: %d findings would block" % total,
+            file=sys.stderr,
+        )
+        return 0
+    return 1 if blocked else 0
+
+
 def _require_repo():
     root = gitrun.repo_root()
     if root:
@@ -183,6 +275,8 @@ def _cmd_guard(args):
 
 
 def _cmd_impact(args):
+    if args.top is not None and args.top < 0:
+        _parser().error("--top must be >= 0")
     root = _require_repo()
     if root is None:
         return 1
@@ -196,18 +290,35 @@ def _cmd_impact(args):
         markdown=args.markdown,
         expand=args.expand,
         show_all=args.show_all,
+        top_n=args.top,
+        sarif_out=args.sarif,
+        fail_on=args.fail_on,
+        advisory=args.advisory,
     )
 
 
 def _cmd_guard_and_analyse_impact(args):
+    if args.top is not None and args.top < 0:
+        _parser().error("--top must be >= 0")
     root = _require_repo()
     if root is None:
         return 1
     cfg = config.load_config(root)
+    from_ref, to_ref = env.pre_commit_refs()
+    anchor = None
+    if not args.staged:
+        anchor = scope.DevScope(root).scope_base(from_ref, to_ref)
+    changes = diff_parser_module.get_file_changes(
+        root, anchor, args.staged, from_ref, to_ref
+    )
+    changes = [c for c in changes if not config.is_excluded(c.path, cfg, root)]
+    changed_paths = [c.path for c in changes]
     guard_rc = guard.run_guard(
         root,
         cfg,
         staged=args.staged,
+        changed_paths=changed_paths,
+        anchor=anchor,
     )
     impact_rc = impact_module.run_impact(
         root,
@@ -218,6 +329,13 @@ def _cmd_guard_and_analyse_impact(args):
         markdown=args.markdown,
         expand=args.expand,
         show_all=args.show_all,
+        top_n=args.top,
+        changes=changes,
+        changed_paths=changed_paths,
+        anchor=anchor,
+        sarif_out=args.sarif,
+        fail_on=args.fail_on,
+        advisory=args.advisory,
     )
     return guard_rc if guard_rc != 0 else impact_rc
 

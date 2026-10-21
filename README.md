@@ -11,7 +11,7 @@ An incremental pre-push guard and AST blast-radius impact analyzer for git repos
 - Incremental checks: every check is scoped to the change-set or changed lines, not the whole repository.
 - Auto-fixing hygiene checks (line endings, trailing whitespace, end-of-file newline) that clean files in place.
 - Python AST symbol map: detects changed classes, functions, methods, module fields, and class fields, including deletions and renames.
-- Cross-layer impact linking: Python symbols to Django `{% url %}` template tags and frontend `http.get()/post()`-style calls.
+- Cross-layer impact linking: Python symbols to Django `{% url %}` template tags, frontend HTTP calls (`http`, `HttpClient`, `$http`, `axios`, `fetch`, React Query), and TS/JS import/export bindings of changed symbol names.
 - Symbol cache (`.impact_analysis_cache.json`) so repeated runs skip unchanged files.
 - Profiles for `generic`, `django`, `fastapi`, `python`, and `frontend` projects.
 - Configurable pre-push hook installation that never silently clobbers an existing hook.
@@ -101,9 +101,13 @@ Analyzes the blast radius of the change-set. In an interactive terminal it print
 | --- | --- |
 | `--staged` | Analyze the staged diff (base ref becomes `HEAD`). |
 | `--fast` | Skip template and frontend scanning; limit Python scanning to the changed files plus import-linked files. |
-| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, hidden_count}`) instead of a markdown table. |
+| `--json` | Emit the report as JSON (`{changed_count, rows, endpoints, unresolved, unresolved_by_reason, hidden_count, shown_count, hidden_counts, cache_hit_rate}`) instead of a table; see [Report format](#report-format). |
 | `--expand` | Open rolled-up rows (e.g. "35 templates directly extend it") to list their child files. |
 | `--all` | Also show lower-confidence (heuristic/transitive) impacts. |
+| `--top N` | Cap the table body at N ranked rows (default: 20); overflow collapses to one line per module. `--all` and `--expand` bypass the cap. |
+| `--sarif PATH` | Emit SARIF 2.1.0 to `PATH` (High maps to `error`, Medium to `warning`, Low to `note`). A bare `--sarif` writes the SARIF JSON to stdout in place of the report. |
+| `--fail-on {high,medium,low}` | Exit non-zero when findings reach the gate (a bare flag means `high`). With no flag the run warns and exits `0`. |
+| `--advisory` | Print `advisory mode: N findings would block` to stderr but always exit `0`. |
 
 ### `diffimpactscout guard-and-impact-check`
 
@@ -117,6 +121,10 @@ Runs the `guard` checks first, then always falls through to the `impact` blast-r
 | `--markdown` | Passes through to `impact` (emit a Markdown table). |
 | `--expand` | Passes through to `impact` (open rolled-up rows to list their child files). |
 | `--all` | Passes through to `impact` (also show lower-confidence impacts). |
+| `--top N` | Passes through to `impact` (cap the table body at N ranked rows). |
+| `--sarif PATH` | Passes through to `impact` (emit SARIF 2.1.0; a bare flag writes it to stdout). |
+| `--fail-on {high,medium,low}` | Passes through to `impact` (gate the exit code; a bare flag means `high`). |
+| `--advisory` | Passes through to `impact` (report the gate to stderr, always exit `0`). |
 
 ### `diffimpactscout dependency-check`
 
@@ -186,7 +194,8 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
     "frontend_globs": [],
     "cache_file": ".impact_analysis_cache.json",
     "fast_mode": false,
-    "threads": 4
+    "threads": 4,
+    "ignore_symbols": []
   }
 }
 ```
@@ -205,6 +214,7 @@ DiffImpactScout is configured by a `.diffimpactscout.json` file in the repositor
 | `impact` | `reverse` | `true`/`false`; when on, template-only and frontend-only diffs are analyzed back to render sites, views, routes, and referencing frontend files. Default: off for `generic`/`python` profiles, on for `django`/`frontend`. |
 | `impact` | `experimental` | `true`/`false`; enables the endpoint chain (changed frontend HTTP calls to routes, handler views, and the service/utility functions they call). Advisory only. Default: off in all profiles. |
 | `impact` | `asset_url_prefixes` | Template URL prefixes stripped before asset resolution. User entries are **appended** to the built-in defaults (`{{ MEDIA_URL }}`, `{{ STATIC_URL }}`, `{% static '`, `url('`); they cannot replace or clear the defaults. |
+| `impact` | `ignore_symbols` | Extra symbol names to treat as generic. Additive to the built-in stoplist (`client_id`, `id`, `name`, `status`, `update`, `uuid`); generic-named attribute references resolve only when the object is imported from the changed module. |
 
 A config entry can also declare a custom external check:
 
@@ -249,6 +259,7 @@ External checks run `command` (each `{file}` placeholder is replaced with the fi
 | `DIFFIMPACTSCOUT_SKIP` | When set (any value), `guard` and `impact` skip entirely and exit `0`. |
 | `IMPACT_CHECK_SKIP` | Legacy alias with the same behavior as `DIFFIMPACTSCOUT_SKIP`. |
 | `IMPACT_CHECK_STRICT` | Falsy values are `0`, `false`, `no`, `off`, and empty; anything else puts `guard` in strict mode and makes `impact` non-interactive runs fail on High/Medium hits. |
+| `DIFFIMPACT_OK` | When truthy (e.g. `DIFFIMPACT_OK=1`), logs an override note and forces `impact` to exit `0` even when `--fail-on` would block. |
 | `PRE_COMMIT_FROM_REF` / `PRE_COMMIT_TO_REF` | Override the diff range used to compute the change-set (e.g. set by a pre-commit-style wrapper). |
 
 ## Impact analysis
@@ -260,7 +271,7 @@ The `impact` command answers: if I push these changes, what else could break?
 3. Depending on the profile it extracts routes:
    - `django`: `path()`/`re_path()`/`url()` entries in `urls_globs` that carry a `name=`.
    - `fastapi`: `get`/`post`/`put`/`delete`/`patch`/`options` decorators on `router`/`app`-style objects in `urls_globs`.
-4. It links layers: Django templates using `{% url 'name' %}` resolve through the route to its handler; frontend calls (`http.get(...)`, `HttpClient.post(...)`, `$http.delete(...)`) resolve the quoted endpoint to a route by path. References that cannot be resolved to a route land in an "unresolved" bucket flagged for manual checking.
+4. It links layers: Django templates using `{% url 'name' %}` resolve through the route to its handler; frontend HTTP calls resolve the quoted endpoint to a route by path. Recognized call styles are `http.*`, `HttpClient.*`, `$http.*`, `axios.*`, bare `fetch()`/`axios()`, and React Query `useQuery`/`useMutation` wrappers around `fetch`/`axios`. Changed Python symbol names that appear in TS/JS `import`/`require`/`export` bindings become `frontend-symbol` rows. Literal template refs that cannot be resolved to a route, non-literal (`{% url var %}`) refs, unknown URLs, assets with no template reference, and binary/unsupported inputs land in an "unresolved" bucket flagged for manual checking.
 5. Every impacted reference gets a severity:
 
 | Condition | Severity |
@@ -277,11 +288,19 @@ Actions follow severity: High rows say `review/verify`, Medium rows `verify`, Lo
 
 ```
 # Impact Analysis Report
-| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | app/views/dashboard.py | app/views | python | render_dashboard (import at dashboard.py:12) | Medium | verify |
-| 2 | app/templates/dashboard.html | app/templates | template | {% url 'dashboard' %} at app/templates/dashboard.html:8 | High | review/verify |
-| 3 | frontend/src/api.ts | frontend/src | frontend | http.get("/dashboard/") at api.ts:41 | Medium | verify |
+
+### Breaking
+
+| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required | Badge |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | app/templates/dashboard.html | app/templates | template | {% url 'dashboard' %} at app/templates/dashboard.html:8 | High | review/verify | Impacted |
+
+### Direct consumers
+
+| # | Impacted File Path | Module / Subsystem | Category | Detected Reference / Usage | Severity | Action Required | Badge |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | app/views/dashboard.py | app/views | python | render_dashboard (import at dashboard.py:12) | Medium | verify | Changed |
+| 3 | frontend/src/api.ts | frontend/src | frontend | http.get("/dashboard/") at api.ts:41 | Medium | verify | Changed |
 
 ## Unresolved references (manual check required)
 - {'file': 'frontend/src/api.ts', 'path': '/account/settings', 'dynamic': False}
@@ -290,6 +309,91 @@ Summary: 3 changed file(s); High: 1, Medium: 2, Low: 0
 ```
 
 In a terminal, `impact` then asks `Proceed with push? (Y/n)`. On a non-interactive run (for example after a CI trigger), the report is shown as a warning and the push is not blocked unless `IMPACT_CHECK_STRICT` is set.
+
+### Report format
+
+The default report is a plain ASCII table: no emoji, no Findings section, and severity is a plain table cell (High/Medium/Low), never a bracketed tag. `--markdown` renders the same columns and sections as Markdown tables instead.
+
+- **Sections.** Body rows are grouped under section headers, always in this order: `Breaking` (deleted/renamed symbols and other High-severity rows), then `Direct consumers`, then `Transitive (collapsed)`. Empty sections are omitted. Rows inside a section keep severity rank.
+- **Badge column.** Every row carries a `Badge`: `Changed` when the impacted file is itself in the change-set, else `Impacted`.
+- **Row keys.** Each body row ends with an unbroken `path:line` key (e.g. `app/views/dashboard.py:12`) that never wraps across lines, so scripts can rejoin wrapped rows by matching the trailing token.
+- **Top-N cap.** `--top N` limits the body to the N highest-ranked rows (default: 20); hidden rows collapse to one overflow line per module (`... +3 more in app/views (1 High)`). The header severity counts and the top impacted paths are computed over all rows, so they do not change with `--top`. `--all` and `--expand` bypass the cap.
+- **JSON surface.** `--json` emits `{changed_count, rows, endpoints, unresolved, unresolved_by_reason, hidden_count, shown_count, hidden_counts, cache_hit_rate}` for scripting. Each entry in `rows` carries the same `section`, `badge`, and `key` fields shown in the table; `shown_count` is the body row count after the Top-N cap, and `hidden_counts` maps each overflowed module to its hidden row count. The original five keys are unchanged, so existing scripts keep working. Each row additionally carries `confidence` (`high`/`medium`/`low`), `evidence`, `why_matters`/`suggested_action` (Medium and High rows), `owner`, and the ranking terms `fan_in`, `missing_test`, `churn`, plus the computed `risk`.
+- **Empty JSON files.** The `syntax/json-syntax` guard check skips empty `.json` files with a warning instead of failing them.
+- **JSONC files.** `syntax/json-syntax` parses JSONC (comments and trailing commas) for files that are JSON-with-comments by convention -- `tsconfig.json`, `tsconfig.*.json`, `jsconfig.json`, `.vscode/*.json`, `devcontainer.json`, `*.code-workspace` -- and keeps every other `.json` strict.
+
+### Confidence and evidence
+
+Every row carries a confidence tier and an evidence dict so a reader can see how the impact was established:
+
+| Confidence | Meaning | Evidence |
+| --- | --- | --- |
+| `high` | The referencing file imports the symbol (or the object whose attribute is used) from a changed module. | `{"import_chain": [...]}` lists the defining modules. |
+| `medium` | Same-module reference without a qualifying import. | `{"import_chain": ["<module>"]}`. |
+| `low` | The import could not be resolved (e.g. a dynamic reference). | `{"unresolved": true}`. |
+
+Low-confidence rows are hidden by default and shown under `Transitive (collapsed)` with `--all`; `--json` always includes every row. Generic-name hits pruned by `impact.ignore_symbols` are dropped entirely and never resurface, even with `--all`.
+
+### Why and action per row
+
+Medium and High rows carry `why_matters` (a one-line reason naming the symbol and the import chain, or an explicit `(unresolved import)` note) and `suggested_action` (for example `run tests/test_x.py`, `update call site`, or `remove import` for a deleted symbol). `suggested_action` is what the `Action Required` column shows, and both fields are appended to the rationale lines as `[why: ...; do: ...]`.
+
+### Polyglot linking and unresolved reasons
+
+Frontend HTTP calls are scanned with one canonical call-head pass, so every recognized style produces the same `(method, URL)` pair used for route matching:
+
+| Style | Example |
+| --- | --- |
+| Dotted `http` / `HttpClient` / `$http` | `this.http.get('/orders/')` |
+| Dotted `axios` | `axios.post('/orders/')` |
+| Bare `fetch()` / `axios()` | `fetch('/orders/')` (method `get` unless an options object overrides it) |
+| React Query | `useQuery(() => fetch('/orders/'))`, `useMutation(() => axios.post('/orders/'))` |
+
+A non-literal URL never links. Changed Python symbol names bound by a TS/JS named import, `require`, or export produce `category: frontend-symbol` rows at the importing file.
+
+Every report ends with an audit line counting unresolved entries by cause. The same counts are available as `unresolved_by_reason` in `--json`:
+
+| Reason | Cause |
+| --- | --- |
+| `dynamic-ref` | A non-literal template ref such as `{% url view_name %}`. |
+| `unknown-url` | A literal URL that matches no extracted route. |
+| `no-import-chain` | A changed asset with no tracked template or importer. |
+| `binary/unsupported` | A legacy/free-text unresolved reason classified as an unsupported input. |
+
+Dynamic refs and unmatched URLs never produce linked rows.
+
+One known gap: a `{% url %}` tag that carries a quoted route name plus context
+arguments (for example `{% url 'order-detail' order.pk %}`) is currently
+skipped entirely -- it produces neither a linked row nor an unresolved audit
+entry, so the audit line does not count it.
+
+### Reachability
+
+When the repository has entry points (Django/FastAPI routes and Django management commands), each Python consumer is checked for reachability through a forward callee walk (depth cap 5, node cap 500). A consumer no entry point reaches is downgraded exactly one severity level (High to Medium, Medium to Low, Low unchanged), marked `reachability: "unreachable"`, and still listed with `--all`. Reachable consumers keep their severity.
+
+### Performance budget and cache
+
+The full-mode regression guard runs a 200-file synthetic repository with `MAX_SECONDS = 30` (measured around 0.1s cold and warm on development hardware). `--fast` remains an import-linked subset that agrees with full mode on High rows for the route-free scale fixture. `cache_hit_rate` in `--json` reports the symbol-cache hit ratio for the analyzed files (`0.0` cold, `1.0` fully warm).
+
+### Risk ranking and owners
+
+Rows are ranked by a per-row risk score, highest first, with the path as a tiebreak:
+
+```
+risk = 0.4 * severity + 0.3 * fan_in + 0.2 * missing_test + 0.1 * churn
+```
+
+All terms are 0-1. `severity` maps High to 1.0, Medium to 0.5, Low to 0.0. `fan_in` is the number of distinct referencing files for the symbol, normalized by the largest fan-in in the run. `missing_test` is 1 when no conventional `tests/test_<stem>.py` exists for the impacted Python file, else 0 (non-Python rows score 0). `churn` is reserved and currently 0. The same ranking orders the Top impacted paths in the summary header, where each entry is shown as `path (owner)`.
+
+`owner` is resolved from a `CODEOWNERS` file at the repository root. The last matching pattern wins, the leading `@` is stripped, and rows with no match (or no `CODEOWNERS` file) show as `unowned`.
+
+### Breaking-change rules
+
+Changes that are hard to undo are surfaced under the `Breaking` section as High rows (a pure addition emits none):
+
+- A deleted test file (or a test file with more than half its lines removed) reports `deleted test coverage` with the action `restore or justify removal`.
+- A removed export or a changed signature reports `breaking API change`.
+- A touched migration or infra file (a `migrations/` path, `.github/`/`.circleci/` CI config, or a lockfile) reports `migration/infra change - needs rollout note`.
 
 ### Reverse chains
 

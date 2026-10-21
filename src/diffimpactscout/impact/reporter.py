@@ -142,6 +142,22 @@ def _top_impacted_paths(rows, limit=5, changed_paths=None):
     return top
 
 
+def _summary_block(rows, changed_count, summary_extra, changed_paths, limit=5):
+    """Shared summary data for the ASCII banner and the markdown Summary."""
+    if summary_extra is not None:
+        _risk = summary_extra.get("risk")
+        risk = _risk if _risk is not None else compute_summary_risk_score(rows)
+        _impacted = summary_extra.get("impacted_count")
+        impacted = _impacted if _impacted is not None else _impacted_count(rows, changed_paths)
+        _top = summary_extra.get("top")
+        top = _top if _top is not None else _top_impacted_paths(rows, limit, changed_paths)
+    else:
+        risk = compute_summary_risk_score(rows)
+        impacted = _impacted_count(rows, changed_paths)
+        top = _top_impacted_paths(rows, limit, changed_paths)
+    return risk, _counts(rows or []), impacted, (top or [])[:limit]
+
+
 def _summary_line(rows, changed_count):
     counts = _counts(rows or [])
     return "Summary: High: %d, Medium: %d, Low: %d (%d changed file(s))" % (
@@ -485,18 +501,8 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
     lines.append("  Blast radius: %d changed file(s)" % changed_count)
     lines.append("=" * 70)
     limit = 5
-    if summary_extra is not None:
-        _risk = summary_extra.get("risk")
-        risk = _risk if _risk is not None else compute_summary_risk_score(rows)
-        _impacted = summary_extra.get("impacted_count")
-        impacted = _impacted if _impacted is not None else _impacted_count(rows, changed_paths)
-        _top = summary_extra.get("top")
-        top = _top if _top is not None else _top_impacted_paths(rows, limit, changed_paths)
-    else:
-        risk = compute_summary_risk_score(rows)
-        impacted = _impacted_count(rows, changed_paths)
-        top = _top_impacted_paths(rows, limit, changed_paths)
-    counts = _counts(rows or [])
+    risk, counts, impacted, top = _summary_block(
+        rows, changed_count, summary_extra, changed_paths, limit)
     lines.append("  Risk: %d/100 (severity-weighted: High*1.0 + Medium*0.5 over counted rows)" % risk)
     lines.append("  High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
     lines.append("  changed %d files vs impacted %d files" % (changed_count, impacted))
@@ -570,9 +576,19 @@ def _render_ascii(rows, endpoints, unresolved, changed_count, hidden_count=0, ex
 
 
 def _render_markdown(rows, endpoints, unresolved, changed_count, hidden_count=0, expand=False,
-                     top_n=None):
+                     summary_extra=None, top_n=None, changed_paths=None):
     lines = []
     lines.append("# Impact Analysis Report")
+    risk, counts, impacted, top = _summary_block(
+        rows, changed_count, summary_extra, changed_paths, 5)
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("- Risk: %d/100 (severity-weighted: High*1.0 + Medium*0.5 over counted rows)" % risk)
+    lines.append("- High: %d, Medium: %d, Low: %d" % (counts["High"], counts["Medium"], counts["Low"]))
+    lines.append("- changed %d files vs impacted %d files" % (changed_count, impacted))
+    for path, owner in top:
+        lines.append("- %s (%s)" % (path, owner or "unowned"))
     shown, hidden = _apply_top_n(rows, top_n, expand)
     tiered, untiered = _split_tiers(shown)
     for tier in tiered:
@@ -653,7 +669,8 @@ def render_report(rows, endpoints, unresolved, changed_count, markdown=False,
     if markdown:
         return _render_markdown(rows, endpoints, unresolved, changed_count,
                                 hidden_count=hidden_count, expand=expand,
-                                top_n=top_n)
+                                summary_extra=summary_extra, top_n=top_n,
+                                changed_paths=changed_paths)
     return _render_ascii(rows, endpoints, unresolved, changed_count,
                          hidden_count=hidden_count, expand=expand,
                          summary_extra=summary_extra, top_n=top_n,

@@ -558,6 +558,39 @@ def test_summary_extra_none_falls_back_to_computed():
     assert "b.py (team-a)" in out
 
 
+def test_markdown_summary_block_before_rows():
+    """Markdown runs also print the summary block before any row output."""
+    rows = [
+        {"path": "b.py", "module": "b", "category": "python",
+         "ref": "x (name at 1)", "severity": "High", "action": "review/verify",
+         "section": "Breaking", "badge": "Impacted", "owner": "team-a"},
+    ]
+    out = reporter.render_report(rows, [], [], 2, markdown=True, summary_extra={
+        "risk": 72, "impacted_count": 1,
+        "top": [("b.py", "team-a")],
+    })
+    assert "Risk: 72/100" in out
+    assert "High: 1, Medium: 0, Low: 0" in out
+    assert "changed 2 files vs impacted 1 files" in out
+    assert "b.py (team-a)" in out
+    assert out.index("Risk: 72/100") < out.index("| 1 |")
+
+
+def test_markdown_summary_extra_zero_overrides_respected():
+    """Explicit 0/[] markdown overrides are honored, same as ASCII."""
+    rows = [
+        {"path": "b.py", "module": "b", "category": "python",
+         "ref": "x (name at 1)", "severity": "High", "action": "review/verify",
+         "owner": "team-a"},
+    ]
+    out = reporter.render_report(rows, [], [], 1, markdown=True, summary_extra={
+        "risk": 0, "impacted_count": 0, "top": [],
+    })
+    assert "Risk: 0/100" in out
+    assert "impacted 0 files" in out
+    assert "b.py (team-a)" not in out
+
+
 def test_top_n_limits_rendered_lines():
     """Body cap stays decoupled from the summary Top-5 header."""
     def _row(path, severity):

@@ -17,10 +17,18 @@ def _matches(pattern, path):
     return False
 
 
+_OWNER_FILES = ("CODEOWNERS", os.path.join(".github", "CODEOWNERS"), os.path.join("docs", "CODEOWNERS"))
+
+
 def owner_for(path, root):
     target = path.replace(os.sep, "/").strip("/")
-    owners_path = os.path.join(root, "CODEOWNERS")
-    if not os.path.isfile(owners_path):
+    owners_path = None
+    for candidate in _OWNER_FILES:
+        full = os.path.join(root, candidate)
+        if os.path.isfile(full):
+            owners_path = full
+            break
+    if owners_path is None:
         return ""
     try:
         with open(owners_path, "r", encoding="utf-8") as handle:

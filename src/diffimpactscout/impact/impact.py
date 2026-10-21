@@ -226,6 +226,7 @@ def _changed_entities(
             root, change, anchor, from_ref, to_ref, staged
         )
         old_map = {e.name: e for e in old_entities}
+        new_names = {e.name for e in new_entities}
         new_map = {e.name: e for e in new_entities}
         if new_lines is not None:
             new_map = {
@@ -248,9 +249,19 @@ def _changed_entities(
             entities[name]["modules"].add(module)
         old_module = _module_of(old_path)
         for name, ent in old_map.items():
-            if name not in new_map:
+            if name not in new_names:
+                # Definition truly gone from the new source: deleted/renamed.
                 if name not in entities:
                     entities[name] = {"kind": ent.kind, "deleted": True, "modules": set()}
+                entities[name]["modules"].add(old_module)
+            elif name not in new_map:
+                # Definition survives; the hunk only removed lines inside it
+                # (a pure-deletion hunk leaves no new-side lines to overlap).
+                # Report the symbol as changed, never as deleted.
+                if name not in entities:
+                    entities[name] = {"kind": ent.kind, "deleted": False, "modules": set()}
+                elif entities[name].get("deleted"):
+                    entities[name] = {"kind": ent.kind, "deleted": False, "modules": set()}
                 entities[name]["modules"].add(old_module)
     return entities
 

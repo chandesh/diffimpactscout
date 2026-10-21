@@ -1450,6 +1450,82 @@ def _build_deleted_import_repo(tmp_path):
     return repo, base
 
 
+def _build_inner_class_edits_repo(tmp_path):
+    """A repo whose branch commit only removes lines inside a class method."""
+    repo = _make_repo(tmp_path)
+    _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))
+    _write(repo, "app/__init__.py", "")
+    _write(
+        repo,
+        "app/billing.py",
+        "class Widget:\n"
+        "    def build(self):\n"
+        "        rules = []\n"
+        "        extra = self.scope()\n"
+        "        rules.append(extra)\n"
+        "        return rules\n"
+        "\n"
+        "    def scope(self):\n"
+        "        return 1\n",
+    )
+    _write(
+        repo,
+        "app/user.py",
+        "from app.billing import Widget\n"
+        "\n"
+        "def use():\n"
+        "    return Widget()\n",
+    )
+    _commit(repo, "base")
+    base = _sha(repo)
+    _write(
+        repo,
+        "app/billing.py",
+        "class Widget:\n"
+        "    def build(self):\n"
+        "        rules = []\n"
+        "        return rules\n"
+        "\n"
+        "    def scope(self):\n"
+        "        return 1\n",
+    )
+    _commit(repo, "trim build method")
+    _anchor(repo, base)
+    return repo, base
+
+
+def test_pure_deletion_inside_class_not_deleted(tmp_path):
+    """A pure-deletion hunk inside a method must not flag the class deleted.
+
+    The branch commit only removes lines from ``Widget.build`` -- the class
+    and method definitions still exist in the new source -- so the report
+    must not emit High ``remove import`` rows for its importers.
+    """
+    repo, base = _build_inner_class_edits_repo(tmp_path)
+    from diffimpactscout.impact import diff_parser
+
+    entities = impact._changed_entities(
+        diff_parser.get_file_changes(repo, from_ref=base, to_ref="HEAD"),
+        repo,
+        base,
+    )
+    assert entities["Widget"]["deleted"] is False
+    import io
+    from contextlib import redirect_stdout
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        impact.run_impact(repo, config.load_config(repo), json_out=True)
+    data = json.loads(buf.getvalue())
+    deleted_rows = [
+        r
+        for r in data["rows"]
+        if r.get("action") == "remove import"
+        or r.get("reason") == "symbol was deleted or renamed in this change-set"
+    ]
+    assert deleted_rows == []
+
+
 def _build_scale_repo(tmp_path, n=200):
     repo = _make_repo(tmp_path)
     _write(repo, ".diffimpactscout.json", json.dumps(DJANGO_CFG))

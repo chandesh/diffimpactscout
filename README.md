@@ -362,6 +362,11 @@ Every report ends with an audit line counting unresolved entries by cause. The s
 
 Dynamic refs and unmatched URLs never produce linked rows.
 
+One known gap: a `{% url %}` tag that carries a quoted route name plus context
+arguments (for example `{% url 'order-detail' order.pk %}`) is currently
+skipped entirely -- it produces neither a linked row nor an unresolved audit
+entry, so the audit line does not count it.
+
 ### Reachability
 
 When the repository has entry points (Django/FastAPI routes and Django management commands), each Python consumer is checked for reachability through a forward callee walk (depth cap 5, node cap 500). A consumer no entry point reaches is downgraded exactly one severity level (High to Medium, Medium to Low, Low unchanged), marked `reachability: "unreachable"`, and still listed with `--all`. Reachable consumers keep their severity.

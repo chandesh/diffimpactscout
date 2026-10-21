@@ -25,9 +25,6 @@ class Route(object):
 _HTTP_METHODS = ("get", "post", "put", "delete", "patch", "options")
 _HTTP_METHOD_RE_SRC = r"get|post|put|delete|patch"
 
-HTTP_CALL_RE = re.compile(
-    r"(\$http|HttpClient|http)\s*\.\s*(" + _HTTP_METHOD_RE_SRC + r")\s*\("
-)
 QUOTED_LITERAL_RE = re.compile(r"(['\"])([^'\"\r\n]{1,500})\1")
 
 # Matches a frontend HTTP call head across call styles so the URL literal that
@@ -897,6 +894,8 @@ def match_endpoints(refs, routes):
         dynamic = ref.get("dynamic", False)
         line = ref.get("line")
         method = ref.get("method")
+        # Defensive: refs are never dynamic today (_url_ref hard-codes
+        # "dynamic": False), so this branch does not fire at runtime.
         if dynamic or path is None:
             exact = _exact_route(path, routes) if path is not None else None
             if exact is not None:
